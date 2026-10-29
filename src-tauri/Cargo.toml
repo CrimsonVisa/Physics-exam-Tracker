@@ -6,7 +6,7 @@ authors = ["CrimsonVisa"]
 license = "MIT"
 repository = "https://github.com/CrimsonVisa/csir-net-tracker"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.95"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -18,5 +18,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
+chrono = "0.4.45"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite_migration = "2.6.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.12.5", features = [] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

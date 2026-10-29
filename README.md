@@ -1,16 +1,18 @@
 # CSIR-NET Physics Tracker
 
-A minimal Windows desktop scaffold for an offline-first study tracker for CSIR-UGC NET Physical
-Sciences.
+An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 1 status:** application shell only. The dashboard, SQLite data layer, study timer, syllabus,
-scheduling, backups, and exports are not implemented yet.
+**Phase 2 status:** the dashboard, persistent planning settings, and exam countdown are implemented.
+The study timer, syllabus checklist, PYQ and mock-test tracking, revisions, and backup/restore are not
+implemented yet. Navigation entries for those modules are clearly marked as planned and are not
+interactive.
 
 ## Stack
 
 - [Tauri 2](https://v2.tauri.app/) desktop shell with a Rust backend
 - React 19 and TypeScript (strict)
 - Vite 8
+- Rust-managed SQLite through `rusqlite` (bundled SQLite) with versioned migrations
 - Vitest and Testing Library
 - ESLint and Prettier
 - MIT license
@@ -19,11 +21,12 @@ scheduling, backups, and exports are not implemented yet.
 
 - Windows 10 or 11 (64-bit) with the WebView2 runtime
 - Node.js 22.12 or newer and npm
-- Rust 1.90 or newer with the `x86_64-pc-windows-msvc` toolchain
+- Rust 1.95 or newer with the `x86_64-pc-windows-msvc` toolchain
 - Visual Studio with the **Desktop development with C++** workload and a Windows SDK
 - The [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for Windows
 
-This project was validated with Node.js 26.7.0, npm 11.19.0, and Rust/Cargo 1.99.1.
+This project was validated with Node.js 26.7.0, npm 11.19.0, and Rust/Cargo 1.99.1. Rust 1.95 is the
+minimum because `rusqlite_migration` 2.x requires it.
 
 ### PowerShell notes
 
@@ -59,8 +62,31 @@ To run only the frontend in a browser:
 npm.cmd run dev
 ```
 
-The browser-only view reports that the Tauri backend is unavailable because `invoke` requires the
-desktop shell.
+Tauri commands are unavailable in a plain browser, so the dashboard shows a database-unavailable
+error instead of settings. The desktop app is the supported development target.
+
+## Data storage
+
+The database is created outside the repository in Tauri's per-user application-data directory:
+
+```text
+%APPDATA%\com.crimsonvisa.csirnetphysics\csir-net-tracker.sqlite3
+```
+
+SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
+if needed. The schema is versioned with deterministic migrations, and the app enables foreign keys,
+WAL journaling, a busy timeout, and transactions for multi-step writes.
+
+The initial single-row settings record uses:
+
+- Exam date: `2026-12-19` — **provisional**; verify the actual subject date on the admit card.
+- Preparation start date: the local first-run date, clamped to the exam date. No preparation history
+  is fabricated.
+- Daily study target: `240` minutes (4 hours).
+
+Date-only values are stored as `YYYY-MM-DD` strings and validated in Rust as real calendar dates,
+including leap years. The frontend uses one date-only utility and one reusable date input; it never
+parses date-only strings through UTC timestamps.
 
 ## Checks
 
@@ -105,14 +131,23 @@ The executable and bundle are generated from the product identity in `src-tauri/
 ## Project structure
 
 ```text
-src/                    React frontend and tests
-src-tauri/              Tauri configuration and Rust backend
-  capabilities/         Tauri window permissions
-  icons/                Application icons
-  src/lib.rs            Tauri builder and get_app_info command
-  src/main.rs           Desktop entry point
-index.html              Vite HTML entry
-vite.config.ts          Vite and Vitest configuration
+src/                     React frontend and tests
+  components/DateField.tsx   reusable accessible date input
+  lib/dateOnly.ts            timezone-independent date utilities
+  lib/useTodayDateOnly.ts    local-date refresh for long-running windows
+  lib/settingsApi.ts         typed Tauri command wrappers
+src-tauri/               Tauri configuration and Rust backend
+  capabilities/          Tauri window permissions
+  icons/                 Application icons
+  migrations/            Versioned SQL schema migrations
+  src/db.rs              App-data path, connection setup, managed state, migrations
+  src/date_only.rs       Authoritative date parsing and formatting
+  src/settings.rs        Settings validation, defaults, load, and update
+  src/error.rs           Serializable structured command errors
+  src/lib.rs             Tauri builder, setup, and typed commands
+  src/main.rs            Desktop entry point
+index.html               Vite HTML entry
+vite.config.ts           Vite and Vitest configuration
 ```
 
 ## License
