@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+src-tauri/target/
+package-lock.json
+*.sqlite3
+*.db
+backups/
+exports/
+logs/
