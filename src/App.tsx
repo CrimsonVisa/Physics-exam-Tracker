@@ -9,6 +9,7 @@ import {
   previewExamDateChange,
   type ExamReschedulePreview,
 } from './lib/plannerApi';
+import { checkRevisionReminder } from './lib/revisionApi';
 import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import { useTodayDateOnly } from './lib/useTodayDateOnly';
 import AnalyticsScreen from './screens/AnalyticsScreen';
@@ -16,6 +17,7 @@ import CalendarScreen from './screens/CalendarScreen';
 import ChecklistScreen from './screens/ChecklistScreen';
 import MockTestsScreen from './screens/MockTestsScreen';
 import PyqScreen from './screens/PyqScreen';
+import RevisionScreen from './screens/RevisionScreen';
 import SessionsScreen from './screens/SessionsScreen';
 import SyllabusScreen from './screens/SyllabusScreen';
 import TimerScreen from './screens/TimerScreen';
@@ -26,6 +28,7 @@ type AppView =
   | 'sessions'
   | 'checklist'
   | 'calendar'
+  | 'revision'
   | 'pyq'
   | 'mock-tests'
   | 'analytics'
@@ -203,6 +206,14 @@ function Sidebar({
         </button>
         <button
           type="button"
+          className={`nav-item nav-button${activeView === 'revision' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'revision' ? 'page' : undefined}
+          onClick={() => onNavigate('revision')}
+        >
+          Revision
+        </button>
+        <button
+          type="button"
           className={`nav-item nav-button${activeView === 'pyq' ? ' nav-item-active' : ''}`}
           aria-current={activeView === 'pyq' ? 'page' : undefined}
           onClick={() => onNavigate('pyq')}
@@ -236,8 +247,8 @@ function Sidebar({
       </nav>
 
       <p className="sidebar-note">
-        Local-first. Settings, syllabus progress, checklist plans, PYQ and mock records, and study
-        sessions are stored on this PC and never sent to a server.
+        Local-first. Settings, syllabus progress, revision schedules, checklist plans, PYQ and mock
+        records, and study sessions are stored on this PC and never sent to a server.
       </p>
     </aside>
   );
@@ -335,6 +346,12 @@ export default function App({ today }: AppProps) {
 
     document.getElementById(FIELD_IDS[focusField])?.focus();
   }, [focusField, isSaving]);
+
+  useEffect(() => {
+    checkRevisionReminder().catch(() => {
+      // Reminders are optional; a notification failure must not block the app.
+    });
+  }, [currentToday]);
 
   function handleRetry() {
     setIsLoading(true);
@@ -488,6 +505,8 @@ export default function App({ today }: AppProps) {
           <ChecklistScreen today={currentToday} examDate={activeExamDate} />
         ) : view === 'calendar' ? (
           <CalendarScreen today={currentToday} examDate={activeExamDate} />
+        ) : view === 'revision' ? (
+          <RevisionScreen today={currentToday} />
         ) : view === 'pyq' ? (
           <PyqScreen today={currentToday} />
         ) : view === 'mock-tests' ? (

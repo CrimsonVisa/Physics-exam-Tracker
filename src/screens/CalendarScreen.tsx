@@ -23,6 +23,7 @@ import {
   type PlannedBlock,
   type PlannerTopic,
 } from '../lib/plannerApi';
+import type { RevisionCalendarItem } from '../lib/revisionApi';
 import { formatTimeRange } from '../lib/timeOfDay';
 
 type CalendarView = 'month' | 'week' | 'day';
@@ -90,14 +91,17 @@ function blockStatusLabel(block: PlannedBlock): string {
 function DayItems({
   tasks,
   blocks,
+  revisions,
   limit,
 }: {
   tasks: ChecklistTask[];
   blocks: PlannedBlock[];
+  revisions: RevisionCalendarItem[];
   limit?: number;
 }) {
   const combined = [
     ...blocks.map((block) => ({ kind: 'block' as const, block })),
+    ...revisions.map((revision) => ({ kind: 'revision' as const, revision })),
     ...tasks.map((task) => ({ kind: 'task' as const, task })),
   ];
   const visible = limit === undefined ? combined : combined.slice(0, limit);
@@ -111,6 +115,13 @@ function DayItems({
               {formatTimeRange(item.block.startTime, item.block.endTime)}
             </span>
             {item.block.title}
+          </span>
+        ) : item.kind === 'revision' ? (
+          <span
+            className="calendar-chip calendar-chip-revision"
+            key={`revision-${item.revision.topicId}`}
+          >
+            Revision · {item.revision.topicCode}
           </span>
         ) : (
           <span
@@ -308,14 +319,21 @@ export default function CalendarScreen({ today, examDate }: { today: string; exa
     data ? data.tasks.filter((task) => task.scheduledDate === date) : [];
   const blocksFor = (date: string) =>
     data ? data.blocks.filter((block) => block.calendarDate === date) : [];
+  const revisionsFor = (date: string) =>
+    data ? data.revisions.filter((revision) => revision.nextRevisionDate === date) : [];
 
   const selectedTasks = tasksFor(selectedDate);
   const selectedBlocks = blocksFor(selectedDate);
+  const selectedRevisions = revisionsFor(selectedDate);
   const selectedDeadlines = data
     ? data.deadlines.filter((task) => task.deadlineDate === selectedDate && task.status === 'open')
     : [];
   const calendarIsEmpty = Boolean(
-    data && data.tasks.length === 0 && data.blocks.length === 0 && data.deadlines.length === 0,
+    data &&
+    data.tasks.length === 0 &&
+    data.blocks.length === 0 &&
+    data.revisions.length === 0 &&
+    data.deadlines.length === 0,
   );
   const serverToday = data?.today ?? today;
 
@@ -344,18 +362,19 @@ export default function CalendarScreen({ today, examDate }: { today: string; exa
           {days.map((date) => {
             const tasks = tasksFor(date);
             const blocks = blocksFor(date);
+            const revisions = revisionsFor(date);
             return (
               <button
                 type="button"
                 className={dayClasses(date, 'calendar-day-cell')}
                 key={date}
-                aria-label={`${formatDateWithWeekday(date) ?? date}, ${tasks.length} tasks, ${blocks.length} planned blocks`}
+                aria-label={`${formatDateWithWeekday(date) ?? date}, ${tasks.length} tasks, ${blocks.length} planned blocks, ${revisions.length} revisions`}
                 aria-pressed={date === selectedDate}
                 onClick={() => selectDate(date)}
               >
                 <span className="calendar-day-number">{Number(date.slice(8, 10))}</span>
                 <span className="calendar-day-items">
-                  <DayItems tasks={tasks} blocks={blocks} limit={3} />
+                  <DayItems tasks={tasks} blocks={blocks} revisions={revisions} limit={3} />
                 </span>
               </button>
             );
@@ -371,21 +390,24 @@ export default function CalendarScreen({ today, examDate }: { today: string; exa
         {days.map((date) => {
           const tasks = tasksFor(date);
           const blocks = blocksFor(date);
+          const revisions = revisionsFor(date);
           return (
             <button
               type="button"
               className={dayClasses(date, 'calendar-week-day')}
               key={date}
-              aria-label={`${formatDateWithWeekday(date) ?? date}, ${tasks.length} tasks, ${blocks.length} planned blocks`}
+              aria-label={`${formatDateWithWeekday(date) ?? date}, ${tasks.length} tasks, ${blocks.length} planned blocks, ${revisions.length} revisions`}
               aria-pressed={date === selectedDate}
               onClick={() => selectDate(date)}
             >
               <span className="calendar-week-day-heading">
                 <span>{formatDateLong(date) ?? date}</span>
-                <span className="calendar-week-day-count">{tasks.length + blocks.length}</span>
+                <span className="calendar-week-day-count">
+                  {tasks.length + blocks.length + revisions.length}
+                </span>
               </span>
               <span className="calendar-day-items">
-                <DayItems tasks={tasks} blocks={blocks} limit={5} />
+                <DayItems tasks={tasks} blocks={blocks} revisions={revisions} limit={5} />
               </span>
             </button>
           );
@@ -403,17 +425,42 @@ export default function CalendarScreen({ today, examDate }: { today: string; exa
             <h3>{formatDateWithWeekday(anchor) ?? anchor}</h3>
           </div>
           <span className="calendar-day-total">
-            {selectedTasks.length + selectedBlocks.length} items
+            {selectedTasks.length + selectedBlocks.length + selectedRevisions.length} items
           </span>
         </div>
 
-        {selectedBlocks.length === 0 && selectedTasks.length === 0 ? (
+        {selectedBlocks.length === 0 &&
+        selectedTasks.length === 0 &&
+        selectedRevisions.length === 0 ? (
           <div className="calendar-empty">
             <p className="calendar-empty-title">Nothing scheduled on this date</p>
             <p>Add a planned block or a checklist task from the day panel below.</p>
           </div>
         ) : (
           <div className="calendar-day-schedule">
+            {selectedRevisions.length > 0 && (
+              <section>
+                <h4>Revisions</h4>
+                {selectedRevisions.map((revision) => (
+                  <article
+                    className="calendar-schedule-row"
+                    key={`day-revision-${revision.topicId}`}
+                  >
+                    <span className="calendar-schedule-time">Revision</span>
+                    <div>
+                      <p className="calendar-schedule-title">
+                        {revision.topicCode} · {revision.topicTitle}
+                      </p>
+                      <p className="calendar-schedule-meta">
+                        {revision.sectionTitle} · {revision.currentIntervalDays}-day interval ·{' '}
+                        {revision.completedRevisions} completed
+                      </p>
+                    </div>
+                  </article>
+                ))}
+              </section>
+            )}
+
             {selectedBlocks.length > 0 && (
               <section>
                 <h4>Planned blocks</h4>
@@ -570,7 +617,8 @@ export default function CalendarScreen({ today, examDate }: { today: string; exa
         <>
           {calendarIsEmpty && (
             <p className="calendar-empty-note" role="status">
-              No tasks or planned blocks in this calendar range. Use the day panel to add one.
+              No tasks, planned blocks, or revisions in this calendar range. Use the day panel to
+              add one.
             </p>
           )}
 
@@ -739,6 +787,32 @@ export default function CalendarScreen({ today, examDate }: { today: string; exa
                       </div>
                     )}
                   </div>
+
+                  <div>
+                    <h3>Revisions</h3>
+                    {selectedRevisions.length === 0 ? (
+                      <p className="selected-day-empty">No revisions scheduled.</p>
+                    ) : (
+                      <div className="selected-day-list">
+                        {selectedRevisions.map((revision) => (
+                          <article
+                            className="selected-day-item"
+                            key={`selected-revision-${revision.topicId}`}
+                          >
+                            <div>
+                              <p className="selected-day-item-title">
+                                {revision.topicCode} · {revision.topicTitle}
+                              </p>
+                              <p className="selected-day-item-meta">
+                                {revision.sectionTitle} · interval {revision.currentIntervalDays}{' '}
+                                days · {revision.completedRevisions} completed
+                              </p>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {selectedDeadlines.length > 0 && (
@@ -804,8 +878,8 @@ export default function CalendarScreen({ today, examDate }: { today: string; exa
               </section>
 
               <p className="calendar-side-note">
-                Planned blocks never add to study totals. A completed block can link to an actual
-                session only when you choose one in its editor and save.
+                Planned blocks and revision dates never add to study totals. A completed block can
+                link to an actual session only when you choose one in its editor and save.
               </p>
             </aside>
           </div>

@@ -4768,3 +4768,696 @@ h1 {
     padding: 16px;
   }
 }
+
+/* Phase 7: revision scheduler and spaced repetition */
+
+.revision-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.revision-stat-card {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgb(15 92 92 / 6%), transparent 12rem), var(--paper);
+  box-shadow: 0 14px 30px rgb(53 45 30 / 6%);
+}
+
+.revision-stat-card > span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.revision-stat-card strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.7rem;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.revision-stat-card small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.71rem;
+}
+
+.revision-stat-overdue {
+  border-color: #e7c5bc;
+  background:
+    radial-gradient(circle at 100% 0%, rgb(163 58 43 / 7%), transparent 12rem), var(--paper);
+}
+
+.revision-stat-overdue strong {
+  color: var(--error);
+}
+
+.revision-target-progress {
+  margin-top: 16px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--paper);
+}
+
+.revision-target-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.revision-queue-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.revision-queue-card,
+.revision-recommendations-card,
+.revision-recent-card,
+.revision-topics-card,
+.revision-detail-card {
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: 0 18px 40px rgb(53 45 30 / 7%);
+}
+
+.revision-queue-card h2,
+.revision-recent-card h2,
+.revision-topics-card h2 {
+  margin: 0;
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+}
+
+.revision-queue-list,
+.revision-recent-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.revision-queue-list li,
+.revision-recent-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 11px;
+  border: 1px solid #eee7db;
+  border-radius: 9px;
+  background: #fffefb;
+}
+
+.revision-queue-topic {
+  margin: 0;
+  font-size: 0.81rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.revision-queue-meta {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.69rem;
+  line-height: 1.45;
+}
+
+.revision-queue-list .secondary-button,
+.revision-recent-list .secondary-button {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  font-size: 0.68rem;
+}
+
+.revision-empty,
+.revision-note,
+.revision-scope-note {
+  margin: 13px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.revision-scope-note {
+  padding-top: 12px;
+  border-top: 1px solid #eee7db;
+}
+
+.revision-recommendations-card,
+.revision-recent-card,
+.revision-topics-card,
+.revision-detail-card {
+  margin-top: 22px;
+}
+
+.revision-recommendations-card h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: -0.02em;
+}
+
+.revision-recommendation-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.revision-recommendation {
+  padding: 14px 15px;
+  border: 1px solid #e7dfd1;
+  border-left-width: 4px;
+  border-radius: 11px;
+  background: #fffefb;
+}
+
+.revision-priority-high {
+  border-left-color: var(--error);
+}
+
+.revision-priority-medium {
+  border-left-color: #d7a94e;
+}
+
+.revision-priority-low {
+  border-left-color: #9fb9b0;
+}
+
+.revision-recommendation-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.revision-recommendation-heading h3 {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.revision-recommendation-meta {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.69rem;
+}
+
+.revision-priority {
+  align-self: flex-start;
+  padding: 3px 7px;
+  border: 1px solid #e5ded0;
+  border-radius: 999px;
+  background: #f5f0e7;
+  color: #746b5c;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.revision-priority-high.revision-priority {
+  border-color: #ecc9c1;
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.revision-priority-medium.revision-priority {
+  border-color: #dfc38a;
+  background: #f8ecd7;
+  color: var(--warning-ink);
+}
+
+.revision-priority-low.revision-priority {
+  border-color: #c8dfd8;
+  background: #e8f2ee;
+  color: #286052;
+}
+
+.revision-reasons {
+  margin: 9px 0 0;
+  padding-left: 17px;
+  color: var(--muted);
+  font-size: 0.73rem;
+  line-height: 1.5;
+}
+
+.revision-reasons li + li {
+  margin-top: 2px;
+}
+
+.revision-recommendation-actions {
+  margin-top: 10px;
+}
+
+.revision-recommendation-actions .secondary-button,
+.revision-recommendation-actions .primary-button {
+  padding: 6px 10px;
+  font-size: 0.72rem;
+}
+
+.revision-settings-disclosure {
+  margin-top: 22px;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: 0 18px 40px rgb(53 45 30 / 6%);
+}
+
+.revision-settings-disclosure > summary {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.revision-settings-disclosure[open] > summary {
+  margin-bottom: 18px;
+}
+
+.revision-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.revision-settings-checks {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  color: var(--ink);
+  font-size: 0.8rem;
+}
+
+.revision-settings-checks label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.revision-settings-checks input {
+  margin-top: 3px;
+}
+
+.revision-filter-count {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.revision-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 16px;
+}
+
+.revision-filters .secondary-button {
+  margin-bottom: 1px;
+}
+
+.revision-topic-table-wrap {
+  max-height: 520px;
+  margin-top: 14px;
+  overflow: auto;
+  border: 1px solid #eee7db;
+  border-radius: 10px;
+}
+
+.revision-topic-table,
+.revision-history-table {
+  width: 100%;
+  min-width: 780px;
+  border-collapse: collapse;
+  background: #fffefb;
+  font-size: 0.74rem;
+}
+
+.revision-topic-table th,
+.revision-topic-table td,
+.revision-history-table th,
+.revision-history-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee7db;
+  text-align: left;
+  vertical-align: top;
+}
+
+.revision-topic-table thead th,
+.revision-history-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f2e9;
+  color: var(--muted);
+  font-size: 0.6rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.revision-topic-table tbody th,
+.revision-history-table tbody th {
+  font-weight: 600;
+}
+
+.revision-topic-table tbody tr:last-child th,
+.revision-topic-table tbody tr:last-child td,
+.revision-history-table tbody tr:last-child th,
+.revision-history-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.revision-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.revision-table-actions .secondary-button,
+.revision-table-actions .primary-button {
+  padding: 5px 9px;
+  font-size: 0.68rem;
+}
+
+.revision-badge,
+.revision-due,
+.revision-outcome {
+  display: inline-flex;
+  width: fit-content;
+  padding: 2px 7px;
+  border: 1px solid #e5ded0;
+  border-radius: 999px;
+  background: #f5f0e7;
+  color: #746b5c;
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.revision-badge-active,
+.revision-badge-upcoming {
+  border-color: #c8dfd8;
+  background: #e8f2ee;
+  color: #286052;
+}
+
+.revision-badge-suspended {
+  border-color: #e5ded0;
+  background: #f3eee4;
+  color: #746b5c;
+}
+
+.revision-badge-not-scheduled {
+  border-color: #e5ded0;
+  background: #faf8f3;
+  color: var(--muted);
+}
+
+.revision-badge-overdue,
+.revision-due-overdue,
+.revision-outcome-again {
+  border-color: #ecc9c1;
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.revision-badge-due-today,
+.revision-due-due-today,
+.revision-outcome-difficult {
+  border-color: #dfc38a;
+  background: #f8ecd7;
+  color: var(--warning-ink);
+}
+
+.revision-due-upcoming,
+.revision-outcome-good {
+  border-color: #c8dfd8;
+  background: #e8f2ee;
+  color: #286052;
+}
+
+.revision-outcome-easy {
+  border-color: #c8e5d5;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.revision-due {
+  margin-left: 5px;
+}
+
+.revision-detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.revision-detail-card h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.revision-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 18px 0 0;
+  padding: 14px 16px;
+  border: 1px solid #e7dfd1;
+  border-radius: 11px;
+  background: #fbf8f1;
+}
+
+.revision-facts dt {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.revision-facts dd {
+  margin: 4px 0 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.revision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.revision-actions .primary-button,
+.revision-actions .secondary-button {
+  padding: 8px 13px;
+  font-size: 0.78rem;
+}
+
+.revision-inline-form,
+.revision-review-form,
+.revision-notes-form,
+.revision-plan-editor {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #e7dfd1;
+  border-radius: 12px;
+  background: #fbf8f1;
+}
+
+.revision-review-form h3,
+.revision-plan-editor h3,
+.revision-history h3 {
+  margin: 4px 0 0;
+  font-size: 1rem;
+}
+
+.revision-review-form .form-field textarea,
+.revision-notes-form textarea {
+  margin-top: 2px;
+}
+
+.revision-interval-preview {
+  display: flex;
+  align-items: center;
+  min-height: 43px;
+  padding: 10px 12px;
+  border: 1px dashed #b9cfc8;
+  border-radius: 9px;
+  background: #f1f7f4;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.revision-notes-form {
+  margin-top: 18px;
+}
+
+.revision-history {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #eee7db;
+}
+
+.revision-history-table-wrap {
+  max-height: 340px;
+  margin-top: 12px;
+  overflow: auto;
+  border: 1px solid #eee7db;
+  border-radius: 9px;
+}
+
+.revision-history-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #ecc9c1;
+  border-radius: 9px;
+  background: var(--error-soft);
+  color: var(--error);
+  font-size: 0.78rem;
+}
+
+.revision-history-error p {
+  margin: 0 0 8px;
+}
+
+.calendar-chip-revision {
+  border-left-color: #8a5a12;
+  background: #f8e8bf;
+  color: #7a4b12;
+  font-weight: 600;
+}
+
+.selected-day-columns {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.topic-revision-line {
+  display: block;
+  margin-top: 5px;
+  color: var(--accent);
+  font-size: 0.67rem;
+  font-weight: 600;
+}
+
+.syllabus-revision-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d8e2df;
+  border-radius: 9px;
+  background: #f7fbf9;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.syllabus-revision-panel .field-error {
+  flex-basis: 100%;
+}
+
+@media (max-width: 1180px) {
+  .revision-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .revision-queue-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .revision-settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .selected-day-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1080px) {
+  .revision-recommendation-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .revision-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .revision-filters .secondary-button {
+    grid-column: 1 / -1;
+    width: fit-content;
+  }
+
+  .revision-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .revision-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .revision-settings-grid,
+  .revision-filters,
+  .revision-stats,
+  .selected-day-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .revision-queue-list li,
+  .revision-recent-list li {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .revision-queue-list .secondary-button,
+  .revision-recent-list .secondary-button {
+    width: fit-content;
+  }
+}
+
+@media (max-width: 560px) {
+  .revision-queue-card,
+  .revision-recommendations-card,
+  .revision-recent-card,
+  .revision-topics-card,
+  .revision-detail-card,
+  .revision-settings-disclosure {
+    padding: 20px;
+    border-radius: 16px;
+  }
+
+  .revision-recommendation-heading {
+    flex-direction: column;
+  }
+}

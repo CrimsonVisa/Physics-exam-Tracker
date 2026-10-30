@@ -42,20 +42,29 @@ type PlannedBlockEditorProps = {
   block: PlannedBlock | null;
   topics: PlannerTopic[];
   defaultDate: string;
+  initialTitle?: string;
+  initialTopicId?: number | null;
+  initialNotes?: string;
   onSaved: (block: PlannedBlock, wasEditing: boolean) => void;
   onCancel: () => void;
 };
 
-function formFromBlock(block: PlannedBlock | null, defaultDate: string): BlockForm {
+function formFromBlock(
+  block: PlannedBlock | null,
+  defaultDate: string,
+  initialTitle: string,
+  initialTopicId: number | null,
+  initialNotes: string,
+): BlockForm {
   if (!block) {
     return {
-      title: '',
+      title: initialTitle,
       calendarDate: defaultDate,
       startTime: '09:00',
       endTime: '10:30',
-      topicId: '',
+      topicId: initialTopicId ? String(initialTopicId) : '',
       status: 'planned',
-      notes: '',
+      notes: initialNotes,
       linkedSessionId: '',
     };
   }
@@ -157,10 +166,15 @@ export function PlannedBlockEditor({
   block,
   topics,
   defaultDate,
+  initialTitle = '',
+  initialTopicId = null,
+  initialNotes = '',
   onSaved,
   onCancel,
 }: PlannedBlockEditorProps) {
-  const [form, setForm] = useState<BlockForm>(() => formFromBlock(block, defaultDate));
+  const [form, setForm] = useState<BlockForm>(() =>
+    formFromBlock(block, defaultDate, initialTitle, initialTopicId, initialNotes),
+  );
   const [errors, setErrors] = useState<Partial<Record<BlockFormField, string>>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);

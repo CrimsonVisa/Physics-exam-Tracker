@@ -2,16 +2,16 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 6 status:** the dashboard, persistent planning settings, exam countdown, official-source
+**Phase 7 status:** the dashboard, persistent planning settings, exam countdown, official-source
 Physical Sciences syllabus tracker, persisted study timer, study-session history, dated checklist
 tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank, mock-test
-history, CSV import workflows, and outcome analytics are implemented. The syllabus is seeded with 182
-topics across General Aptitude and the nine Physical Sciences units, and each topic can store a
-personal status, priority, confidence rating, and notes. The timer records focus sessions with restart
-and sleep recovery, and the dashboard shows today's focus time plus the day's tasks and planned blocks.
-Exam-date changes use a review-and-apply confirmation before any future exam-anchored task moves. CSV
-templates are generated locally and saved to the user's Downloads folder. Spaced-repetition scheduling,
-backup/restore, and richer charting are not implemented yet.
+history, CSV import workflows, outcome analytics, and configurable spaced-repetition revision scheduler
+are implemented. The syllabus is seeded with 182 topics across General Aptitude and the nine Physical
+Sciences units, and each topic can store a personal status, priority, confidence rating, and notes. The
+timer records focus sessions with restart and sleep recovery, and the dashboard shows today's focus
+time plus the day's tasks and planned blocks. Exam-date changes use a review-and-apply confirmation
+before any future exam-anchored task moves. CSV templates are generated locally and saved to the user's
+Downloads folder. Backup/restore and richer charting are not implemented yet.
 
 ## Stack
 
@@ -81,13 +81,14 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-5), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+6), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
 adds checklist and planned-block tables without changing existing settings, syllabus progress, timer
 state, or study sessions. Upgrading a version-4 database adds the PYQ and mock-test tables without
-changing any Phase 1–5 data.
+changing any Phase 1–5 data. Upgrading a version-5 database adds revision scheduler tables without
+changing settings, syllabus progress, sessions, planner records, PYQ attempts, or mock tests.
 
 The initial single-row settings record uses:
 
@@ -397,10 +398,83 @@ Required: test name/date/duration/maximum marks and all question/correct/incorre
 Correct-answer marks are required for any part with questions; incorrect and unanswered marks default
 to zero. `external_id` is optional and behaves as for PYQ imports.
 
+## Spaced repetition and revision scheduler
+
+Migration `0006_revision_scheduler.sql` adds:
+
+- `revision_settings` — the singleton scheduling configuration: initial intervals for Again,
+  Difficult, Good, and Easy; growth multiplier; minimum/maximum interval; weekend handling; daily
+  target; optional reminders; and the last reminder date.
+- `revision_schedules` — at most one current schedule per syllabus topic, with active/suspended state,
+  last and next revision dates, current interval, completed count, previous outcome, mastery estimate,
+  and schedule notes.
+- `revision_history` — append-only completed outcomes with the date revised, original due date, outcome,
+  revision notes, interval before/after, mastery before/after, and creation timestamp.
+
+History update and delete triggers reject mutation at the database level. Scheduling rows can change,
+but completed outcomes are never deleted when a topic is rescheduled, suspended, or reactivated.
+
+### Default algorithm
+
+The defaults are **not** claimed to be scientifically optimal and can be edited:
+
+| Outcome      | Default next interval |
+| ------------ | --------------------: |
+| Again/Forgot |                 1 day |
+| Difficult    |                2 days |
+| Good         |                5 days |
+| Easy         |               10 days |
+
+The deterministic rules are:
+
+- Again and Difficult reset to their configured initial interval.
+- Good and Easy grow from the current interval by the configured growth multiplier, while never going
+  below their configured initial interval.
+- The result is clamped between the configured minimum and maximum.
+- When weekends are excluded, a next date landing on Saturday or Sunday moves to Monday.
+- The date is calculated with real calendar arithmetic, including leap years, month/year transitions,
+  and a bounded 1–9999 supported calendar range.
+
+The default growth multiplier is `1.5`, the minimum interval is 1 day, and the maximum is 3,650 days.
+The mastery estimate is a transparent planning estimate, not an official score: Again/Difficult/Good/
+Easy contribute 0/35/70/95 points; subsequent outcomes use a 70% previous + 30% new blended value.
+Revision completion never changes syllabus status, syllabus confidence, or study time.
+
+### Workflow and integration
+
+Every syllabus topic is listed in the revision screen even before it is scheduled. Users can create a
+schedule, start a revision, record Again/Difficult/Good/Easy with notes, cancel without a write,
+manually reschedule, suspend/reactivate, and view the complete per-topic history. Starting a revision is
+not persisted as a separate session; only a completed outcome is written, in one transaction with its
+schedule update. Revision duration is not recorded as study time and no study session is created
+automatically.
+
+The syllabus screen shows each topic's revision state and next due date. The calendar shows active
+revision dates as a separate calendar-item type; one schedule row per topic prevents duplicate calendar
+entries when a date changes. The revision detail can prefill the existing planned-block editor with the
+topic and a revision-title suggestion, but the user must explicitly save the block. Planned blocks and
+revisions remain outside study-time totals unless a separate study session is recorded.
+
+### Advisory recommendations
+
+Recommendations are deterministic and advisory. They combine overdue/due dates, previous outcomes,
+mastery estimate, and PYQ accuracy only when at least five scored attempts exist. Topics with fewer
+attempts are explicitly annotated as insufficient evidence rather than labelled weak. Scheduling
+changes never happen from a recommendation alone; the user must open the topic or choose **Add to
+schedule**.
+
+Mock tests are stored at part level without a topic mapping. They remain available in Analytics, but
+they are not used to rank individual topic recommendations; the revision dashboard says this
+explicitly instead of implying a topic-level mock signal that does not exist.
+
+Review reminders are optional and off by default. When enabled and Windows grants permission, the app
+checks once per local day for due/overdue revisions and records the reminder date so the same day is
+not notified repeatedly. Notification failures never alter schedules or block revision work.
+
 ## Typography note
 
 Latin Modern is not currently bundled with the app. No font files or font packages were added through
-Phase 5; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
+Phase 7; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
 headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
 task for a later phase.
 
@@ -456,11 +530,14 @@ src/                     React frontend and tests
   components/PyqEditor.tsx      PYQ attempt form with topic and outcome fields
   components/MockTestEditor.tsx mock-test form with editable per-part marking
   components/CsvImportPanel.tsx preview, validation report, and transactional import UI
-  screens/SyllabusScreen.tsx    syllabus catalog, filters, and topic editor
+  components/RevisionSettingsPanel.tsx interval, weekend, target, and reminder settings
+  components/RevisionTopicDetail.tsx revision workflow, history, rescheduling, and block planning
+  screens/SyllabusScreen.tsx    syllabus catalog, filters, topic editor, and revision status
   screens/TimerScreen.tsx       persisted timer, recovery display, and settings
   screens/SessionsScreen.tsx    session history, filters, totals, and manual CRUD
   screens/ChecklistScreen.tsx   task CRUD, completion, rescheduling, and search
-  screens/CalendarScreen.tsx    month/week/day views and selected-day editing
+  screens/CalendarScreen.tsx    month/week/day views, revisions, and selected-day editing
+  screens/RevisionScreen.tsx    due queues, recommendations, filters, and revision dashboard
   screens/PyqScreen.tsx         PYQ filters, history, CRUD, and CSV workflow
   screens/MockTestsScreen.tsx   mock-test history, scoring, CRUD, and CSV workflow
   screens/AnalyticsScreen.tsx   PYQ, mock, part, weak-topic, and study-time analytics
@@ -476,6 +553,8 @@ src/                     React frontend and tests
   lib/pyqApi.ts                 typed PYQ and PYQ-import command wrappers
   lib/mockTestApi.ts            typed mock-test and import command wrappers
   lib/analyticsApi.ts           typed analytics command wrappers
+  lib/revisionApi.ts            typed revision scheduler and reminder command wrappers
+  lib/revisionScheduling.ts     frontend interval-preview mirror of the Rust algorithm
   lib/csvImportApi.ts           shared import preview/result types
   lib/commandError.ts           shared structured-error decoding
 src-tauri/               Tauri configuration and Rust backend
@@ -495,6 +574,7 @@ src-tauri/               Tauri configuration and Rust backend
   src/mock_tests.rs      Mock-test CRUD, marking configuration, and imports
   src/csv_import.rs      Strict CSV parser and shared import report types
   src/analytics.rs       PYQ, mock, weak-topic, and study-performance calculations
+  src/revision.rs        Spaced-repetition scheduling, history, recommendations, and reminders
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
   src/main.rs            Desktop entry point

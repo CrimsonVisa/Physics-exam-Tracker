@@ -10,6 +10,7 @@ import type {
   TopicProgress,
   TopicProgressInput,
 } from '../lib/syllabusApi';
+import type { RevisionSummary } from '../lib/revisionApi';
 
 const { invokeMock, openUrlMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -147,6 +148,7 @@ type MockOptions = {
   catalog?: SyllabusCatalog;
   summary?: SyllabusSummary | ((call: number) => SyllabusSummary);
   topics?: SyllabusTopic[] | ((filter: SyllabusFilter) => SyllabusTopic[]);
+  revisions?: RevisionSummary[];
   failFirstCatalog?: boolean;
 };
 
@@ -154,6 +156,7 @@ function installMock({
   catalog = CATALOG,
   summary = SUMMARY,
   topics = TOPICS,
+  revisions = [],
   failFirstCatalog = false,
 }: MockOptions = {}) {
   let summaryCalls = 0;
@@ -176,6 +179,10 @@ function installMock({
     if (command === 'search_syllabus_topics') {
       const filter = (args as { filter: SyllabusFilter }).filter;
       return Promise.resolve(typeof topics === 'function' ? topics(filter) : topics);
+    }
+
+    if (command === 'get_revision_summaries') {
+      return Promise.resolve(revisions);
     }
 
     return Promise.reject(new Error(`Unexpected command: ${command}`));
@@ -331,6 +338,29 @@ describe('SyllabusScreen', () => {
       { timeout: 2000 },
     );
     expect(await screen.findByText('No topics match these filters')).toBeInTheDocument();
+  });
+
+  it('shows revision status and next due date without changing syllabus progress', async () => {
+    installMock({
+      topics: [GA_TOPIC],
+      revisions: [
+        {
+          topicId: GA_TOPIC.id,
+          status: 'active',
+          dueState: 'due_today',
+          nextRevisionDate: '2026-10-30',
+          completedRevisions: 2,
+          masteryEstimate: 50,
+        },
+      ],
+    });
+
+    render(<SyllabusScreen />);
+
+    expect((await screen.findAllByText('Revision due today')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Next: 30 October 2026')).toBeInTheDocument();
+    expect(screen.getByText(/2 completed · 50.0% revision mastery/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Status')).toHaveValue('Not started');
   });
 
   it('edits and saves progress with a typed payload and refreshes the summary', async () => {

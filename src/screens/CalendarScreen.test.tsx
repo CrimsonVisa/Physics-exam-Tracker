@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CalendarData, ChecklistTask, PlannedBlock } from '../lib/plannerApi';
+import type { RevisionCalendarItem } from '../lib/revisionApi';
 import CalendarScreen from './CalendarScreen';
 
 const { invokeMock } = vi.hoisted(() => ({
@@ -54,6 +55,21 @@ function makeBlock(overrides: Partial<PlannedBlock> = {}): PlannedBlock {
   };
 }
 
+function makeRevision(overrides: Partial<RevisionCalendarItem> = {}): RevisionCalendarItem {
+  return {
+    topicId: 5,
+    topicCode: 'MMP-C01',
+    topicTitle: 'Dimensional analysis',
+    sectionCode: 'MMP',
+    sectionTitle: 'Mathematical Methods of Physics',
+    nextRevisionDate: TODAY,
+    currentIntervalDays: 5,
+    completedRevisions: 2,
+    masteryEstimate: 60,
+    ...overrides,
+  };
+}
+
 function makeCalendar(overrides: Partial<CalendarData> = {}): CalendarData {
   return {
     fromDate: '2026-09-28',
@@ -61,6 +77,7 @@ function makeCalendar(overrides: Partial<CalendarData> = {}): CalendarData {
     today: TODAY,
     tasks: [],
     blocks: [],
+    revisions: [],
     deadlines: [],
     upcomingDeadlines: [],
     overdueTasks: [],
@@ -112,13 +129,13 @@ describe('calendar screen', () => {
 
     expect(await screen.findByRole('heading', { name: 'October 2026' })).toBeInTheDocument();
     expect(
-      screen.getByText(/No tasks or planned blocks in this calendar range/),
+      screen.getByText(/No tasks, planned blocks, or revisions in this calendar range/),
     ).toBeInTheDocument();
     expect(screen.getByText('No open tasks with upcoming deadlines.')).toBeInTheDocument();
     expect(screen.getByText('No overdue open tasks.')).toBeInTheDocument();
     expect(
       screen.getByRole('button', {
-        name: 'Friday, 30 October 2026, 0 tasks, 0 planned blocks',
+        name: 'Friday, 30 October 2026, 0 tasks, 0 planned blocks, 0 revisions',
       }),
     ).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('heading', { name: 'Friday, 30 October 2026' })).toBeInTheDocument();
@@ -127,7 +144,7 @@ describe('calendar screen', () => {
 
     await userEvent.click(
       screen.getByRole('button', {
-        name: 'Saturday, 31 October 2026, 0 tasks, 0 planned blocks',
+        name: 'Saturday, 31 October 2026, 0 tasks, 0 planned blocks, 0 revisions',
       }),
     );
     expect(screen.getByRole('heading', { name: 'Saturday, 31 October 2026' })).toBeInTheDocument();
@@ -214,6 +231,7 @@ describe('calendar screen', () => {
       dueDate: TODAY,
     });
     const block = makeBlock({ title: 'Electrodynamics block' });
+    const revision = makeRevision({ topicCode: 'MMP-C01' });
     const overdue = makeTask({
       id: 2,
       title: 'Late reading',
@@ -227,6 +245,7 @@ describe('calendar screen', () => {
       makeCalendar({
         tasks: [task, todayDeadline, overdue],
         blocks: [block],
+        revisions: [revision],
         deadlines: [todayDeadline, task],
         upcomingDeadlines: [todayDeadline, task],
         overdueTasks: [overdue],
@@ -248,6 +267,9 @@ describe('calendar screen', () => {
     ).toBeInTheDocument();
     expect(
       within(selectedDay as HTMLElement).getByText('10:00–11:30 · Planned'),
+    ).toBeInTheDocument();
+    expect(
+      within(selectedDay as HTMLElement).getByText('MMP-C01 · Dimensional analysis'),
     ).toBeInTheDocument();
     expect(
       within(selectedDay as HTMLElement).getByText('Deadlines on this day'),

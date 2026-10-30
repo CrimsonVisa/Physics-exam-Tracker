@@ -104,6 +104,58 @@ describe('planned-block editor', () => {
     expect(onSaved).toHaveBeenCalledWith(SAVED_BLOCK, false);
   });
 
+  it('prefills a revision block with its topic, title, and notes', async () => {
+    invokeMock.mockResolvedValue({
+      ...SAVED_BLOCK,
+      title: 'Revision · MMP-C01',
+      topic: {
+        id: 7,
+        code: 'MMP-C01',
+        title: 'Dimensional analysis',
+        archived: false,
+      },
+      status: 'planned',
+      linkedSessionId: null,
+      notes: 'Revision block for Dimensional analysis',
+    });
+
+    render(
+      <PlannedBlockEditor
+        block={null}
+        topics={[{ id: 7, code: 'MMP-C01', title: 'Dimensional analysis', archived: false }]}
+        defaultDate={TODAY}
+        initialTitle="Revision · MMP-C01"
+        initialTopicId={7}
+        initialNotes="Revision block for Dimensional analysis"
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('Planned-block title')).toHaveValue('Revision · MMP-C01');
+    expect(screen.getByLabelText('Syllabus topic (optional)')).toHaveValue('7');
+    expect(screen.getByLabelText('Notes (optional)')).toHaveValue(
+      'Revision block for Dimensional analysis',
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add planned block' }));
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('create_planned_block', {
+        block: {
+          title: 'Revision · MMP-C01',
+          topicId: 7,
+          calendarDate: TODAY,
+          startTime: '09:00',
+          endTime: '10:30',
+          status: 'planned',
+          notes: 'Revision block for Dimensional analysis',
+          linkedSessionId: null,
+        },
+      }),
+    );
+  });
+
   it('rejects an end time that is not later than the start time', async () => {
     invokeMock.mockResolvedValue({ ...SAVED_BLOCK, status: 'planned', linkedSessionId: null });
 

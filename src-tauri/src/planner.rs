@@ -2,7 +2,7 @@ use chrono::{Days, NaiveDate};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::{date_only, error::AppError, settings};
+use crate::{date_only, error::AppError, revision, settings};
 
 pub const TASK_PRIORITIES: [&str; 4] = ["Low", "Normal", "High", "High-Yield"];
 pub const TASK_STATUSES: [&str; 2] = ["open", "completed"];
@@ -156,7 +156,7 @@ fn default_block_status() -> String {
     "planned".to_owned()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarData {
     pub from_date: String,
@@ -164,6 +164,7 @@ pub struct CalendarData {
     pub today: String,
     pub tasks: Vec<ChecklistTask>,
     pub blocks: Vec<PlannedBlock>,
+    pub revisions: Vec<revision::RevisionCalendarItem>,
     pub deadlines: Vec<ChecklistTask>,
     pub upcoming_deadlines: Vec<ChecklistTask>,
     pub overdue_tasks: Vec<ChecklistTask>,
@@ -563,6 +564,7 @@ pub fn calendar(
     )?;
 
     let blocks = list_blocks(connection, &from_text, &to_text)?;
+    let revisions = revision::calendar_items(connection, &from_text, &to_text)?;
 
     let deadlines = query_tasks(
         connection,
@@ -611,6 +613,7 @@ pub fn calendar(
         today: today_text,
         tasks,
         blocks,
+        revisions,
         deadlines,
         upcoming_deadlines,
         overdue_tasks,

@@ -2,6 +2,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { formatDateLong } from '../lib/dateOnly';
 import { toCommandError } from '../lib/commandError';
+import { getRevisionSummaries, type RevisionSummary } from '../lib/revisionApi';
 import {
   getSyllabusCatalog,
   getSyllabusSummary,
@@ -86,6 +87,23 @@ function isTopicPriority(value: string): value is TopicPriority {
 
 function isEditorField(value: string): value is EditorField {
   return value === 'status' || value === 'priority' || value === 'confidence' || value === 'notes';
+}
+
+function revisionStatusLabel(summary: RevisionSummary | undefined): string {
+  if (!summary || summary.status === null) {
+    return 'Revision not scheduled';
+  }
+  if (summary.status === 'suspended') {
+    return 'Revision suspended';
+  }
+  switch (summary.dueState) {
+    case 'overdue':
+      return 'Revision overdue';
+    case 'due_today':
+      return 'Revision due today';
+    default:
+      return `Next revision ${formatDateLong(summary.nextRevisionDate ?? '') ?? summary.nextRevisionDate}`;
+  }
 }
 
 function draftFromProgress(progress: TopicProgress): DraftValues {
@@ -347,6 +365,30 @@ export default function SyllabusScreen() {
   const [editorErrors, setEditorErrors] = useState<EditorErrors>({});
   const [isSaving, setIsSaving] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<Feedback>(null);
+  const [revisionSummaries, setRevisionSummaries] = useState<RevisionSummary[] | null>(null);
+  const [revisionError, setRevisionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getRevisionSummaries()
+      .then((loaded) => {
+        if (!cancelled) {
+          setRevisionSummaries(loaded);
+          setRevisionError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setRevisionSummaries([]);
+          setRevisionError(toCommandError(error).message);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -408,6 +450,10 @@ export default function SyllabusScreen() {
       .length + (filters.query.trim() ? 1 : 0);
 
   const savedAt = selectedTopic ? formatSavedAt(selectedTopic.progress.updatedAt) : null;
+  const revisionByTopic = new Map(
+    (revisionSummaries ?? []).map((summary) => [summary.topicId, summary]),
+  );
+  const selectedRevision = selectedTopic ? revisionByTopic.get(selectedTopic.id) : undefined;
 
   function resetEditorFeedback() {
     setEditorErrors({});
@@ -734,6 +780,13 @@ export default function SyllabusScreen() {
                               </span>
                             )}
                           </span>
+                          <span className="topic-revision-line">
+                            {revisionSummaries === null
+                              ? 'Revision status loading…'
+                              : revisionError
+                                ? 'Revision status unavailable'
+                                : revisionStatusLabel(revisionByTopic.get(topic.id))}
+                          </span>
                         </button>
                       </li>
                     );
@@ -772,6 +825,34 @@ export default function SyllabusScreen() {
                         : 'Saved locally'
                       : 'No saved progress yet. Defaults are shown until you save.'}
                   </p>
+
+                  <div className="syllabus-revision-panel">
+                    <span
+                      className={`revision-badge revision-badge-${
+                        revisionError
+                          ? 'not-scheduled'
+                          : (selectedRevision?.dueState?.replaceAll('_', '-') ?? 'not-scheduled')
+                      }`}
+                    >
+                      {revisionError
+                        ? 'Revision status unavailable'
+                        : revisionStatusLabel(selectedRevision)}
+                    </span>
+                    {selectedRevision?.nextRevisionDate && (
+                      <span>
+                        Next:{' '}
+                        {formatDateLong(selectedRevision.nextRevisionDate) ??
+                          selectedRevision.nextRevisionDate}
+                      </span>
+                    )}
+                    {selectedRevision && selectedRevision.completedRevisions > 0 && (
+                      <span>
+                        {selectedRevision.completedRevisions} completed ·{' '}
+                        {selectedRevision.masteryEstimate?.toFixed(1)}% revision mastery
+                      </span>
+                    )}
+                    {revisionError && <span className="field-error">{revisionError}</span>}
+                  </div>
 
                   <form className="topic-progress-form" onSubmit={handleSave} noValidate>
                     <div

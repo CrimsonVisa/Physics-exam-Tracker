@@ -61,6 +61,7 @@ const EMPTY_CALENDAR: CalendarData = {
   today: TODAY,
   tasks: [],
   blocks: [],
+  revisions: [],
   deadlines: [],
   upcomingDeadlines: [],
   overdueTasks: [],
@@ -90,6 +91,44 @@ const EMPTY_MOCK_ANALYTICS = {
   latestPercentage: null,
   trend: [],
   byPart: [],
+};
+
+const EMPTY_REVISION_SETTINGS = {
+  initialAgainDays: 1,
+  initialDifficultDays: 2,
+  initialGoodDays: 5,
+  initialEasyDays: 10,
+  growthMultiplier: 1.5,
+  minimumIntervalDays: 1,
+  maximumIntervalDays: 3650,
+  includeWeekends: true,
+  dailyRevisionTarget: 5,
+  remindersEnabled: false,
+  updatedAt: '2026-10-30T10:00:00.000Z',
+};
+
+const EMPTY_REVISION_DASHBOARD = {
+  today: TODAY,
+  settings: EMPTY_REVISION_SETTINGS,
+  stats: {
+    scheduledCount: 0,
+    activeCount: 0,
+    suspendedCount: 0,
+    dueTodayCount: 0,
+    overdueCount: 0,
+    completedToday: 0,
+    completedLast7Days: 0,
+    totalCompleted: 0,
+  },
+  dueToday: [],
+  overdue: [],
+  upcoming: [],
+  suspended: [],
+  completedRecent: [],
+  topics: [],
+  recommendations: [],
+  mockScopeNote: 'Mock tests are not topic linked.',
+  mockTestCount: 0,
 };
 
 function previewFor(settings: Settings): ExamReschedulePreview {
@@ -156,6 +195,10 @@ function mockBackend(overrides: Record<string, MockHandler> = {}) {
     get_pyq_analytics: () => EMPTY_PYQ_ANALYTICS,
     get_mock_analytics: () => EMPTY_MOCK_ANALYTICS,
     get_study_performance: () => ({ days: [] }),
+    get_revision_dashboard: () => EMPTY_REVISION_DASHBOARD,
+    get_revision_summaries: () => [],
+    get_revision_history: () => [],
+    check_revision_reminder: () => null,
     get_study_totals: () => EMPTY_TOTALS,
     get_syllabus_catalog: () => ({ sources: [], sections: [] }),
     get_syllabus_summary: () => ({
@@ -600,12 +643,18 @@ describe('settings dashboard', () => {
     expect(callsFor('get_calendar').length).toBeGreaterThan(0);
   });
 
-  it('navigates to the PYQ, mock-test, and analytics screens', async () => {
+  it('navigates to the revision, PYQ, mock-test, and analytics screens', async () => {
     mockBackend();
 
     renderApp();
 
     expect(await screen.findByText('days remaining')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Revision' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Revision scheduler', level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('No overdue revisions.')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'PYQs' }));
     expect(

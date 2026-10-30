@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { RevisionCalendarItem } from './revisionApi';
 import type { Settings } from './settingsApi';
 
 export type PlannerTopic = {
@@ -82,6 +83,7 @@ export type CalendarData = {
   today: string;
   tasks: ChecklistTask[];
   blocks: PlannedBlock[];
+  revisions: RevisionCalendarItem[];
   deadlines: ChecklistTask[];
   upcomingDeadlines: ChecklistTask[];
   overdueTasks: ChecklistTask[];

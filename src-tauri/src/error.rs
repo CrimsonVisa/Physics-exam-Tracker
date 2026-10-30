@@ -131,6 +131,34 @@ impl AppError {
         }
     }
 
+    pub fn revision_settings_not_found() -> Self {
+        Self {
+            code: "revision_settings_not_found",
+            message: "The revision settings row is missing from the local database. Restart the app to recreate it."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn revision_not_scheduled() -> Self {
+        Self {
+            code: "revision_not_scheduled",
+            message:
+                "This topic does not have a revision schedule yet. Add it to the schedule first."
+                    .to_owned(),
+            field: Some("topicId"),
+        }
+    }
+
+    pub fn revision_suspended() -> Self {
+        Self {
+            code: "revision_suspended",
+            message: "This topic's revision schedule is suspended. Reactivate it before recording a revision."
+                .to_owned(),
+            field: Some("topicId"),
+        }
+    }
+
     pub fn pyq_not_found() -> Self {
         Self {
             code: "pyq_not_found",

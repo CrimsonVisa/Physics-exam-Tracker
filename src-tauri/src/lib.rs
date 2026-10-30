@@ -7,6 +7,7 @@ mod mock_tests;
 mod planner;
 mod pyq;
 mod reschedule;
+mod revision;
 mod sessions;
 mod settings;
 mod syllabus;
@@ -272,6 +273,143 @@ fn get_study_performance(
     state: tauri::State<'_, db::AppState>,
 ) -> Result<analytics::StudyPerformance, AppError> {
     state.with_connection(|connection| analytics::study_performance(connection))
+}
+
+#[tauri::command]
+fn get_revision_dashboard(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<revision::RevisionDashboard, AppError> {
+    state.with_connection(|connection| revision::dashboard(connection, Local::now().date_naive()))
+}
+
+#[tauri::command]
+fn update_revision_settings(
+    state: tauri::State<'_, db::AppState>,
+    settings: revision::RevisionSettingsInput,
+) -> Result<revision::RevisionSettings, AppError> {
+    state.with_connection(|connection| revision::update_settings(connection, settings))
+}
+
+#[tauri::command]
+fn get_revision_history(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+) -> Result<Vec<revision::RevisionHistoryEntry>, AppError> {
+    state.with_connection(|connection| revision::history(connection, topic_id))
+}
+
+#[tauri::command]
+fn schedule_revision_topic(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    next_date: String,
+) -> Result<revision::RevisionTopicState, AppError> {
+    state.with_connection(|connection| {
+        revision::schedule_topic(connection, topic_id, &next_date, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn reschedule_revision(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    next_date: String,
+) -> Result<revision::RevisionTopicState, AppError> {
+    state.with_connection(|connection| {
+        revision::reschedule(connection, topic_id, &next_date, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn update_revision_notes(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    notes: String,
+) -> Result<revision::RevisionTopicState, AppError> {
+    state.with_connection(|connection| {
+        revision::update_notes(connection, topic_id, &notes, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn suspend_revision(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+) -> Result<revision::RevisionTopicState, AppError> {
+    state.with_connection(|connection| {
+        revision::set_status(connection, topic_id, "suspended", Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn reactivate_revision(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+) -> Result<revision::RevisionTopicState, AppError> {
+    state.with_connection(|connection| {
+        revision::set_status(connection, topic_id, "active", Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn complete_revision(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    input: revision::CompleteRevisionInput,
+) -> Result<revision::RevisionCompletion, AppError> {
+    state.with_connection(|connection| {
+        revision::complete(connection, topic_id, input, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn get_revision_summaries(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<Vec<revision::RevisionSummary>, AppError> {
+    state.with_connection(|connection| revision::summaries(connection, Local::now().date_naive()))
+}
+
+#[tauri::command]
+fn check_revision_reminder(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, db::AppState>,
+) -> Result<Option<revision::RevisionReminder>, AppError> {
+    let reminder = state.with_connection(|connection| {
+        revision::prepare_reminder(connection, Local::now().date_naive())
+    })?;
+
+    if let Some(reminder) = &reminder {
+        use tauri_plugin_notification::NotificationExt;
+        let body = if reminder.overdue > 0 && reminder.due_today > 0 {
+            format!(
+                "{} revisions need review: {} overdue and {} due today.",
+                reminder.total, reminder.overdue, reminder.due_today
+            )
+        } else if reminder.overdue > 0 {
+            format!(
+                "{} revision{} overdue for review.",
+                reminder.overdue,
+                if reminder.overdue == 1 { "" } else { "s" }
+            )
+        } else {
+            format!(
+                "{} revision{} due today.",
+                reminder.due_today,
+                if reminder.due_today == 1 { "" } else { "s" }
+            )
+        };
+        if let Err(error) = app
+            .notification()
+            .builder()
+            .title("Revision review due")
+            .body(body)
+            .show()
+        {
+            eprintln!("Revision reminder notification could not be shown: {error}");
+        }
+    }
+
+    Ok(reminder)
 }
 
 #[tauri::command]
@@ -623,6 +761,17 @@ pub fn run() {
             apply_mock_import,
             get_mock_analytics,
             get_study_performance,
+            get_revision_dashboard,
+            update_revision_settings,
+            get_revision_history,
+            schedule_revision_topic,
+            reschedule_revision,
+            update_revision_notes,
+            suspend_revision,
+            reactivate_revision,
+            complete_revision,
+            get_revision_summaries,
+            check_revision_reminder,
             get_planner_topics,
             get_checklist_tasks,
             create_checklist_task,
