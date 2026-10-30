@@ -2,16 +2,17 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 8 status:** the preparation dashboard, persistent planning settings, exam countdown,
+**Phase 9 status:** the preparation dashboard, persistent planning settings, exam countdown,
 official-source Physical Sciences syllabus tracker, persisted study timer, study-session history, dated
 checklist tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank,
 mock-test history, CSV import workflows, outcome analytics, configurable spaced-repetition revision
-scheduler, study trends, topic intelligence, preparation timeline, and SQLite-backed dashboard
-customization are implemented. The syllabus is seeded with 182 topics across General Aptitude and the
-nine Physical Sciences units, and each topic can store a personal status, priority, confidence rating,
-and notes. The timer records focus sessions with restart and sleep recovery. Exam-date changes use a
-review-and-apply confirmation before any future exam-anchored task moves. CSV templates are generated
-locally and saved to the user's Downloads folder. Backup/restore is not implemented yet.
+scheduler, study trends, topic intelligence, preparation timeline, SQLite-backed dashboard
+customization, verified full-database backup and restore, automatic backup retention, per-dataset CSV
+export, and complete versioned JSON portability are implemented. The syllabus is seeded with 182 topics
+across General Aptitude and the nine Physical Sciences units, and each topic can store a personal
+status, priority, confidence rating, and notes. The timer records focus sessions with restart and sleep
+recovery. Exam-date changes use a review-and-apply confirmation before any future exam-anchored task
+moves. CSV templates are generated locally and saved to the user's Downloads folder.
 
 ## Stack
 
@@ -81,7 +82,7 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-7), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+8), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
@@ -90,7 +91,10 @@ state, or study sessions. Upgrading a version-4 database adds the PYQ and mock-t
 changing any Phase 1–5 data. Upgrading a version-5 database adds revision scheduler tables without
 changing settings, syllabus progress, sessions, planner records, PYQ attempts, or mock tests.
 Upgrading a version-6 database adds the dashboard section-preference table and seeds the default
-layout without changing any Phase 1–7 data.
+layout without changing any Phase 1–7 data. Upgrading a version-7 database adds database identity and
+backup configuration tables without changing any study record, and creates the identifier used by
+backup manifests. Every upgrade from an existing database first creates a verified pre-migration
+snapshot; if that snapshot fails, the upgrade is aborted.
 
 The initial single-row settings record uses:
 
@@ -569,10 +573,123 @@ and a link to the relevant dashboard section. Comparison text is descriptive and
 causation. No readiness score, rank prediction, selection probability, or success percentage is
 generated.
 
+## Backup, restore, and data portability
+
+Migration `0008_backup_and_portability.sql` adds two `STRICT` tables:
+
+- `database_metadata` stores one stable 128-bit database identifier.
+- `backup_settings` stores automatic-backup configuration and the most recent success/failure
+  metadata. It contains settings only, never a duplicate copy of the database.
+
+### Full SQLite backups
+
+Backups use SQLite's online backup API against the live connection, so uncheckpointed WAL data is
+included rather than copied incorrectly from only the main database file. Each snapshot is:
+
+1. Written to a temporary sibling file selected from a safe generated filename.
+2. Opened read-only and checked with `PRAGMA integrity_check`.
+3. Checked with `PRAGMA foreign_key_check`.
+4. Hash-checked with SHA-256.
+5. Renamed into place only after verification.
+6. Accompanied by `<backup>.sqlite3.manifest.json` containing format version, application version,
+   schema version, creation timestamp, database identifier, reason, filename, size, SHA-256 and
+   integrity result.
+
+Restore requires the manifest. A renamed backup, missing manifest, truncated file, changed checksum,
+or schema newer than this app is rejected. Manual filenames identify the reason, schema, and local
+timestamp, for example `csir-net-tracker-manual-v8-20261030-180000.sqlite3`.
+
+The default automatic backup directory is `%APPDATA%\com.crimsonvisa.csirnetphysics\backups`. Safety
+backups created before migrations, restore, and JSON import are written under `backups\safety`; they
+are never pruned by automatic retention.
+
+### Automatic backups and retention
+
+Automatic backups are **off by default**. Supported frequencies are daily, weekly, and
+before-important-operations only. Daily and weekly checks run at application start and once per hour
+while the app remains open. Destructive operations always create their own safety backup regardless of
+this setting.
+
+Retention applies only to files named as automatic backups. The newest configured number of valid
+automatic backups are kept; manual and safety backups are never deleted. If no valid automatic backup
+can be verified, pruning is skipped with a warning. Unavailable drives and permission failures are
+recorded in `backup_settings` and shown in the Backup screen.
+
+### Restore workflow
+
+The Restore screen selects a backup, reads and validates its manifest and SQLite content, previews
+metadata and row counts, and requires explicit confirmation. It then creates and verifies a safety
+snapshot of the current database before closing the live connection. The restore candidate is copied
+to a verified temporary file, WAL/SHM sidecars are handled, and the candidate is installed atomically.
+Any failure before installation leaves the original file untouched. Any failure after installation
+recovers the database from the verified safety snapshot and reopens it. Older compatible schemas are
+upgraded through normal migrations; newer schemas are never downgraded.
+
+### CSV dataset export
+
+Export creates a timestamped folder containing ten UTF-8 files with a BOM and CRLF rows:
+
+- `syllabus_topics_progress.csv`
+- `study_sessions.csv`
+- `checklist_tasks.csv`
+- `planned_study_blocks.csv`
+- `pyq_attempts.csv`
+- `mock_tests.csv`
+- `revision_schedules.csv`
+- `revision_history.csv`
+- `settings.csv`
+- `dashboard_layout.csv`
+
+Stable IDs and topic/session relationships are included. Every field from the source table is exported,
+with section/topic codes added for readability. Commas, quotes, CR/LF and other text are escaped
+according to CSV rules. Export queries are read-only.
+
+### Complete JSON export and validated import
+
+The complete JSON format is versioned (`formatVersion: 1`) and records application version, schema
+version, export timestamp, database identifier, per-table record counts, and all user tables:
+settings, syllabus sources/sections/topics/progress, timer settings/state, sessions, tasks, blocks,
+PYQs, mocks, revision settings/schedules/history, and dashboard sections. Safe backup preferences are
+included without machine-specific destination paths. The serialized file is parsed and inserted into a
+temporary migrated database before success is reported.
+
+JSON import requires the current schema version so every relation can be validated. It validates the
+whole file in a temporary database before taking a safety backup or writing current data. Duplicate
+primary keys, duplicate unique keys, missing fields, unknown fields, malformed JSON, incompatible
+format/schema versions, and relationship violations reject the entire file.
+
+Two explicit strategies are available:
+
+- **Merge:** appends sessions, tasks, blocks, PYQs without conflicting import keys, mocks, and revision
+  history under new local IDs; maps syllabus topics by stable code; maps linked blocks to imported
+  sessions; skips existing progress, revision schedules, settings, timer state, revision rules, and
+  dashboard layout conflicts; rejects rows whose required topic code is unavailable.
+- **Replace:** after the safety backup, removes current user records in a transaction, inserts the
+  complete validated export with its exported IDs and relationships, restores append-only history
+  triggers, verifies foreign keys and exact counts, then commits. Current backup settings and database
+  identity remain installation-local.
+
+Imports report imported, skipped, conflicting, and rejected counts per table. Any failure rolls back
+the entire transaction. The app must be reloaded after import to refresh every screen.
+
+### Privacy and file handling
+
+Backup and export files are personal study data. They are written only to user-selected local or
+removable-drive folders, never sent over the network; explicit UNC network paths are rejected.
+Generated filenames prevent traversal; selected paths must be absolute.
+User-facing errors describe the folder or operation without dumping internal absolute paths. No
+credentials or unrelated machine information are placed in manifests or JSON exports.
+
+Backups and exports are **not encrypted**. Anyone with file access can read them. Keep them in a
+private folder or encrypted removable drive. Restore requires the adjacent manifest, so move or copy
+both files together. Automatic backups run only while the app is running; they are not a background
+Windows service. JSON import intentionally requires the current schema so every relationship can be
+validated; use the SQLite backup restore workflow for older schemas.
+
 ## Typography note
 
 Latin Modern is not currently bundled with the app. No font files or font packages were added through
-Phase 8; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
+Phase 9; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
 headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
 task for a later phase.
 
@@ -642,6 +759,7 @@ src/                     React frontend and tests
   screens/PyqScreen.tsx         PYQ filters, history, CRUD, and CSV workflow
   screens/MockTestsScreen.tsx   mock-test history, scoring, CRUD, and CSV workflow
   screens/AnalyticsScreen.tsx   study trends, performance, topic evidence, and timeline tabs
+  screens/BackupScreen.tsx      verified backups, restore, automatic settings, CSV/JSON portability
   lib/dateOnly.ts               timezone-independent date and calendar utilities
   lib/timeOfDay.ts              strict local HH:MM validation and planned duration
   lib/studyTime.ts              duration and timer-clock formatting
@@ -655,6 +773,7 @@ src/                     React frontend and tests
   lib/mockTestApi.ts            typed mock-test and import command wrappers
   lib/analyticsApi.ts           typed filtered PYQ/mock performance command wrappers
   lib/preparationApi.ts         typed dashboard, study analytics, topic, timeline, and layout wrappers
+  lib/backupApi.ts              typed backup, restore, CSV, and JSON portability wrappers
   lib/revisionApi.ts            typed revision scheduler and reminder command wrappers
   lib/revisionScheduling.ts     frontend interval-preview mirror of the Rust algorithm
   lib/csvImportApi.ts           shared import preview/result types
@@ -679,6 +798,8 @@ src-tauri/               Tauri configuration and Rust backend
   src/study_analytics.rs Study trends, targets, streaks, consistency, and period comparisons
   src/topic_intelligence.rs Evidence thresholds, topic groups, and confidence mismatches
   src/dashboard.rs       Preparation overview, insights, timeline, and SQLite layout preferences
+  src/backup.rs          Online SQLite snapshots, manifests, automatic retention, and restore validation
+  src/portability.rs     CSV datasets, complete JSON export, validated merge/replace import
   src/revision.rs        Spaced-repetition scheduling, history, recommendations, and reminders
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands

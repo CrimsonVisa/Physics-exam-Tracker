@@ -188,6 +188,38 @@ impl AppError {
         }
     }
 
+    pub fn backup_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "backup_failed",
+            message: message.into(),
+            field: None,
+        }
+    }
+
+    pub fn restore_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "restore_failed",
+            message: message.into(),
+            field: None,
+        }
+    }
+
+    pub fn export_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "export_failed",
+            message: message.into(),
+            field: None,
+        }
+    }
+
+    pub fn import_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "import_failed",
+            message: message.into(),
+            field: None,
+        }
+    }
+
     pub fn timer_active() -> Self {
         Self {
             code: "timer_active",

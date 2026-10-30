@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -9,12 +10,13 @@ use chrono::{NaiveDate, Utc};
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
-use crate::{error::AppError, settings, syllabus, timer};
+use crate::{backup, error::AppError, settings, syllabus, timer};
 
 pub const DATABASE_FILE_NAME: &str = "csir-net-tracker.sqlite3";
+pub const LATEST_SCHEMA_VERSION: i64 = 8;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-const MIGRATIONS_SLICE: &[M<'static>] = &[
+pub(crate) const MIGRATIONS_SLICE: &[M<'static>] = &[
     M::up(include_str!("../migrations/0001_settings.sql")),
     M::up(include_str!("../migrations/0002_syllabus.sql")),
     M::up(include_str!(
@@ -24,28 +26,38 @@ const MIGRATIONS_SLICE: &[M<'static>] = &[
     M::up(include_str!("../migrations/0005_pyq_and_mock_tests.sql")),
     M::up(include_str!("../migrations/0006_revision_scheduler.sql")),
     M::up(include_str!("../migrations/0007_dashboard_layout.sql")),
+    M::up(include_str!(
+        "../migrations/0008_backup_and_portability.sql"
+    )),
 ];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 /// Tauri-managed application state. Database initialization failures are kept
 /// as an error state so the window can still open and explain the problem.
 pub struct AppState {
-    database: Result<Mutex<Connection>, AppError>,
+    database: Mutex<Result<Connection, AppError>>,
+    data_dir: Option<PathBuf>,
+    database_path: Option<PathBuf>,
 }
 
 impl AppState {
     pub fn initialize(data_dir: &Path, today: NaiveDate) -> Self {
+        let path = database_path(data_dir);
         match Self::try_initialize(data_dir, today) {
             Ok(connection) => Self {
-                database: Ok(Mutex::new(connection)),
+                database: Mutex::new(Ok(connection)),
+                data_dir: Some(data_dir.to_path_buf()),
+                database_path: Some(path),
             },
             Err(error) => {
                 eprintln!("Local database initialization failed: {error:?}");
                 Self {
-                    database: Err(AppError::database_unavailable(
+                    database: Mutex::new(Err(AppError::database_unavailable(
                         "The local database could not be initialized. Check that your Windows \
                          application-data folder is writable, then restart the app.",
-                    )),
+                    ))),
+                    data_dir: Some(data_dir.to_path_buf()),
+                    database_path: Some(path),
                 }
             }
         }
@@ -53,7 +65,9 @@ impl AppState {
 
     pub fn unavailable(error: AppError) -> Self {
         Self {
-            database: Err(error),
+            database: Mutex::new(Err(error)),
+            data_dir: None,
+            database_path: None,
         }
     }
 
@@ -61,14 +75,140 @@ impl AppState {
         &self,
         operation: impl FnOnce(&mut Connection) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
-        let database = self.database.as_ref().map_err(|error| error.clone())?;
-        let mut connection = database.lock().map_err(|_| {
+        let mut guard = self.database.lock().map_err(|_| {
             AppError::internal(
                 "The local database is in an inconsistent state. Restart the app and try again.",
             )
         })?;
+        let connection = guard.as_mut().map_err(|error| error.clone())?;
+        operation(connection)
+    }
 
-        operation(&mut connection)
+    pub fn data_dir(&self) -> Result<&Path, AppError> {
+        self.data_dir
+            .as_deref()
+            .ok_or_else(AppError::database_unavailable_message)
+    }
+
+    pub fn database_path(&self) -> Option<&Path> {
+        self.database_path.as_deref()
+    }
+
+    pub fn restore_from_backup(
+        &self,
+        backup_path: &Path,
+        today: NaiveDate,
+    ) -> Result<backup::BackupResult, AppError> {
+        let data_dir = self.data_dir()?;
+        let current_path = self
+            .database_path
+            .clone()
+            .ok_or_else(AppError::database_unavailable_message)?;
+        let mut guard = self.database.lock().map_err(|_| {
+            AppError::internal(
+                "The local database is in a consistent state lock. Restart the app and try again.",
+            )
+        })?;
+        let connection = guard.as_mut().map_err(|error| error.clone())?;
+        let schema_version = backup::schema_version(connection)?;
+        let verified = backup::verify_backup(backup_path)?;
+        if verified.manifest.schema_version > schema_version {
+            return Err(AppError::restore_failed(format!(
+                "This backup uses schema version {}, but this app supports up to schema {}. Update the app instead of downgrading the database.",
+                verified.manifest.schema_version, schema_version
+            )));
+        }
+        if verified.manifest.schema_version < 1 {
+            return Err(AppError::restore_failed(
+                "The backup schema version is not supported.",
+            ));
+        }
+        let backup_path = backup_path
+            .canonicalize()
+            .map_err(|_| AppError::restore_failed("The selected backup file is unavailable."))?;
+        if current_path
+            .canonicalize()
+            .ok()
+            .is_some_and(|current| current == backup_path)
+        {
+            return Err(AppError::restore_failed(
+                "Select a backup file, not the live application database.",
+            ));
+        }
+
+        let safety = backup::create_safety_backup(connection, data_dir, "pre-restore", None)?;
+        let safety_path = PathBuf::from(&safety.directory).join(&safety.file_name);
+        let _ = backup::record_success(connection, &safety.manifest);
+
+        let parent = current_path
+            .parent()
+            .ok_or_else(|| AppError::restore_failed("The live database location is invalid."))?;
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let temp_path = parent.join(format!(".csir-net-tracker-restore-{token}.sqlite3.tmp"));
+        let rollback_path = parent.join(format!(
+            ".csir-net-tracker-restore-{token}.sqlite3.rollback"
+        ));
+        if let Err(error) = fs::copy(&backup_path, &temp_path) {
+            eprintln!("Restore candidate could not be copied: {error}");
+            let _ = fs::remove_file(&temp_path);
+            return Err(AppError::restore_failed(
+                "The selected backup could not be copied into the application-data folder.",
+            ));
+        }
+        if let Err(error) = backup::verify_database_file(&temp_path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+
+        let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let previous = std::mem::replace(
+            &mut *guard,
+            Err(AppError::internal("The database is being restored.")),
+        );
+        drop(previous);
+
+        if remove_database_sidecars(&current_path).is_err() {
+            let _ = fs::remove_file(&temp_path);
+            *guard = reopen_current_database(&current_path, today);
+            return Err(AppError::restore_failed(
+                "The database WAL files could not be prepared for restore. The original database was reopened.",
+            ));
+        }
+        if let Err(error) = fs::rename(&current_path, &rollback_path) {
+            eprintln!("Live database could not be moved for restore: {error}");
+            let _ = fs::remove_file(&temp_path);
+            *guard = reopen_current_database(&current_path, today);
+            return Err(AppError::restore_failed(
+                "The live database could not be moved aside. The original database was reopened.",
+            ));
+        }
+        if let Err(error) = fs::rename(&temp_path, &current_path) {
+            eprintln!("Restore candidate could not be installed: {error}");
+            let _ = fs::rename(&rollback_path, &current_path);
+            *guard = reopen_current_database(&current_path, today);
+            return Err(AppError::restore_failed(
+                "The backup could not be installed. The original database was reopened.",
+            ));
+        }
+
+        match open_database(&current_path, today) {
+            Ok(restored) => {
+                *guard = Ok(restored);
+                let _ = fs::remove_file(&rollback_path);
+                Ok(safety)
+            }
+            Err(error) => {
+                eprintln!("Restored database could not be opened: {error:?}");
+                let recovered = recover_from_safety_snapshot(&safety_path, &current_path, today);
+                if recovered.is_ok() {
+                    let _ = fs::remove_file(&rollback_path);
+                }
+                *guard = recovered;
+                Err(AppError::restore_failed(
+                    "The backup could not be opened after replacement. The original database was recovered from the verified safety snapshot.",
+                ))
+            }
+        }
     }
 
     fn try_initialize(data_dir: &Path, today: NaiveDate) -> Result<Connection, AppError> {
@@ -78,6 +218,61 @@ impl AppState {
 
         open_database(&database_path(data_dir), today)
     }
+}
+
+impl AppError {
+    fn database_unavailable_message() -> Self {
+        Self::database_unavailable(
+            "The local database is unavailable. Restart the app and try again.",
+        )
+    }
+}
+
+fn database_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut value: OsString = path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+fn remove_database_sidecars(path: &Path) -> std::io::Result<()> {
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = database_sidecar_path(path, suffix);
+        match fs::remove_file(sidecar) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn reopen_current_database(path: &Path, today: NaiveDate) -> Result<Connection, AppError> {
+    open_database(path, today).map_err(|error| {
+        eprintln!("The original database could not be reopened: {error:?}");
+        AppError::database_unavailable(
+            "The original database could not be reopened. Restart the app; if it still fails, use the verified safety backup.",
+        )
+    })
+}
+
+fn recover_from_safety_snapshot(
+    safety_path: &Path,
+    current_path: &Path,
+    today: NaiveDate,
+) -> Result<Connection, AppError> {
+    let _ = fs::remove_file(current_path);
+    let _ = remove_database_sidecars(current_path);
+    fs::copy(safety_path, current_path).map_err(|_| {
+        AppError::database_unavailable(
+            "Restore failed and the verified safety snapshot could not be copied back. Restart the app and restore from the safety backup.",
+        )
+    })?;
+    backup::verify_database_file(current_path).map_err(|_| {
+        AppError::database_unavailable(
+            "Restore failed and the recovered safety snapshot did not pass verification. Restart the app and restore from the safety backup.",
+        )
+    })?;
+    open_database(current_path, today)
 }
 
 pub fn database_path(data_dir: &Path) -> PathBuf {
@@ -91,7 +286,38 @@ pub fn open_database(path: &Path, today: NaiveDate) -> Result<Connection, AppErr
         .map_err(|error| AppError::database("The local database could not be opened", error))?;
 
     configure(&connection)?;
+    let existing_version = backup::schema_version(&connection)?;
+    let current_database_id = backup::database_identifier(&connection)?;
+    let mut pre_migration_backup = None;
+    let mut pre_migration_database_id = None;
+
+    if existing_version > 0 && existing_version < LATEST_SCHEMA_VERSION {
+        let database_id = current_database_id.unwrap_or_else(backup::new_database_id);
+        let backup_directory = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("backups");
+        let result = backup::create_backup(
+            &connection,
+            &backup_directory,
+            "pre-migration",
+            Some(&database_id),
+        )
+        .map_err(|error| {
+            eprintln!("Pre-migration safety backup failed: {error:?}");
+            AppError::backup_failed(
+                "The database needs an upgrade, but the required pre-migration safety backup failed. The database was not upgraded. Check free space and permissions, then restart the app.",
+            )
+        })?;
+        pre_migration_backup = Some(result);
+        pre_migration_database_id = Some(database_id);
+    }
+
     migrate(&mut connection)?;
+    backup::ensure_database_identifier(&connection, pre_migration_database_id.as_deref())?;
+    if let Some(result) = &pre_migration_backup {
+        backup::record_success(&connection, &result.manifest)?;
+    }
     settings::ensure_defaults(&mut connection, today)?;
     syllabus::seed(&mut connection)?;
     timer::ensure_defaults(&mut connection)?;
@@ -128,10 +354,19 @@ fn migrate(connection: &mut Connection) -> Result<(), AppError> {
 
 #[cfg(test)]
 pub(crate) fn test_connection() -> Connection {
-    let mut connection = Connection::open_in_memory().expect("in-memory database should open");
-    configure(&connection).expect("test database should be configured");
-    migrate(&mut connection).expect("test database should be migrated");
+    in_memory_connection().expect("in-memory database should open")
+}
+
+pub(crate) fn in_memory_connection() -> Result<Connection, AppError> {
+    let mut connection = Connection::open_in_memory()
+        .map_err(|error| AppError::database("An in-memory database could not be opened", error))?;
     connection
+        .pragma_update(None, "foreign_keys", true)
+        .map_err(|error| {
+            AppError::database("In-memory foreign keys could not be enabled", error)
+        })?;
+    migrate(&mut connection)?;
+    Ok(connection)
 }
 
 #[cfg(test)]
@@ -145,7 +380,7 @@ pub(crate) fn test_connection_with_defaults(today: NaiveDate) -> Connection {
 mod tests {
     use super::*;
     use crate::{
-        mock_tests, planner, pyq, revision, sessions,
+        backup, mock_tests, planner, pyq, revision, sessions,
         settings::{Settings, SettingsInput},
     };
 
@@ -162,13 +397,14 @@ mod tests {
     #[test]
     fn migration_definitions_are_valid() {
         MIGRATIONS.validate().expect("migrations should be valid");
+        assert_eq!(LATEST_SCHEMA_VERSION, MIGRATIONS_SLICE.len() as i64);
     }
 
     #[test]
     fn migrations_are_versioned_and_repeatable() {
         let mut connection = test_connection();
 
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
         let table_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM sqlite_master
@@ -189,16 +425,18 @@ mod tests {
                        'revision_settings',
                        'revision_schedules',
                        'revision_history',
-                       'dashboard_sections'
+                       'dashboard_sections',
+                       'database_metadata',
+                       'backup_settings'
                    )",
                 [],
                 |row| row.get(0),
             )
             .expect("migration tables should be inspectable");
-        assert_eq!(table_count, 16);
+        assert_eq!(table_count, 18);
 
         migrate(&mut connection).expect("a repeated migration should be a no-op");
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
     }
 
     #[test]
@@ -231,7 +469,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -363,7 +601,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -496,7 +734,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
         assert_eq!(
             settings::load(&connection)
                 .expect("settings should load")
@@ -716,7 +954,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
         let progress: (String, String) = connection
             .query_row(
                 "SELECT status, notes FROM syllabus_progress LIMIT 1",
@@ -921,7 +1159,7 @@ mod tests {
         }
 
         let connection = open_database(&path, today).expect("database should upgrade and open");
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
 
         let progress: (String, String) = connection
             .query_row(
@@ -1053,5 +1291,224 @@ mod tests {
 
         assert_eq!(error.code, "database_unavailable");
         assert!(error.message.contains("application-data folder"));
+    }
+
+    #[test]
+    fn migration_creates_a_verified_backup_with_the_same_database_identity() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join(DATABASE_FILE_NAME);
+        let today = date(2026, 10, 30);
+        {
+            let mut connection =
+                Connection::open(&path).expect("version seven database should open");
+            configure(&connection).expect("database should configure");
+            Migrations::from_slice(&MIGRATIONS_SLICE[..7])
+                .to_latest(&mut connection)
+                .expect("version seven schema should apply");
+            settings::ensure_defaults(&mut connection, today).expect("settings should exist");
+            syllabus::seed(&mut connection).expect("syllabus should seed");
+        }
+
+        let connection = open_database(&path, today).expect("database should upgrade");
+        assert_eq!(schema_version(&connection), 8);
+        let metadata_id = backup::database_identifier(&connection)
+            .expect("identity should load")
+            .expect("identity should exist");
+        let backups_dir = directory.path().join("backups");
+        let mut entries = fs::read_dir(&backups_dir)
+            .expect("backups should exist")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("csir-net-tracker-pre-migration-")
+                    && entry.file_name().to_string_lossy().ends_with(".sqlite3")
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        assert_eq!(entries.len(), 1);
+        let verified =
+            backup::verify_backup(&entries[0].path()).expect("migration backup should verify");
+        assert_eq!(verified.manifest.schema_version, 7);
+        assert_eq!(verified.manifest.database_id, metadata_id);
+    }
+
+    #[test]
+    fn migration_backup_failure_aborts_upgrade_without_changing_schema() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join(DATABASE_FILE_NAME);
+        let today = date(2026, 10, 30);
+        {
+            let mut connection =
+                Connection::open(&path).expect("version seven database should open");
+            configure(&connection).expect("database should configure");
+            Migrations::from_slice(&MIGRATIONS_SLICE[..7])
+                .to_latest(&mut connection)
+                .expect("version seven schema should apply");
+            settings::ensure_defaults(&mut connection, today).expect("settings should exist");
+            syllabus::seed(&mut connection).expect("syllabus should seed");
+        }
+        fs::write(directory.path().join("backups"), b"blocking file")
+            .expect("blocking file should write");
+
+        let error = open_database(&path, today).expect_err("migration should abort");
+        assert_eq!(error.code, "backup_failed");
+        let connection = Connection::open(&path).expect("database should still open");
+        assert_eq!(schema_version(&connection), 7);
+    }
+
+    #[test]
+    fn restore_replaces_state_and_keeps_a_verified_safety_backup() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let backup_dir = tempfile::tempdir().expect("backup temp");
+        let today = date(2026, 10, 30);
+        let source_path = source.path().join(DATABASE_FILE_NAME);
+        let source_connection = open_database(&source_path, today).expect("source should open");
+        source_connection
+            .execute(
+                "INSERT INTO study_sessions (
+                    topic_id, session_date, duration_seconds, source, notes, created_at, updated_at
+                 ) VALUES (
+                    NULL, '2026-10-30', 3600, 'manual', 'source database', '2026-10-30T00:00:00Z', '2026-10-30T00:00:00Z'
+                 )",
+                [],
+            )
+            .expect("source session should insert");
+        let backup_result =
+            backup::create_backup(&source_connection, backup_dir.path(), "manual", None)
+                .expect("source backup should succeed");
+        drop(source_connection);
+
+        let target_dir = target.path().join("app-data");
+        let state = AppState::initialize(&target_dir, today);
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO study_sessions (
+                        topic_id, session_date, duration_seconds, source, notes, created_at, updated_at
+                     ) VALUES (
+                        NULL, '2026-10-30', 600, 'manual', 'target database', '2026-10-30T00:00:00Z', '2026-10-30T00:00:00Z'
+                     )",
+                    [],
+                    ).map_err(|error| AppError::database("target session should insert", error))?;
+                Ok(())
+            })
+            .expect("target session should save");
+
+        let restored = state
+            .restore_from_backup(&backup_dir.path().join(&backup_result.file_name), today)
+            .expect("restore should succeed");
+        assert!(
+            target_dir
+                .join("backups")
+                .join("safety")
+                .join(&restored.file_name)
+                .is_file()
+        );
+        let notes: String = state
+            .with_connection(|connection| {
+                connection
+                    .query_row("SELECT notes FROM study_sessions", [], |row| row.get(0))
+                    .map_err(|error| AppError::database("restored session should load", error))
+            })
+            .expect("restored state should query");
+        assert_eq!(notes, "source database");
+        assert_eq!(
+            backup::schema_version(
+                state
+                    .database
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .expect("restored connection should exist")
+            )
+            .unwrap(),
+            8
+        );
+    }
+
+    #[test]
+    fn safety_backup_failure_prevents_restore_and_preserves_current_data() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let backup_dir = tempfile::tempdir().expect("backup temp");
+        let today = date(2026, 10, 30);
+        let source_connection = open_database(&source.path().join(DATABASE_FILE_NAME), today)
+            .expect("source should open");
+        let backup_result =
+            backup::create_backup(&source_connection, backup_dir.path(), "manual", None)
+                .expect("source backup should succeed");
+        drop(source_connection);
+
+        let target_dir = target.path().join("app-data");
+        let state = AppState::initialize(&target_dir, today);
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO study_sessions (
+                        topic_id, session_date, duration_seconds, source, notes, created_at, updated_at
+                     ) VALUES (
+                        NULL, '2026-10-30', 600, 'manual', 'must remain', '2026-10-30T00:00:00Z', '2026-10-30T00:00:00Z'
+                     )",
+                    [],
+                    ).map_err(|error| AppError::database("target session should insert", error))?;
+                Ok(())
+            })
+            .expect("target session should save");
+        fs::create_dir_all(target_dir.join("backups")).unwrap();
+        fs::write(target_dir.join("backups").join("safety"), b"blocking file").unwrap();
+
+        let error = state
+            .restore_from_backup(&backup_dir.path().join(&backup_result.file_name), today)
+            .expect_err("restore should abort");
+        assert_eq!(error.code, "backup_failed");
+        let notes: String = state
+            .with_connection(|connection| {
+                connection
+                    .query_row("SELECT notes FROM study_sessions", [], |row| row.get(0))
+                    .map_err(|error| AppError::database("current session should load", error))
+            })
+            .expect("current data should still load");
+        assert_eq!(notes, "must remain");
+    }
+
+    #[test]
+    fn failed_restore_can_recover_from_the_verified_safety_snapshot() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = directory.path().join("app-data");
+        let today = date(2026, 10, 30);
+        let state = AppState::initialize(&data_dir, today);
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO study_sessions (
+                        topic_id, session_date, duration_seconds, source, notes, created_at, updated_at
+                     ) VALUES (
+                        NULL, '2026-10-30', 1200, 'manual', 'recover me', '2026-10-30T00:00:00Z', '2026-10-30T00:00:00Z'
+                     )",
+                    [],
+                    ).map_err(|error| AppError::database("session should insert", error))?;
+                Ok(())
+            })
+            .expect("session should save");
+        let safety = state
+            .with_connection(|connection| {
+                backup::create_safety_backup(connection, &data_dir, "pre-restore", None)
+            })
+            .expect("safety backup should succeed");
+        let safety_path = data_dir
+            .join("backups")
+            .join("safety")
+            .join(&safety.file_name);
+        let current_path = database_path(&data_dir);
+        fs::write(&current_path, b"not a database").expect("corruption should write");
+        let recovered = recover_from_safety_snapshot(&safety_path, &current_path, today)
+            .expect("safety snapshot should recover");
+        let notes: String = recovered
+            .query_row("SELECT notes FROM study_sessions", [], |row| row.get(0))
+            .expect("recovered session should load");
+        assert_eq!(notes, "recover me");
     }
 }

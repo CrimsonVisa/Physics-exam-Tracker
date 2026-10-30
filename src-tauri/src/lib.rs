@@ -1,4 +1,5 @@
 mod analytics;
+mod backup;
 mod csv_import;
 mod dashboard;
 mod date_only;
@@ -6,6 +7,7 @@ mod db;
 mod error;
 mod mock_tests;
 mod planner;
+mod portability;
 mod pyq;
 mod reschedule;
 mod revision;
@@ -42,6 +44,112 @@ fn app_info() -> AppInfo {
 #[tauri::command]
 fn get_app_info() -> AppInfo {
     app_info()
+}
+
+#[tauri::command]
+fn get_backup_overview(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<backup::BackupOverview, AppError> {
+    let data_dir = state.data_dir()?.to_path_buf();
+    state.with_connection(|connection| backup::overview(connection, &data_dir))
+}
+
+#[tauri::command]
+fn update_backup_settings(
+    state: tauri::State<'_, db::AppState>,
+    settings: backup::BackupSettingsInput,
+) -> Result<backup::BackupSettings, AppError> {
+    state.with_connection(|connection| backup::update_settings(connection, settings))
+}
+
+#[tauri::command]
+fn create_manual_backup(
+    state: tauri::State<'_, db::AppState>,
+    destination: Option<String>,
+) -> Result<backup::BackupResult, AppError> {
+    let data_dir = state.data_dir()?.to_path_buf();
+    state.with_connection(|connection| {
+        backup::create_manual_backup(connection, destination.as_deref(), &data_dir)
+    })
+}
+
+#[tauri::command]
+fn run_automatic_backup_if_due(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<backup::AutoBackupOutcome, AppError> {
+    let data_dir = state.data_dir()?.to_path_buf();
+    state.with_connection(|connection| backup::automatic_backup(connection, &data_dir, Utc::now()))
+}
+
+#[tauri::command]
+fn preview_restore_backup(
+    state: tauri::State<'_, db::AppState>,
+    path: String,
+) -> Result<backup::RestorePreview, AppError> {
+    let current_path = state.database_path().map(Path::to_path_buf);
+    state.with_connection(|connection| {
+        backup::preview_restore(
+            Path::new(&path),
+            backup::schema_version(connection)?,
+            current_path.as_deref(),
+        )
+    })
+}
+
+#[tauri::command]
+fn apply_restore_backup(
+    state: tauri::State<'_, db::AppState>,
+    path: String,
+) -> Result<backup::BackupResult, AppError> {
+    state.restore_from_backup(Path::new(&path), Local::now().date_naive())
+}
+
+#[tauri::command]
+fn export_csv_data(
+    state: tauri::State<'_, db::AppState>,
+    destination: String,
+) -> Result<portability::CsvExportResult, AppError> {
+    state.with_connection(|connection| {
+        portability::export_csv_datasets(connection, Path::new(&destination))
+    })
+}
+
+#[tauri::command]
+fn export_json_data(
+    state: tauri::State<'_, db::AppState>,
+    destination: String,
+) -> Result<portability::JsonExportResult, AppError> {
+    state
+        .with_connection(|connection| portability::export_json(connection, Path::new(&destination)))
+}
+
+#[tauri::command]
+fn preview_json_import(
+    state: tauri::State<'_, db::AppState>,
+    path: String,
+) -> Result<portability::JsonImportPreview, AppError> {
+    state.with_connection(|connection| {
+        portability::preview_json_import(connection, Path::new(&path))
+    })
+}
+
+#[tauri::command]
+fn apply_json_import(
+    state: tauri::State<'_, db::AppState>,
+    path: String,
+    strategy: portability::JsonImportStrategy,
+    expected_sha256: String,
+) -> Result<portability::JsonImportResult, AppError> {
+    let data_dir = state.data_dir()?.to_path_buf();
+    state.with_connection(|connection| {
+        portability::apply_json_import(
+            connection,
+            Path::new(&path),
+            strategy,
+            &expected_sha256,
+            &data_dir,
+        )
+    })
 }
 
 #[tauri::command]
@@ -785,6 +893,7 @@ fn get_study_totals(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let today = Local::now().date_naive();
@@ -811,6 +920,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_info,
+            get_backup_overview,
+            update_backup_settings,
+            create_manual_backup,
+            run_automatic_backup_if_due,
+            preview_restore_backup,
+            apply_restore_backup,
+            export_csv_data,
+            export_json_data,
+            preview_json_import,
+            apply_json_import,
             get_settings,
             update_settings,
             preview_exam_date_change,

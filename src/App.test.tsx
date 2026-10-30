@@ -242,6 +242,26 @@ const EMPTY_TIMELINE = {
   notes: [],
 };
 
+const EMPTY_BACKUP_SETTINGS = {
+  automaticEnabled: false,
+  frequency: 'daily',
+  destination: null,
+  retentionCount: 5,
+  lastSuccessAt: null,
+  lastSuccessFile: null,
+  lastFailureAt: null,
+  lastFailureMessage: null,
+  updatedAt: '2026-10-30T10:00:00.000Z',
+};
+
+const EMPTY_BACKUP_OVERVIEW = {
+  settings: EMPTY_BACKUP_SETTINGS,
+  defaultDirectory: 'C:\\Users\\Test\\AppData\\backups',
+  schemaVersion: 8,
+  applicationVersion: '0.1.0',
+  databaseId: '0123456789abcdef0123456789abcdef',
+};
+
 const EMPTY_REVISION_SETTINGS = {
   initialAgainDays: 1,
   initialDifficultDays: 2,
@@ -357,6 +377,13 @@ function mockBackend(overrides: Record<string, MockHandler> = {}) {
     get_study_analytics: () => EMPTY_STUDY_ANALYTICS,
     get_topic_intelligence: () => EMPTY_TOPIC_INTELLIGENCE,
     get_preparation_timeline: () => EMPTY_TIMELINE,
+    get_backup_overview: () => EMPTY_BACKUP_OVERVIEW,
+    run_automatic_backup_if_due: () => ({
+      attempted: false,
+      success: true,
+      message: 'The scheduled automatic backup is not due yet.',
+      fileName: null,
+    }),
     get_revision_dashboard: () => EMPTY_REVISION_DASHBOARD,
     get_revision_summaries: () => [],
     get_revision_history: () => [],
@@ -837,6 +864,12 @@ describe('settings dashboard', () => {
       await screen.findByRole('heading', { name: 'Study performance', level: 1 }),
     ).toBeInTheDocument();
     expect(await screen.findByText(/No study sessions in this range/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Backup' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Protect local study data', level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('Create a verified full backup')).toBeInTheDocument();
   });
 
   it('opens the targeted analytics tab from an evidence-linked dashboard insight', async () => {

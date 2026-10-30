@@ -3,6 +3,7 @@ import { DateField } from './components/DateField';
 import { PreparationDashboard } from './components/PreparationDashboard';
 import { toCommandError } from './lib/commandError';
 import { formatDateLong, parseDateOnly } from './lib/dateOnly';
+import { runAutomaticBackupIfDue } from './lib/backupApi';
 import {
   applyExamDateChange,
   previewExamDateChange,
@@ -12,6 +13,7 @@ import { checkRevisionReminder } from './lib/revisionApi';
 import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import { useTodayDateOnly } from './lib/useTodayDateOnly';
 import AnalyticsScreen, { type AnalyticsTab } from './screens/AnalyticsScreen';
+import BackupScreen from './screens/BackupScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import ChecklistScreen from './screens/ChecklistScreen';
 import MockTestsScreen from './screens/MockTestsScreen';
@@ -31,6 +33,7 @@ type AppView =
   | 'pyq'
   | 'mock-tests'
   | 'analytics'
+  | 'backup'
   | 'syllabus';
 
 type FormState = {
@@ -237,6 +240,14 @@ function Sidebar({
         </button>
         <button
           type="button"
+          className={`nav-item nav-button${activeView === 'backup' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'backup' ? 'page' : undefined}
+          onClick={() => onNavigate('backup')}
+        >
+          Backup
+        </button>
+        <button
+          type="button"
           className={`nav-item nav-button${activeView === 'syllabus' ? ' nav-item-active' : ''}`}
           aria-current={activeView === 'syllabus' ? 'page' : undefined}
           onClick={() => onNavigate('syllabus')}
@@ -246,8 +257,8 @@ function Sidebar({
       </nav>
 
       <p className="sidebar-note">
-        Local-first. Settings, syllabus progress, revision schedules, checklist plans, PYQ and mock
-        records, and study sessions are stored on this PC and never sent to a server.
+        Local-first. Settings, study records, backups, and exports stay on this PC and are never
+        sent to a server. Use Backup and data management to protect a verified snapshot.
       </p>
     </aside>
   );
@@ -263,6 +274,7 @@ const KNOWN_VIEWS: AppView[] = [
   'pyq',
   'mock-tests',
   'analytics',
+  'backup',
   'syllabus',
 ];
 
@@ -327,6 +339,17 @@ export default function App({ today }: AppProps) {
       // Reminders are optional; a notification failure must not block the app.
     });
   }, [currentToday]);
+
+  useEffect(() => {
+    const run = () => {
+      runAutomaticBackupIfDue().catch(() => {
+        // Backup failures are persisted and shown in Backup and data management.
+      });
+    };
+    run();
+    const interval = window.setInterval(run, 60 * 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   function handleRetry() {
     setIsLoading(true);
@@ -510,6 +533,8 @@ export default function App({ today }: AppProps) {
             initialTab={analyticsTab}
             onTabChange={setAnalyticsTab}
           />
+        ) : view === 'backup' ? (
+          <BackupScreen />
         ) : (
           <div className="page-container">
             <header className="page-header">
