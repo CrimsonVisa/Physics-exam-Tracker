@@ -43,6 +43,14 @@ export type PyqPartPerformance = {
   accuracy: number | null;
 };
 
+export type PyqResponseTrendPoint = {
+  date: string;
+  correct: number;
+  incorrect: number;
+  skipped: number;
+  outcomeUnknown: number;
+};
+
 export type PyqAnalytics = {
   totalRecords: number;
   correct: number;
@@ -58,6 +66,7 @@ export type PyqAnalytics = {
   byYear: PyqYearPerformance[];
   byPart: PyqPartPerformance[];
   weakTopics: PyqTopicPerformance[];
+  responseTrend: PyqResponseTrendPoint[];
 };
 
 export type MockTrendPoint = {
@@ -80,13 +89,36 @@ export type MockPartPerformance = {
   accuracy: number | null;
 };
 
+export type MockResponseTrendPoint = {
+  date: string;
+  testCount: number;
+  correct: number;
+  incorrect: number;
+  unanswered: number;
+  averagePercentage: number | null;
+};
+
 export type MockAnalytics = {
   testCount: number;
   averagePercentage: number | null;
   bestPercentage: number | null;
   latestPercentage: number | null;
+  totalQuestions: number;
+  totalAttempted: number;
+  totalCorrect: number;
+  totalIncorrect: number;
+  totalUnanswered: number;
   trend: MockTrendPoint[];
   byPart: MockPartPerformance[];
+  responseTrend: MockResponseTrendPoint[];
+};
+
+export type PerformanceAnalytics = {
+  fromDate: string;
+  toDate: string;
+  pyq: PyqAnalytics;
+  mock: MockAnalytics;
+  separationNote: string;
 };
 
 export type StudyPerformanceDay = {
@@ -113,4 +145,11 @@ export function getMockAnalytics(): Promise<MockAnalytics> {
 
 export function getStudyPerformance(): Promise<StudyPerformance> {
   return invoke<StudyPerformance>('get_study_performance');
+}
+
+export function getPerformanceAnalytics(
+  fromDate: string,
+  toDate: string,
+): Promise<PerformanceAnalytics> {
+  return invoke<PerformanceAnalytics>('get_performance_analytics', { fromDate, toDate });
 }

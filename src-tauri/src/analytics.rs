@@ -3,10 +3,11 @@ use std::collections::BTreeMap;
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::{error::AppError, mock_tests};
+use crate::{date_only, error::AppError, mock_tests};
 
 pub const MINIMUM_WEAK_ATTEMPTS: i64 = 5;
 pub const WEAK_ACCURACY_THRESHOLD: f64 = 50.0;
+pub const STRONG_ACCURACY_THRESHOLD: f64 = 75.0;
 pub const MAX_STUDY_PERFORMANCE_DAYS: usize = 60;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -60,6 +61,16 @@ pub struct PyqPartPerformance {
     pub accuracy: Option<f64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PyqResponseTrendPoint {
+    pub date: String,
+    pub correct: i64,
+    pub incorrect: i64,
+    pub skipped: i64,
+    pub outcome_unknown: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PyqAnalytics {
@@ -77,6 +88,7 @@ pub struct PyqAnalytics {
     pub by_year: Vec<PyqYearPerformance>,
     pub by_part: Vec<PyqPartPerformance>,
     pub weak_topics: Vec<PyqTopicPerformance>,
+    pub response_trend: Vec<PyqResponseTrendPoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -105,13 +117,40 @@ pub struct MockPartPerformance {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MockResponseTrendPoint {
+    pub date: String,
+    pub test_count: i64,
+    pub correct: i64,
+    pub incorrect: i64,
+    pub unanswered: i64,
+    pub average_percentage: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MockAnalytics {
     pub test_count: i64,
     pub average_percentage: Option<f64>,
     pub best_percentage: Option<f64>,
     pub latest_percentage: Option<f64>,
+    pub total_questions: i64,
+    pub total_attempted: i64,
+    pub total_correct: i64,
+    pub total_incorrect: i64,
+    pub total_unanswered: i64,
     pub trend: Vec<MockTrendPoint>,
     pub by_part: Vec<MockPartPerformance>,
+    pub response_trend: Vec<MockResponseTrendPoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerformanceAnalytics {
+    pub from_date: String,
+    pub to_date: String,
+    pub pyq: PyqAnalytics,
+    pub mock: MockAnalytics,
+    pub separation_note: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -133,6 +172,18 @@ pub struct StudyPerformance {
 }
 
 pub fn pyq(connection: &Connection) -> Result<PyqAnalytics, AppError> {
+    pyq_in_range(connection, None, None)
+}
+
+pub fn pyq_in_range(
+    connection: &Connection,
+    from_date: Option<&str>,
+    to_date: Option<&str>,
+) -> Result<PyqAnalytics, AppError> {
+    let from = normalize_optional_date(from_date, "fromDate")?;
+    let to = normalize_optional_date(to_date, "toDate")?;
+    validate_range_order(from.as_deref(), to.as_deref())?;
+
     let (total_records, correct, incorrect, skipped, outcome_unknown): (i64, i64, i64, i64, i64) =
         connection
             .query_row(
@@ -142,8 +193,10 @@ pub fn pyq(connection: &Connection) -> Result<PyqAnalytics, AppError> {
                     COALESCE(SUM(CASE WHEN status = 'incorrect' THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN status = 'attempted' THEN 1 ELSE 0 END), 0)
-                 FROM pyq_attempts",
-                [],
+                 FROM pyq_attempts
+                 WHERE (?1 IS NULL OR attempt_date >= ?1)
+                   AND (?2 IS NULL OR attempt_date <= ?2)",
+                rusqlite::params![from, to],
                 |row| {
                     Ok((
                         row.get(0)?,
@@ -156,7 +209,7 @@ pub fn pyq(connection: &Connection) -> Result<PyqAnalytics, AppError> {
             )
             .map_err(|error| AppError::database("PYQ totals could not be calculated", error))?;
 
-    let by_topic = query_topic_performance(connection)?;
+    let by_topic = query_topic_performance(connection, from.as_deref(), to.as_deref())?;
     let mut weak_topics = by_topic
         .iter()
         .filter(|topic| {
@@ -184,14 +237,19 @@ pub fn pyq(connection: &Connection) -> Result<PyqAnalytics, AppError> {
         minimum_weak_attempts: MINIMUM_WEAK_ATTEMPTS,
         weak_accuracy_threshold: WEAK_ACCURACY_THRESHOLD,
         by_topic,
-        by_unit: query_unit_performance(connection)?,
-        by_year: query_year_performance(connection)?,
-        by_part: query_part_performance(connection)?,
+        by_unit: query_unit_performance(connection, from.as_deref(), to.as_deref())?,
+        by_year: query_year_performance(connection, from.as_deref(), to.as_deref())?,
+        by_part: query_part_performance(connection, from.as_deref(), to.as_deref())?,
         weak_topics,
+        response_trend: query_pyq_response_trend(connection, from.as_deref(), to.as_deref())?,
     })
 }
 
-fn query_topic_performance(connection: &Connection) -> Result<Vec<PyqTopicPerformance>, AppError> {
+fn query_topic_performance(
+    connection: &Connection,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<PyqTopicPerformance>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -207,13 +265,15 @@ fn query_topic_performance(connection: &Connection) -> Result<Vec<PyqTopicPerfor
              FROM pyq_attempts p
              JOIN syllabus_topics t ON t.id = p.topic_id
              JOIN syllabus_sections s ON s.id = t.section_id
+             WHERE (?1 IS NULL OR p.attempt_date >= ?1)
+               AND (?2 IS NULL OR p.attempt_date <= ?2)
              GROUP BY t.id
              ORDER BY s.display_order, t.display_order, t.code",
         )
         .map_err(|error| AppError::database("PYQ topic analytics could not be prepared", error))?;
 
     statement
-        .query_map([], |row| {
+        .query_map(rusqlite::params![from, to], |row| {
             let correct: i64 = row.get(6)?;
             let incorrect: i64 = row.get(7)?;
             let attempts = correct + incorrect;
@@ -237,7 +297,11 @@ fn query_topic_performance(connection: &Connection) -> Result<Vec<PyqTopicPerfor
         .map_err(|error| AppError::database("PYQ topic analytics could not be read", error))
 }
 
-fn query_unit_performance(connection: &Connection) -> Result<Vec<PyqUnitPerformance>, AppError> {
+fn query_unit_performance(
+    connection: &Connection,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<PyqUnitPerformance>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -249,13 +313,15 @@ fn query_unit_performance(connection: &Connection) -> Result<Vec<PyqUnitPerforma
              FROM pyq_attempts p
              JOIN syllabus_topics t ON t.id = p.topic_id
              JOIN syllabus_sections s ON s.id = t.section_id
+             WHERE (?1 IS NULL OR p.attempt_date >= ?1)
+               AND (?2 IS NULL OR p.attempt_date <= ?2)
              GROUP BY s.id
              ORDER BY s.display_order",
         )
         .map_err(|error| AppError::database("PYQ unit analytics could not be prepared", error))?;
 
     statement
-        .query_map([], |row| {
+        .query_map(rusqlite::params![from, to], |row| {
             let correct: i64 = row.get(2)?;
             let incorrect: i64 = row.get(3)?;
             Ok(PyqUnitPerformance {
@@ -273,7 +339,11 @@ fn query_unit_performance(connection: &Connection) -> Result<Vec<PyqUnitPerforma
         .map_err(|error| AppError::database("PYQ unit analytics could not be read", error))
 }
 
-fn query_year_performance(connection: &Connection) -> Result<Vec<PyqYearPerformance>, AppError> {
+fn query_year_performance(
+    connection: &Connection,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<PyqYearPerformance>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -282,13 +352,15 @@ fn query_year_performance(connection: &Connection) -> Result<Vec<PyqYearPerforma
                 COALESCE(SUM(CASE WHEN status = 'incorrect' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0)
              FROM pyq_attempts
+             WHERE (?1 IS NULL OR attempt_date >= ?1)
+               AND (?2 IS NULL OR attempt_date <= ?2)
              GROUP BY question_year
              ORDER BY question_year DESC",
         )
         .map_err(|error| AppError::database("PYQ year analytics could not be prepared", error))?;
 
     statement
-        .query_map([], |row| {
+        .query_map(rusqlite::params![from, to], |row| {
             let correct: i64 = row.get(1)?;
             let incorrect: i64 = row.get(2)?;
             Ok(PyqYearPerformance {
@@ -305,7 +377,11 @@ fn query_year_performance(connection: &Connection) -> Result<Vec<PyqYearPerforma
         .map_err(|error| AppError::database("PYQ year analytics could not be read", error))
 }
 
-fn query_part_performance(connection: &Connection) -> Result<Vec<PyqPartPerformance>, AppError> {
+fn query_part_performance(
+    connection: &Connection,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<PyqPartPerformance>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -314,13 +390,15 @@ fn query_part_performance(connection: &Connection) -> Result<Vec<PyqPartPerforma
                 COALESCE(SUM(CASE WHEN status = 'incorrect' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0)
              FROM pyq_attempts
+             WHERE (?1 IS NULL OR attempt_date >= ?1)
+               AND (?2 IS NULL OR attempt_date <= ?2)
              GROUP BY part
              ORDER BY part",
         )
         .map_err(|error| AppError::database("PYQ part analytics could not be prepared", error))?;
 
     statement
-        .query_map([], |row| {
+        .query_map(rusqlite::params![from, to], |row| {
             let correct: i64 = row.get(1)?;
             let incorrect: i64 = row.get(2)?;
             Ok(PyqPartPerformance {
@@ -337,8 +415,69 @@ fn query_part_performance(connection: &Connection) -> Result<Vec<PyqPartPerforma
         .map_err(|error| AppError::database("PYQ part analytics could not be read", error))
 }
 
+fn query_pyq_response_trend(
+    connection: &Connection,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<PyqResponseTrendPoint>, AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                attempt_date,
+                COALESCE(SUM(CASE WHEN status = 'correct' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'incorrect' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'attempted' THEN 1 ELSE 0 END), 0)
+             FROM pyq_attempts
+             WHERE (?1 IS NULL OR attempt_date >= ?1)
+               AND (?2 IS NULL OR attempt_date <= ?2)
+             GROUP BY attempt_date
+             ORDER BY attempt_date",
+        )
+        .map_err(|error| AppError::database("PYQ response trend could not be prepared", error))?;
+
+    statement
+        .query_map(rusqlite::params![from, to], |row| {
+            Ok(PyqResponseTrendPoint {
+                date: row.get(0)?,
+                correct: row.get(1)?,
+                incorrect: row.get(2)?,
+                skipped: row.get(3)?,
+                outcome_unknown: row.get(4)?,
+            })
+        })
+        .map_err(|error| AppError::database("PYQ response trend could not be queried", error))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| AppError::database("PYQ response trend could not be read", error))
+}
+
 pub fn mocks(connection: &Connection) -> Result<MockAnalytics, AppError> {
-    let tests = mock_tests::list(connection)?;
+    mock_analytics_from_tests(mock_tests::list(connection)?)
+}
+
+pub fn mocks_in_range(
+    connection: &Connection,
+    from_date: Option<&str>,
+    to_date: Option<&str>,
+) -> Result<MockAnalytics, AppError> {
+    let from = normalize_optional_date(from_date, "fromDate")?;
+    let to = normalize_optional_date(to_date, "toDate")?;
+    validate_range_order(from.as_deref(), to.as_deref())?;
+    let tests = mock_tests::list(connection)?
+        .into_iter()
+        .filter(|test| {
+            from.as_deref()
+                .is_none_or(|value| test.test_date.as_str() >= value)
+                && to
+                    .as_deref()
+                    .is_none_or(|value| test.test_date.as_str() <= value)
+        })
+        .collect::<Vec<_>>();
+
+    mock_analytics_from_tests(tests)
+}
+
+fn mock_analytics_from_tests(tests: Vec<mock_tests::MockTest>) -> Result<MockAnalytics, AppError> {
     let test_count = tests.len() as i64;
     let average_percentage = if tests.is_empty() {
         None
@@ -382,7 +521,15 @@ pub fn mocks(connection: &Connection) -> Result<MockAnalytics, AppError> {
         MockPartAccumulator::default(),
         MockPartAccumulator::default(),
     ];
+    let mut response_trend: BTreeMap<String, MockResponseAccumulator> = BTreeMap::new();
     for test in &tests {
+        let entry = response_trend.entry(test.test_date.clone()).or_default();
+        entry.test_count += 1;
+        entry.correct += test.total_correct;
+        entry.incorrect += test.total_incorrect;
+        entry.unanswered += test.total_unanswered;
+        entry.percentages.push(test.computed_percentage);
+
         for (index, part) in [&test.part_a, &test.part_b, &test.part_c]
             .into_iter()
             .enumerate()
@@ -395,26 +542,113 @@ pub fn mocks(connection: &Connection) -> Result<MockAnalytics, AppError> {
         }
     }
 
+    let by_part = ["A", "B", "C"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, part)| MockPartPerformance {
+            part: part.to_owned(),
+            questions: parts[index].questions,
+            attempted: parts[index].attempted,
+            correct: parts[index].correct,
+            incorrect: parts[index].incorrect,
+            unanswered: parts[index].unanswered,
+            accuracy: accuracy(parts[index].correct, parts[index].incorrect),
+        })
+        .collect::<Vec<_>>();
+
+    let total_questions = by_part.iter().map(|part| part.questions).sum();
+    let total_attempted = by_part.iter().map(|part| part.attempted).sum();
+    let total_correct = by_part.iter().map(|part| part.correct).sum();
+    let total_incorrect = by_part.iter().map(|part| part.incorrect).sum();
+    let total_unanswered = by_part.iter().map(|part| part.unanswered).sum();
+    let response_trend = response_trend
+        .into_iter()
+        .map(|(date, data)| {
+            let count = data.percentages.len() as i64;
+            MockResponseTrendPoint {
+                date,
+                test_count: data.test_count,
+                correct: data.correct,
+                incorrect: data.incorrect,
+                unanswered: data.unanswered,
+                average_percentage: if count == 0 {
+                    None
+                } else {
+                    Some(data.percentages.iter().sum::<f64>() / count as f64)
+                },
+            }
+        })
+        .collect();
+
     Ok(MockAnalytics {
         test_count,
         average_percentage,
         best_percentage,
         latest_percentage,
+        total_questions,
+        total_attempted,
+        total_correct,
+        total_incorrect,
+        total_unanswered,
         trend,
-        by_part: ["A", "B", "C"]
-            .into_iter()
-            .enumerate()
-            .map(|(index, part)| MockPartPerformance {
-                part: part.to_owned(),
-                questions: parts[index].questions,
-                attempted: parts[index].attempted,
-                correct: parts[index].correct,
-                incorrect: parts[index].incorrect,
-                unanswered: parts[index].unanswered,
-                accuracy: accuracy(parts[index].correct, parts[index].incorrect),
-            })
-            .collect(),
+        by_part,
+        response_trend,
     })
+}
+
+#[derive(Default)]
+struct MockResponseAccumulator {
+    test_count: i64,
+    correct: i64,
+    incorrect: i64,
+    unanswered: i64,
+    percentages: Vec<f64>,
+}
+
+pub fn performance(
+    connection: &Connection,
+    from_date: &str,
+    to_date: &str,
+) -> Result<PerformanceAnalytics, AppError> {
+    let from = normalize_required_date(from_date, "fromDate")?;
+    let to = normalize_required_date(to_date, "toDate")?;
+    validate_range_order(Some(&from), Some(&to))?;
+
+    Ok(PerformanceAnalytics {
+        pyq: pyq_in_range(connection, Some(&from), Some(&to))?,
+        mock: mocks_in_range(connection, Some(&from), Some(&to))?,
+        from_date: from,
+        to_date: to,
+        separation_note: "PYQ and mock-test results are calculated separately. No combined score is produced because they measure different records and marking rules.".to_owned(),
+    })
+}
+
+fn normalize_required_date(value: &str, field: &'static str) -> Result<String, AppError> {
+    let date = date_only::parse_date_only(value.trim()).ok_or_else(|| {
+        AppError::validation(field, "Enter a real calendar date in YYYY-MM-DD format.")
+    })?;
+    Ok(date_only::format_date_only(date))
+}
+
+fn normalize_optional_date(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<Option<String>, AppError> {
+    value
+        .map(|value| normalize_required_date(value, field))
+        .transpose()
+}
+
+fn validate_range_order(from: Option<&str>, to: Option<&str>) -> Result<(), AppError> {
+    if let (Some(from), Some(to)) = (from, to)
+        && from > to
+    {
+        return Err(AppError::validation(
+            "fromDate",
+            "The start date cannot be after the end date.",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -763,5 +997,81 @@ mod tests {
         assert_eq!(performance.days[2].study_seconds, 1_800);
         assert_eq!(performance.days[2].pyq_accuracy, None);
         assert_eq!(performance.days[2].mock_count, 0);
+    }
+
+    #[test]
+    fn filtered_performance_keeps_pyq_and_mock_metrics_separate_and_tracks_responses() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C01");
+        pyq::create(
+            &mut connection,
+            pyq_input(topic, 2024, "A", "correct", "2026-09-30"),
+        )
+        .expect("earlier PYQ should save");
+        pyq::create(
+            &mut connection,
+            pyq_input(topic, 2024, "B", "incorrect", "2026-10-15"),
+        )
+        .expect("later PYQ should save");
+        mock_tests::create(&mut connection, mock_input("Early mock", "2026-10-01", 5))
+            .expect("earlier mock should save");
+        mock_tests::create(
+            &mut connection,
+            mock_input("Filtered mock", "2026-10-15", 8),
+        )
+        .expect("later mock should save");
+
+        let filtered =
+            performance(&connection, "2026-10-10", "2026-10-20").expect("performance should load");
+        assert_eq!(filtered.pyq.total_records, 1);
+        assert_eq!(filtered.pyq.correct, 0);
+        assert_eq!(filtered.pyq.incorrect, 1);
+        assert_eq!(filtered.pyq.accuracy, Some(0.0));
+        assert_eq!(filtered.pyq.by_topic.len(), 1);
+        assert_eq!(filtered.pyq.response_trend[0].date, "2026-10-15");
+        assert_eq!(filtered.pyq.response_trend[0].incorrect, 1);
+
+        assert_eq!(filtered.mock.test_count, 1);
+        assert_eq!(filtered.mock.trend[0].test_name, "Filtered mock");
+        assert_eq!(
+            filtered.mock.latest_percentage,
+            filtered.mock.best_percentage
+        );
+        assert_eq!(filtered.mock.total_questions, 40);
+        assert_eq!(filtered.mock.total_attempted, 40);
+        assert_eq!(filtered.mock.total_unanswered, 0);
+        assert_eq!(filtered.mock.response_trend[0].test_count, 1);
+        assert_eq!(filtered.mock.response_trend[0].correct, 23);
+        assert_eq!(filtered.mock.response_trend[0].incorrect, 17);
+        assert_eq!(filtered.mock.response_trend[0].unanswered, 0);
+
+        assert!(filtered.separation_note.contains("No combined score"));
+        assert_eq!(
+            filtered
+                .pyq
+                .response_trend
+                .iter()
+                .map(|point| point.date.clone())
+                .collect::<Vec<_>>(),
+            vec!["2026-10-15".to_owned()]
+        );
+        assert_eq!(
+            pyq_in_range(&connection, Some("2026-10-01"), Some("2026-10-15"))
+                .expect("bounded PYQ analytics should load")
+                .total_records,
+            1
+        );
+        assert_eq!(
+            mocks_in_range(&connection, None, Some("2026-10-01"))
+                .expect("bounded mock analytics should load")
+                .test_count,
+            1
+        );
+        assert_eq!(
+            performance(&connection, "2026-10-20", "2026-10-10")
+                .expect_err("reversed range should fail")
+                .field,
+            Some("fromDate")
+        );
     }
 }

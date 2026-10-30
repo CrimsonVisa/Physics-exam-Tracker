@@ -288,6 +288,22 @@ pub fn list(connection: &Connection, filter: PyqFilter) -> Result<Vec<PyqAttempt
     )
 }
 
+pub fn recent(connection: &Connection, limit: i64) -> Result<Vec<PyqAttempt>, AppError> {
+    if !(1..=50).contains(&limit) {
+        return Err(AppError::validation(
+            "limit",
+            "Recent PYQ limit must be between 1 and 50.",
+        ));
+    }
+
+    let sql = format!(
+        "{SELECT_PYQ}
+         ORDER BY p.attempt_date DESC, p.id DESC
+         LIMIT ?1"
+    );
+    query_attempts(connection, &sql, [limit])
+}
+
 pub fn create(connection: &mut Connection, input: PyqInput) -> Result<PyqAttempt, AppError> {
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The PYQ-attempt transaction could not be started", error)

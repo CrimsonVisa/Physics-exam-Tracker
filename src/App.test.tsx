@@ -82,6 +82,7 @@ const EMPTY_PYQ_ANALYTICS = {
   byYear: [],
   byPart: [],
   weakTopics: [],
+  responseTrend: [],
 };
 
 const EMPTY_MOCK_ANALYTICS = {
@@ -89,8 +90,156 @@ const EMPTY_MOCK_ANALYTICS = {
   averagePercentage: null,
   bestPercentage: null,
   latestPercentage: null,
+  totalQuestions: 0,
+  totalAttempted: 0,
+  totalCorrect: 0,
+  totalIncorrect: 0,
+  totalUnanswered: 0,
   trend: [],
   byPart: [],
+  responseTrend: [],
+};
+
+const EMPTY_SYLLABUS_SUMMARY = {
+  totalTopics: 0,
+  statusCounts: { notStarted: 0, learning: 0, revised: 0, confident: 0 },
+  approximateProgress: 0,
+  sections: [],
+};
+
+const EMPTY_DASHBOARD_LAYOUT = {
+  sections: [
+    'exam-countdown',
+    'syllabus-progress',
+    'study-totals',
+    'today-study',
+    'revision-status',
+    'deadlines-blocks',
+    'recent-pyq',
+    'latest-mock',
+    'insights',
+  ].map((key, displayOrder) => ({ key, visible: true, displayOrder })),
+};
+
+const EMPTY_PREPARATION_DASHBOARD = {
+  today: TODAY,
+  settings: DEFAULT_SETTINGS,
+  preparationDayNumber: 43,
+  preparationElapsedDays: 42,
+  daysUntilExam: 9,
+  syllabus: EMPTY_SYLLABUS_SUMMARY,
+  revision: {
+    scheduledCount: 0,
+    activeCount: 0,
+    suspendedCount: 0,
+    dueTodayCount: 0,
+    overdueCount: 0,
+    completedToday: 0,
+    completedLast7Days: 0,
+    totalCompleted: 0,
+  },
+  dailyRevisionTarget: 5,
+  totalStudySeconds: 0,
+  todayStudySeconds: 0,
+  todaySessionCount: 0,
+  weekStart: '2026-12-07',
+  weekEnd: '2026-12-13',
+  weekStudySeconds: 0,
+  monthStart: '2026-12-01',
+  monthStudySeconds: 0,
+  dailyStudyTargetMinutes: 240,
+  todayTargetPercent: 0,
+  upcomingDeadlines: [],
+  upcomingBlocks: [],
+  overdueTaskCount: 0,
+  recentPyq: [],
+  latestMock: null,
+  insights: [],
+  layout: EMPTY_DASHBOARD_LAYOUT,
+};
+
+const EMPTY_STUDY_ANALYTICS = {
+  fromDate: '2026-11-12',
+  toDate: TODAY,
+  today: TODAY,
+  preparationStartDate: '2026-10-29',
+  dailyTargetMinutes: 240,
+  dailyTargetSeconds: 14_400,
+  rangeSeconds: 0,
+  rangeSessionCount: 0,
+  totalRecordedSeconds: 0,
+  totalRecordedSessions: 0,
+  eligibleDays: 29,
+  activeDays: 0,
+  consistentDaysPercent: 0,
+  targetMetDays: 0,
+  missedTargetDays: 28,
+  targetCompletionRate: 0,
+  totalActiveDays: 0,
+  currentStreak: 0,
+  longestStreak: 0,
+  daily: [],
+  weekly: [],
+  monthly: [],
+  weeklyTargetsMet: 0,
+  weeklyTargetsTotal: 0,
+  weeklyTargetCompletionRate: null,
+  durationBuckets: [],
+  byUnit: [],
+  unassignedSeconds: 0,
+  unassignedSessionCount: 0,
+  focusSeconds: 0,
+  breakSeconds: null,
+  breakTrackingSupported: false,
+  previousPeriod: {
+    fromDate: '2026-10-14',
+    toDate: '2026-11-11',
+    seconds: 0,
+    sessionCount: 0,
+    activeDays: 0,
+    eligibleDays: 13,
+    targetMetDays: 0,
+    targetCompletionRate: 0,
+    secondsChangePercent: null,
+  },
+  revisionConsistency: {
+    completedInRange: 0,
+    onTimeCount: 0,
+    lateCount: 0,
+    onTimeRate: null,
+    activeScheduledCount: 0,
+    currentlyOverdueCount: 0,
+    note: 'Revision consistency note.',
+  },
+};
+
+const EMPTY_TOPIC_INTELLIGENCE = {
+  thresholds: {
+    minimumScoredAttempts: 5,
+    weakAccuracyThreshold: 50,
+    strongAccuracyThreshold: 75,
+    highConfidenceMinimum: 4,
+    lowConfidenceMaximum: 2,
+  },
+  totalTopics: 0,
+  scoredTopics: 0,
+  noDataTopics: 0,
+  strong: [],
+  weak: [],
+  needsRevision: [],
+  insufficient: [],
+  overdueRevision: [],
+  highConfidencePoorPyq: [],
+  lowConfidenceStrongPyq: [],
+  notes: [],
+};
+
+const EMPTY_TIMELINE = {
+  fromDate: '2026-11-10',
+  toDate: '2027-03-19',
+  today: TODAY,
+  events: [],
+  notes: [],
 };
 
 const EMPTY_REVISION_SETTINGS = {
@@ -195,6 +344,19 @@ function mockBackend(overrides: Record<string, MockHandler> = {}) {
     get_pyq_analytics: () => EMPTY_PYQ_ANALYTICS,
     get_mock_analytics: () => EMPTY_MOCK_ANALYTICS,
     get_study_performance: () => ({ days: [] }),
+    get_preparation_dashboard: () => EMPTY_PREPARATION_DASHBOARD,
+    update_dashboard_layout: (args) => ({ sections: args?.sections ?? [] }),
+    reset_dashboard_layout: () => EMPTY_DASHBOARD_LAYOUT,
+    get_performance_analytics: () => ({
+      fromDate: EMPTY_STUDY_ANALYTICS.fromDate,
+      toDate: EMPTY_STUDY_ANALYTICS.toDate,
+      pyq: EMPTY_PYQ_ANALYTICS,
+      mock: EMPTY_MOCK_ANALYTICS,
+      separationNote: 'PYQ and mock-test results are separate.',
+    }),
+    get_study_analytics: () => EMPTY_STUDY_ANALYTICS,
+    get_topic_intelligence: () => EMPTY_TOPIC_INTELLIGENCE,
+    get_preparation_timeline: () => EMPTY_TIMELINE,
     get_revision_dashboard: () => EMPTY_REVISION_DASHBOARD,
     get_revision_summaries: () => [],
     get_revision_history: () => [],
@@ -246,7 +408,7 @@ describe('settings dashboard', () => {
     expect(screen.getByText('9')).toHaveClass('countdown-value');
     expect(screen.getByText('19 December 2026')).toBeInTheDocument();
     expect(screen.getByText('29 October 2026')).toBeInTheDocument();
-    expect(screen.getByText('4 hours per day')).toBeInTheDocument();
+    expect(screen.getByText(/4 hours per day/)).toBeInTheDocument();
     expect(screen.getByText(/19 December is a provisional default/)).toBeInTheDocument();
     expect(
       screen.getByText(/Confirm the actual subject date on your admit card/),
@@ -258,9 +420,11 @@ describe('settings dashboard', () => {
       await screen.findByRole('heading', { name: /Plan for 10 December 2026/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Only completed focus sessions appear in study totals/),
+      screen.getAllByText(/Only completed focus sessions appear in study totals/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByRole('heading', { name: 'Preparation dashboard', level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Exam countdown', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('CSIR-NET')).toBeInTheDocument();
     expect(screen.getByText('Physics Tracker')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Primary navigation' })).toBeInTheDocument();
@@ -463,7 +627,7 @@ describe('settings dashboard', () => {
     fireEvent.change(dailyTarget, { target: { value: '300' } });
 
     expect(screen.getByText('300 minutes is 5 hours per day.')).toBeInTheDocument();
-    expect(screen.getByText('5 hours per day')).toBeInTheDocument();
+    expect(screen.getByText(/5 hours per day/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
@@ -476,7 +640,7 @@ describe('settings dashboard', () => {
         },
       }),
     );
-    expect(await screen.findByText('5 hours per day')).toBeInTheDocument();
+    expect(await screen.findByText(/5 hours per day/)).toBeInTheDocument();
   });
 
   it('disables the controls and shows progress while a settings save is in flight', async () => {
@@ -586,7 +750,7 @@ describe('settings dashboard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Overview' }));
 
     expect(
-      await screen.findByRole('heading', { name: 'Exam countdown', level: 1 }),
+      await screen.findByRole('heading', { name: 'Preparation dashboard', level: 1 }),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Overview' })).toHaveAttribute(
       'aria-current',
@@ -672,9 +836,43 @@ describe('settings dashboard', () => {
     expect(
       await screen.findByRole('heading', { name: 'Study performance', level: 1 }),
     ).toBeInTheDocument();
+    expect(await screen.findByText(/No study sessions in this range/)).toBeInTheDocument();
+  });
+
+  it('opens the targeted analytics tab from an evidence-linked dashboard insight', async () => {
+    mockBackend({
+      get_preparation_dashboard: () => ({
+        ...EMPTY_PREPARATION_DASHBOARD,
+        insights: [
+          {
+            id: 'weak-topic-5',
+            severity: 'warning',
+            title: 'MMP-C01 has low PYQ accuracy',
+            reason: 'Six scored attempts produced 33.3% accuracy.',
+            metrics: [
+              { label: 'Accuracy', value: '33.3%' },
+              { label: 'Scored attempts', value: '6' },
+            ],
+            targetView: 'analytics:topics',
+            targetLabel: 'Open topic intelligence',
+          },
+        ],
+      }),
+    });
+
+    renderApp();
+
+    expect(await screen.findByText('Actionable insights')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Open topic intelligence' }));
+
     expect(
-      await screen.findByText('No PYQ topic outcomes have been recorded.'),
+      await screen.findByRole('heading', { name: 'Study performance', level: 1 }),
     ).toBeInTheDocument();
+    expect(await screen.findByText('Evidence thresholds')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Topic intelligence/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
   });
 
   it('shows a load error and retries with a fresh command call', async () => {

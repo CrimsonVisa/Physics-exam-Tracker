@@ -1,5 +1,6 @@
 mod analytics;
 mod csv_import;
+mod dashboard;
 mod date_only;
 mod db;
 mod error;
@@ -10,9 +11,11 @@ mod reschedule;
 mod revision;
 mod sessions;
 mod settings;
+mod study_analytics;
 mod syllabus;
 mod syllabus_catalog;
 mod timer;
+mod topic_intelligence;
 
 use std::path::Path;
 
@@ -273,6 +276,75 @@ fn get_study_performance(
     state: tauri::State<'_, db::AppState>,
 ) -> Result<analytics::StudyPerformance, AppError> {
     state.with_connection(|connection| analytics::study_performance(connection))
+}
+
+#[tauri::command]
+fn get_performance_analytics(
+    state: tauri::State<'_, db::AppState>,
+    from_date: String,
+    to_date: String,
+) -> Result<analytics::PerformanceAnalytics, AppError> {
+    state.with_connection(|connection| analytics::performance(connection, &from_date, &to_date))
+}
+
+#[tauri::command]
+fn get_preparation_dashboard(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<dashboard::PreparationDashboard, AppError> {
+    state.with_connection(|connection| {
+        dashboard::preparation_dashboard(connection, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn update_dashboard_layout(
+    state: tauri::State<'_, db::AppState>,
+    sections: Vec<dashboard::DashboardSectionInput>,
+) -> Result<dashboard::DashboardLayout, AppError> {
+    state.with_connection(|connection| dashboard::update_layout(connection, sections))
+}
+
+#[tauri::command]
+fn reset_dashboard_layout(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<dashboard::DashboardLayout, AppError> {
+    state.with_connection(dashboard::reset_layout)
+}
+
+#[tauri::command]
+fn get_study_analytics(
+    state: tauri::State<'_, db::AppState>,
+    from_date: String,
+    to_date: String,
+) -> Result<study_analytics::StudyAnalytics, AppError> {
+    state.with_connection(|connection| {
+        study_analytics::study_analytics(
+            connection,
+            &from_date,
+            &to_date,
+            Local::now().date_naive(),
+        )
+    })
+}
+
+#[tauri::command]
+fn get_topic_intelligence(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<topic_intelligence::TopicIntelligence, AppError> {
+    state.with_connection(|connection| {
+        topic_intelligence::topic_intelligence(connection, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn get_preparation_timeline(
+    state: tauri::State<'_, db::AppState>,
+    from_date: String,
+    to_date: String,
+) -> Result<dashboard::PreparationTimeline, AppError> {
+    state.with_connection(|connection| {
+        dashboard::timeline(connection, &from_date, &to_date, Local::now().date_naive())
+    })
 }
 
 #[tauri::command]
@@ -761,6 +833,13 @@ pub fn run() {
             apply_mock_import,
             get_mock_analytics,
             get_study_performance,
+            get_performance_analytics,
+            get_preparation_dashboard,
+            update_dashboard_layout,
+            reset_dashboard_layout,
+            get_study_analytics,
+            get_topic_intelligence,
+            get_preparation_timeline,
             get_revision_dashboard,
             update_revision_settings,
             get_revision_history,

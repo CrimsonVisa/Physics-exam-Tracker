@@ -1,9 +1,8 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import { DateField } from './components/DateField';
-import { StudyTodayCard } from './components/StudyTodayCard';
-import { TodayPlanCard } from './components/TodayPlanCard';
+import { PreparationDashboard } from './components/PreparationDashboard';
 import { toCommandError } from './lib/commandError';
-import { countdownFor, formatDateLong, parseDateOnly, type Countdown } from './lib/dateOnly';
+import { formatDateLong, parseDateOnly } from './lib/dateOnly';
 import {
   applyExamDateChange,
   previewExamDateChange,
@@ -12,7 +11,7 @@ import {
 import { checkRevisionReminder } from './lib/revisionApi';
 import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import { useTodayDateOnly } from './lib/useTodayDateOnly';
-import AnalyticsScreen from './screens/AnalyticsScreen';
+import AnalyticsScreen, { type AnalyticsTab } from './screens/AnalyticsScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import ChecklistScreen from './screens/ChecklistScreen';
 import MockTestsScreen from './screens/MockTestsScreen';
@@ -254,43 +253,18 @@ function Sidebar({
   );
 }
 
-function CountdownBody({ countdown }: { countdown: Countdown | null }) {
-  if (!countdown) {
-    return (
-      <div className="countdown-empty">
-        <p className="countdown-empty-title">Choose a valid exam date</p>
-        <p className="countdown-caption">The countdown updates as you edit the date.</p>
-      </div>
-    );
-  }
-
-  if (countdown.state === 'past') {
-    return (
-      <>
-        <p className="countdown-past-title">Exam date has passed</p>
-        <p className="countdown-past-days">
-          {countdown.daysSinceExam} {countdown.daysSinceExam === 1 ? 'day' : 'days'} ago
-        </p>
-        <p className="countdown-caption">
-          Update the exam date when you know the date for the next attempt.
-        </p>
-      </>
-    );
-  }
-
-  const days = countdown.daysRemaining;
-  return (
-    <>
-      <p className="countdown-value">{days}</p>
-      <p className="countdown-label">{days === 1 ? 'day remaining' : 'days remaining'}</p>
-      <p className="countdown-caption">
-        {countdown.state === 'exam-day'
-          ? 'Today is exam day. Focus on the paper.'
-          : 'Calendar days on this device. Take it one focused block at a time.'}
-      </p>
-    </>
-  );
-}
+const KNOWN_VIEWS: AppView[] = [
+  'overview',
+  'timer',
+  'sessions',
+  'checklist',
+  'calendar',
+  'revision',
+  'pyq',
+  'mock-tests',
+  'analytics',
+  'syllabus',
+];
 
 export default function App({ today }: AppProps) {
   const currentToday = useTodayDateOnly(today);
@@ -306,6 +280,7 @@ export default function App({ today }: AppProps) {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [focusField, setFocusField] = useState<FormField | null>(null);
   const [examPreview, setExamPreview] = useState<ExamReschedulePreview | null>(null);
+  const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab>('study');
 
   useEffect(() => {
     let cancelled = false;
@@ -483,12 +458,28 @@ export default function App({ today }: AppProps) {
     });
   }
 
-  const countdown = form ? countdownFor(form.examDate, currentToday) : null;
-  const examDateLabel = form ? formatDateLong(form.examDate) : null;
-  const preparationStartLabel = form ? formatDateLong(form.preparationStartDate) : null;
   const formMinutes = form ? parseDailyMinutes(form.dailyMinutes) : null;
   const dirty = Boolean(form && settings && isDirty(form, settings));
   const activeExamDate = settings?.examDate ?? form?.examDate ?? currentToday;
+  const dashboardDataKey = settings
+    ? `${settings.examDate}|${settings.preparationStartDate}|${settings.dailyStudyTargetMinutes}`
+    : '';
+
+  function handleDashboardNavigate(view: string) {
+    if (view.startsWith('analytics:')) {
+      const tab = view.slice('analytics:'.length) as AnalyticsTab;
+      if (['study', 'performance', 'topics', 'timeline'].includes(tab)) {
+        setAnalyticsTab(tab);
+      }
+      setView('analytics');
+      return;
+    }
+
+    const candidate = view as AppView;
+    if (KNOWN_VIEWS.includes(candidate)) {
+      setView(candidate);
+    }
+  }
 
   return (
     <div className="app-frame">
@@ -512,15 +503,22 @@ export default function App({ today }: AppProps) {
         ) : view === 'mock-tests' ? (
           <MockTestsScreen today={currentToday} />
         ) : view === 'analytics' ? (
-          <AnalyticsScreen />
+          <AnalyticsScreen
+            key={`${currentToday}:${activeExamDate}`}
+            today={currentToday}
+            examDate={activeExamDate}
+            initialTab={analyticsTab}
+            onTabChange={setAnalyticsTab}
+          />
         ) : (
           <div className="page-container">
             <header className="page-header">
               <p className="eyebrow">Dashboard</p>
-              <h1>Exam countdown</h1>
+              <h1>Preparation dashboard</h1>
               <p className="page-lede">
-                Set the date you are working toward, see the days that remain, and keep your daily
-                target in view. Settings stay in a local SQLite database.
+                See saved study time, syllabus progress, revision queues, deadlines, recent
+                performance, and evidence-linked insights in one place. The countdown updates as you
+                edit the exam date, and settings remain in the local SQLite database.
               </p>
             </header>
 
@@ -542,48 +540,20 @@ export default function App({ today }: AppProps) {
             )}
 
             {!isLoading && !loadError && form && settings && (
-              <div className="dashboard-grid">
-                <section className="countdown-card" aria-labelledby="countdown-heading">
-                  <h2 className="sr-only" id="countdown-heading">
-                    Countdown details
-                  </h2>
+              <>
+                <PreparationDashboard
+                  today={currentToday}
+                  previewExamDate={form.examDate}
+                  previewPreparationStartDate={form.preparationStartDate}
+                  previewTargetMinutes={formMinutes ?? settings.dailyStudyTargetMinutes}
+                  refreshKey={dashboardDataKey}
+                  onNavigate={handleDashboardNavigate}
+                />
 
-                  <div className="countdown-topline">
-                    <p className="eyebrow eyebrow-light">Target exam</p>
-                    <p className="exam-date-line">
-                      {examDateLabel ? (
-                        <>
-                          <time dateTime={form.examDate}>{examDateLabel}</time>
-                        </>
-                      ) : (
-                        'Choose a valid date'
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="countdown-body" aria-live="polite">
-                    <CountdownBody countdown={countdown} />
-                  </div>
-
-                  <dl className="countdown-meta">
-                    <div>
-                      <dt>Preparation start</dt>
-                      <dd>{preparationStartLabel ?? 'Not set'}</dd>
-                    </div>
-                    <div>
-                      <dt>Daily target</dt>
-                      <dd>{formMinutes === null ? 'Not set' : formatHoursPerDay(formMinutes)}</dd>
-                    </div>
-                  </dl>
-
-                  <p className="provisional-note">
-                    <strong>Verify the exam date.</strong> 19 December is a provisional default, not
-                    an official schedule. Confirm the actual subject date on your admit card before
-                    relying on this countdown.
-                  </p>
-                </section>
-
-                <section className="settings-card" aria-labelledby="settings-heading">
+                <section
+                  className="settings-card dashboard-settings-card"
+                  aria-labelledby="settings-heading"
+                >
                   <div className="card-heading">
                     <div>
                       <p className="eyebrow">Planning</p>
@@ -813,19 +783,7 @@ export default function App({ today }: AppProps) {
                     </section>
                   )}
                 </section>
-
-                <TodayPlanCard
-                  today={currentToday}
-                  onOpenChecklist={() => setView('checklist')}
-                  onOpenCalendar={() => setView('calendar')}
-                />
-
-                <StudyTodayCard
-                  today={currentToday}
-                  targetMinutes={formMinutes ?? settings.dailyStudyTargetMinutes}
-                  onOpenSessions={() => setView('sessions')}
-                />
-              </div>
+              </>
             )}
           </div>
         )}

@@ -23,6 +23,7 @@ const MIGRATIONS_SLICE: &[M<'static>] = &[
     M::up(include_str!("../migrations/0004_checklist_and_planner.sql")),
     M::up(include_str!("../migrations/0005_pyq_and_mock_tests.sql")),
     M::up(include_str!("../migrations/0006_revision_scheduler.sql")),
+    M::up(include_str!("../migrations/0007_dashboard_layout.sql")),
 ];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -144,7 +145,7 @@ pub(crate) fn test_connection_with_defaults(today: NaiveDate) -> Connection {
 mod tests {
     use super::*;
     use crate::{
-        mock_tests, planner, pyq, sessions,
+        mock_tests, planner, pyq, revision, sessions,
         settings::{Settings, SettingsInput},
     };
 
@@ -167,7 +168,7 @@ mod tests {
     fn migrations_are_versioned_and_repeatable() {
         let mut connection = test_connection();
 
-        assert_eq!(schema_version(&connection), 6);
+        assert_eq!(schema_version(&connection), 7);
         let table_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM sqlite_master
@@ -187,16 +188,17 @@ mod tests {
                        'mock_tests',
                        'revision_settings',
                        'revision_schedules',
-                       'revision_history'
+                       'revision_history',
+                       'dashboard_sections'
                    )",
                 [],
                 |row| row.get(0),
             )
             .expect("migration tables should be inspectable");
-        assert_eq!(table_count, 15);
+        assert_eq!(table_count, 16);
 
         migrate(&mut connection).expect("a repeated migration should be a no-op");
-        assert_eq!(schema_version(&connection), 6);
+        assert_eq!(schema_version(&connection), 7);
     }
 
     #[test]
@@ -229,7 +231,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 6);
+        assert_eq!(schema_version(&connection), 7);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -361,7 +363,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 6);
+        assert_eq!(schema_version(&connection), 7);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -494,7 +496,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 6);
+        assert_eq!(schema_version(&connection), 7);
         assert_eq!(
             settings::load(&connection)
                 .expect("settings should load")
@@ -714,7 +716,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 6);
+        assert_eq!(schema_version(&connection), 7);
         let progress: (String, String) = connection
             .query_row(
                 "SELECT status, notes FROM syllabus_progress LIMIT 1",
@@ -768,6 +770,231 @@ mod tests {
         assert_eq!(revision_settings_count, 1);
         assert_eq!(revision_schedule_count, 0);
         assert_eq!(revision_history_count, 0);
+    }
+
+    #[test]
+    fn version_six_database_upgrades_without_losing_phase_seven_data() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join(DATABASE_FILE_NAME);
+        let today = date(2026, 10, 30);
+
+        {
+            let mut connection = Connection::open(&path).expect("version six database should open");
+            configure(&connection).expect("version six database should be configured");
+            Migrations::from_slice(&MIGRATIONS_SLICE[..6])
+                .to_latest(&mut connection)
+                .expect("version six schema should apply");
+            assert_eq!(schema_version(&connection), 6);
+
+            settings::ensure_defaults(&mut connection, today)
+                .expect("version six settings should be created");
+            syllabus::seed(&mut connection).expect("version six syllabus should seed");
+            timer::ensure_defaults(&mut connection).expect("version six timer should exist");
+
+            let topic_id: i64 = connection
+                .query_row(
+                    "SELECT id FROM syllabus_topics WHERE code = 'MMP-C01'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("topic should exist");
+            syllabus::update_progress(
+                &mut connection,
+                topic_id,
+                syllabus::TopicProgressInput {
+                    status: "Revised".to_owned(),
+                    priority: "High-Yield".to_owned(),
+                    confidence: 4,
+                    notes: "Phase 3 progress".to_owned(),
+                },
+            )
+            .expect("progress should save");
+            sessions::create_manual(
+                &mut connection,
+                sessions::StudySessionInput {
+                    topic_id: Some(topic_id),
+                    session_date: "2026-10-29".to_owned(),
+                    duration_seconds: 2_400,
+                    notes: "Phase 4 session".to_owned(),
+                },
+            )
+            .expect("session should save");
+            planner::create_task(
+                &mut connection,
+                planner::TaskInput {
+                    title: "Phase 5 task".to_owned(),
+                    description: String::new(),
+                    scheduled_date: "2026-10-30".to_owned(),
+                    deadline_date: Some("2026-11-02".to_owned()),
+                    topic_id: Some(topic_id),
+                    priority: "High".to_owned(),
+                    schedule_anchor: "manual".to_owned(),
+                    schedule_offset_days: None,
+                },
+                today,
+            )
+            .expect("task should save");
+            planner::create_block(
+                &mut connection,
+                planner::PlannedBlockInput {
+                    title: "Phase 5 block".to_owned(),
+                    topic_id: Some(topic_id),
+                    calendar_date: "2026-10-30".to_owned(),
+                    start_time: "10:00".to_owned(),
+                    end_time: "11:00".to_owned(),
+                    status: "planned".to_owned(),
+                    notes: String::new(),
+                    linked_session_id: None,
+                },
+            )
+            .expect("block should save");
+            pyq::create(
+                &mut connection,
+                pyq::PyqInput {
+                    question_year: 2024,
+                    exam_session: String::new(),
+                    part: "B".to_owned(),
+                    topic_id,
+                    question_reference: "Phase 6 PYQ".to_owned(),
+                    attempt_date: "2026-10-28".to_owned(),
+                    status: "correct".to_owned(),
+                    marks_obtained: None,
+                    max_marks: None,
+                    time_spent_seconds: 60,
+                    notes: String::new(),
+                    difficulty: None,
+                },
+            )
+            .expect("PYQ should save");
+            mock_tests::create(
+                &mut connection,
+                mock_tests::MockTestInput {
+                    test_name: "Phase 6 mock".to_owned(),
+                    test_date: "2026-10-27".to_owned(),
+                    duration_minutes: 180,
+                    max_marks: 100.0,
+                    marks_obtained: None,
+                    part_a: mock_tests::MockPartInput {
+                        questions: 1,
+                        correct: 1,
+                        incorrect: 0,
+                        unanswered: 0,
+                        correct_marks: Some(2.0),
+                        incorrect_marks: Some(0.0),
+                        unanswered_marks: Some(0.0),
+                    },
+                    part_b: mock_tests::MockPartInput {
+                        questions: 0,
+                        correct: 0,
+                        incorrect: 0,
+                        unanswered: 0,
+                        correct_marks: None,
+                        incorrect_marks: None,
+                        unanswered_marks: None,
+                    },
+                    part_c: mock_tests::MockPartInput {
+                        questions: 0,
+                        correct: 0,
+                        incorrect: 0,
+                        unanswered: 0,
+                        correct_marks: None,
+                        incorrect_marks: None,
+                        unanswered_marks: None,
+                    },
+                    notes: String::new(),
+                    review_observations: String::new(),
+                },
+            )
+            .expect("mock should save");
+            revision::schedule_topic(&mut connection, topic_id, "2026-10-29", today)
+                .expect("revision should schedule");
+            revision::complete(
+                &mut connection,
+                topic_id,
+                revision::CompleteRevisionInput {
+                    outcome: "good".to_owned(),
+                    notes: "Phase 7 revision".to_owned(),
+                },
+                today,
+            )
+            .expect("revision should complete");
+        }
+
+        let connection = open_database(&path, today).expect("database should upgrade and open");
+        assert_eq!(schema_version(&connection), 7);
+
+        let progress: (String, String) = connection
+            .query_row(
+                "SELECT status, notes FROM syllabus_progress LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("progress should survive");
+        assert_eq!(
+            progress,
+            ("Revised".to_owned(), "Phase 3 progress".to_owned())
+        );
+
+        let counts: (i64, i64, i64, i64, i64, i64, i64, i64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM study_sessions),
+                    (SELECT COUNT(*) FROM checklist_tasks),
+                    (SELECT COUNT(*) FROM planned_study_blocks),
+                    (SELECT COUNT(*) FROM pyq_attempts),
+                    (SELECT COUNT(*) FROM mock_tests),
+                    (SELECT COUNT(*) FROM revision_schedules),
+                    (SELECT COUNT(*) FROM revision_history),
+                    (SELECT COUNT(*) FROM dashboard_sections)",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .expect("source and layout counts should be readable");
+        assert_eq!(counts, (1, 1, 1, 1, 1, 1, 1, 9));
+        assert_eq!(
+            install_layout_order(&connection),
+            vec![
+                "exam-countdown",
+                "syllabus-progress",
+                "study-totals",
+                "today-study",
+                "revision-status",
+                "deadlines-blocks",
+                "recent-pyq",
+                "latest-mock",
+                "insights"
+            ]
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT notes FROM revision_history LIMIT 1", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .expect("revision history should survive"),
+            "Phase 7 revision"
+        );
+    }
+
+    fn install_layout_order(connection: &Connection) -> Vec<String> {
+        let mut statement = connection
+            .prepare("SELECT section_key FROM dashboard_sections ORDER BY display_order")
+            .expect("layout should prepare");
+        statement
+            .query_map([], |row| row.get(0))
+            .expect("layout should query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("layout should load")
     }
 
     #[test]

@@ -2,16 +2,16 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 7 status:** the dashboard, persistent planning settings, exam countdown, official-source
-Physical Sciences syllabus tracker, persisted study timer, study-session history, dated checklist
-tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank, mock-test
-history, CSV import workflows, outcome analytics, and configurable spaced-repetition revision scheduler
-are implemented. The syllabus is seeded with 182 topics across General Aptitude and the nine Physical
-Sciences units, and each topic can store a personal status, priority, confidence rating, and notes. The
-timer records focus sessions with restart and sleep recovery, and the dashboard shows today's focus
-time plus the day's tasks and planned blocks. Exam-date changes use a review-and-apply confirmation
-before any future exam-anchored task moves. CSV templates are generated locally and saved to the user's
-Downloads folder. Backup/restore and richer charting are not implemented yet.
+**Phase 8 status:** the preparation dashboard, persistent planning settings, exam countdown,
+official-source Physical Sciences syllabus tracker, persisted study timer, study-session history, dated
+checklist tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank,
+mock-test history, CSV import workflows, outcome analytics, configurable spaced-repetition revision
+scheduler, study trends, topic intelligence, preparation timeline, and SQLite-backed dashboard
+customization are implemented. The syllabus is seeded with 182 topics across General Aptitude and the
+nine Physical Sciences units, and each topic can store a personal status, priority, confidence rating,
+and notes. The timer records focus sessions with restart and sleep recovery. Exam-date changes use a
+review-and-apply confirmation before any future exam-anchored task moves. CSV templates are generated
+locally and saved to the user's Downloads folder. Backup/restore is not implemented yet.
 
 ## Stack
 
@@ -81,7 +81,7 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-6), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+7), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
@@ -89,6 +89,8 @@ adds checklist and planned-block tables without changing existing settings, syll
 state, or study sessions. Upgrading a version-4 database adds the PYQ and mock-test tables without
 changing any Phase 1–5 data. Upgrading a version-5 database adds revision scheduler tables without
 changing settings, syllabus progress, sessions, planner records, PYQ attempts, or mock tests.
+Upgrading a version-6 database adds the dashboard section-preference table and seeds the default
+layout without changing any Phase 1–7 data.
 
 The initial single-row settings record uses:
 
@@ -222,9 +224,9 @@ calendar. Daily and weekly totals exclude breaks and paused time. Archived topic
 new sessions, but they remain visible and filterable wherever historical sessions reference them; the
 topic foreign key is restrictive, so a topic with study history cannot be destructively removed.
 
-The dashboard adds a full-width study card showing today's focus time against the existing daily
-target, today's session count, and this week's total. It intentionally does not attempt the full
-analytics planned for a later phase.
+The preparation dashboard shows today's focus time against the daily target, today's session count,
+the current-week total, and the selected study-analytics trends. Planned blocks and unfinished timers
+remain separate from completed session totals.
 
 ### Notification limits
 
@@ -352,15 +354,17 @@ trends use the calculated score.
 
 The Analytics screen uses only saved records:
 
-- PYQ accuracy by topic and syllabus unit.
-- PYQ outcomes by examination year and Part A/B/C.
-- Correct, incorrect, skipped, and outcome-unknown counts.
-- Mock-test calculated-score trend, average, best, latest, and part-wise performance.
-- Descriptive study-time-versus-outcome rows, paired by local date. These are explicitly descriptive,
-  not causal.
+- PYQ accuracy by topic and syllabus unit, outcomes by examination year and Part A/B/C, and
+  correct/incorrect/skipped/outcome-unknown counts.
+- Mock-test calculated-score trend, average, best, latest, part-wise performance, attempted versus
+  unanswered counts, and response trends. PYQ and mock metrics are never combined.
+- Daily, weekly, and monthly study trends, duration buckets, unit attribution, focus/break support,
+  date filters, and same-length period comparisons.
 - A weak-topic screen that requires at least five correct-or-incorrect attempts and accuracy below
   50%. Topics with fewer attempts are labelled **Insufficient data**, never “weak” from one or two
   attempts.
+- Topic intelligence, the preparation timeline, and actionable insights described in the Phase 8
+  section below.
 
 ## CSV import
 
@@ -471,10 +475,104 @@ Review reminders are optional and off by default. When enabled and Windows grant
 checks once per local day for due/overdue revisions and records the reminder date so the same day is
 not notified repeatedly. Notification failures never alter schedules or block revision work.
 
+## Preparation dashboard and advanced analytics
+
+Migration `0007_dashboard_layout.sql` adds `dashboard_sections`, a `STRICT` table with one row per
+known dashboard section, a visibility flag, a unique order, and an update timestamp. The default layout
+is seeded for existing and new users. Section order and visibility are written to SQLite in a
+transaction, and **Restore default layout** re-seeds the documented defaults. The browser's
+`localStorage` is not used for this preference.
+
+The preparation dashboard combines saved records only:
+
+- The exam countdown and preparation day use the local settings and local calendar-date arithmetic.
+- Syllabus progress reuses the existing equal-weight status summary. It is not treated as exam
+  readiness or topic mastery.
+- Total, current-week, current-month, and today's study time come from completed focus sessions.
+- Revision due/overdue/completed counts reuse the revision scheduler's saved schedules and append-only
+  history.
+- Upcoming open deadlines cover the planner's next-seven-day window; upcoming planned blocks cover the
+  next seven calendar days. Planned blocks are not study time.
+- Recent PYQ attempts are the five latest attempt dates, and the latest mock test uses its saved
+  per-part marking configuration.
+- The dashboard states that an in-progress timer or unfinished revision form is not saved study time
+  until the session or outcome is completed.
+
+### Study analytics
+
+The analytics view supports local date ranges and compares the selected range with the immediately
+preceding range of the same day count. It provides:
+
+- Daily, Monday-based weekly, and calendar-month study trends. The daily chart has a zero axis and a
+  target reference line, plus a supporting-value table.
+- Session-duration buckets (`under 15`, `15-29`, `30-59`, `60-89`, `90-119`, `120+` minutes).
+- Recorded time by syllabus unit and an explicit unassigned-session total.
+- Focus time from saved sessions. Break time is marked **not tracked**, because timer breaks are not
+  saved as study sessions; the app does not estimate break time.
+- Daily target completion, weekly proportional targets, active days, consistency, missed completed-day
+  targets, and current/longest streaks.
+- Revision consistency: completed revisions whose `revision_date` is on or before
+  `scheduled_for_date`, plus currently overdue active schedules. It is a historical outcome measure,
+  not a claim that every unfinished due schedule was missed.
+
+Consistency and targets only include days on or after the configured preparation start and on or before
+today. Pre-preparation records remain in recorded-time totals but are marked ineligible in the daily
+chart and never count toward target completion, consistency, or streaks. Today can be active without
+being called a missed target yet.
+
+### Streak definition
+
+A study streak is a run of distinct local dates with at least one completed focus session, starting no
+earlier than the preparation start date. The current streak ends today when today has recorded study.
+If today has no study yet, one grace day is allowed: a streak ending yesterday is still current. A full
+missed calendar day ends the current streak. The longest streak is the longest such run in saved history.
+Duplicate sessions on one date count as one active day. Planned blocks never extend a streak.
+
+### Topic intelligence
+
+Scored PYQ accuracy is `correct / (correct + incorrect)`. Skipped and outcome-unknown attempts are
+shown but not counted as scored attempts.
+
+- Weak with evidence: at least 5 scored attempts and accuracy below 50%.
+- Strong with evidence: at least 5 scored attempts and accuracy of 75% or higher.
+- Insufficient evidence: 1-4 scored attempts. Topics with no PYQ attempts are reported as no-data
+  counts, not classified weak or strong.
+- Needs revision: saved due/overdue signals, a previous Again/Difficult outcome, or an upcoming schedule
+  with a saved mastery estimate below 40 after at least one completed revision.
+- Confidence mismatches: confidence 4-5 with sufficient weak PYQ evidence, or confidence 1-2 with
+  sufficient strong PYQ evidence.
+
+Every evidence item displays its supporting attempts, correct/incorrect counts, accuracy, revision
+dates/outcomes, and reason text. Syllabus status and confidence are user context, not proof of mastery.
+Mock tests remain part-level and are never assigned to individual topics.
+
+### Performance separation
+
+PYQ and mock-test analytics are separate structures, separate tables, and separate UI sections. The app
+shows no combined exam score. Mock percentages are calculated from each saved test's own marking rules
+and part counts; reported marks remain a separate field. PYQ accuracy is never blended with mock results.
+
+### Preparation timeline
+
+The timeline merges exam date, open and completed checklist deadlines, planned blocks, active revision
+dates, completed study sessions, and mock tests. Date-range and activity-type filters are available.
+Events are read-only projections and never alter source records. When a planned block is linked to a
+completed study session and both fall in the selected range, the session is shown once and the linked
+block is omitted to avoid duplicate representation of the same activity.
+
+### Actionable insights
+
+At most five deterministic insights are shown. They can flag a sufficiently supported weak PYQ topic,
+overdue revisions, an approaching checklist deadline, lower recorded study time than the prior seven
+completed days, or a PYQ Part A accuracy gap. Each insight includes the supporting numbers, a reason,
+and a link to the relevant dashboard section. Comparison text is descriptive and does not claim
+causation. No readiness score, rank prediction, selection probability, or success percentage is
+generated.
+
 ## Typography note
 
 Latin Modern is not currently bundled with the app. No font files or font packages were added through
-Phase 7; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
+Phase 8; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
 headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
 task for a later phase.
 
@@ -532,6 +630,9 @@ src/                     React frontend and tests
   components/CsvImportPanel.tsx preview, validation report, and transactional import UI
   components/RevisionSettingsPanel.tsx interval, weekend, target, and reminder settings
   components/RevisionTopicDetail.tsx revision workflow, history, rescheduling, and block planning
+  components/PreparationDashboard.tsx customizable preparation overview and insights
+  components/DashboardCustomizer.tsx SQLite section ordering, visibility, and reset
+  components/AnalyticsCharts.tsx lightweight accessible trend and comparison charts
   screens/SyllabusScreen.tsx    syllabus catalog, filters, topic editor, and revision status
   screens/TimerScreen.tsx       persisted timer, recovery display, and settings
   screens/SessionsScreen.tsx    session history, filters, totals, and manual CRUD
@@ -540,7 +641,7 @@ src/                     React frontend and tests
   screens/RevisionScreen.tsx    due queues, recommendations, filters, and revision dashboard
   screens/PyqScreen.tsx         PYQ filters, history, CRUD, and CSV workflow
   screens/MockTestsScreen.tsx   mock-test history, scoring, CRUD, and CSV workflow
-  screens/AnalyticsScreen.tsx   PYQ, mock, part, weak-topic, and study-time analytics
+  screens/AnalyticsScreen.tsx   study trends, performance, topic evidence, and timeline tabs
   lib/dateOnly.ts               timezone-independent date and calendar utilities
   lib/timeOfDay.ts              strict local HH:MM validation and planned duration
   lib/studyTime.ts              duration and timer-clock formatting
@@ -552,7 +653,8 @@ src/                     React frontend and tests
   lib/plannerApi.ts             typed checklist, calendar, and rescheduling wrappers
   lib/pyqApi.ts                 typed PYQ and PYQ-import command wrappers
   lib/mockTestApi.ts            typed mock-test and import command wrappers
-  lib/analyticsApi.ts           typed analytics command wrappers
+  lib/analyticsApi.ts           typed filtered PYQ/mock performance command wrappers
+  lib/preparationApi.ts         typed dashboard, study analytics, topic, timeline, and layout wrappers
   lib/revisionApi.ts            typed revision scheduler and reminder command wrappers
   lib/revisionScheduling.ts     frontend interval-preview mirror of the Rust algorithm
   lib/csvImportApi.ts           shared import preview/result types
@@ -573,7 +675,10 @@ src-tauri/               Tauri configuration and Rust backend
   src/pyq.rs             PYQ CRUD, filters, imports, and duplicate detection
   src/mock_tests.rs      Mock-test CRUD, marking configuration, and imports
   src/csv_import.rs      Strict CSV parser and shared import report types
-  src/analytics.rs       PYQ, mock, weak-topic, and study-performance calculations
+  src/analytics.rs       Filtered PYQ/mock performance, response trends, and study performance
+  src/study_analytics.rs Study trends, targets, streaks, consistency, and period comparisons
+  src/topic_intelligence.rs Evidence thresholds, topic groups, and confidence mismatches
+  src/dashboard.rs       Preparation overview, insights, timeline, and SQLite layout preferences
   src/revision.rs        Spaced-repetition scheduling, history, recommendations, and reminders
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
