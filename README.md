@@ -102,7 +102,7 @@ Only do that after creating and verifying a backup if you may need the data agai
 
 Core functionality has no required external API or remote asset. The Content Security Policy blocks
 remote scripts/styles/network connections except the Tauri IPC endpoint and local assets. Fonts are
-installed Windows system fonts; no web font is downloaded. The app supports keyboard navigation,
+bundled Latin Modern files; no web font is downloaded. The app supports keyboard navigation,
 visible focus rings, a skip-to-content link, labelled forms, semantic tables, status announcements, and
 native dialogs. Charts provide textual supporting values and empty states. Official-source links open
 in the external browser only when the user selects them.
@@ -918,12 +918,24 @@ both files together. Automatic backups run only while the app is running; they a
 Windows service. JSON format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10. Use the
 SQLite backup restore workflow for older database schemas.
 
-## Typography note
+## Typography and colour
 
-Latin Modern is not currently bundled with the app. No font files or font packages were added through
-Phase 10; the interface continues to use local system fonts (Segoe UI for UI text and Georgia for
-display headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
-task for a later phase.
+The interface bundles **Latin Modern** locally (no runtime font download):
+
+- Latin Modern Roman for headings and reading content.
+- Latin Modern Sans for interface text and navigation.
+- Latin Modern Mono for codes, IDs, and code samples.
+- Latin Modern Math as the glyph fallback for Greek letters, mathematical symbols, subscripts, and
+  superscripts.
+
+The fonts and the GUST Font License are in [`src/assets/fonts`](src/assets/fonts). Latin Modern is
+released under the GUST Font License (GFL), which permits embedding and redistribution when the
+license notice is preserved. See [`GUST-FONT-LICENSE.txt`](src/assets/fonts/GUST-FONT-LICENSE.txt).
+
+The visual theme is a premium dark palette: `#0B0E14` canvas, `#151B26` cards, `#202A39` elevated
+surfaces, `#63C7D9` primary accent, `#D6B779` secondary accent, `#E7EAF0` main text, `#9BAAC0`
+muted text, and restrained blue-grey borders. Layout, spacing, navigation, card geometry, and
+workflows are unchanged.
 
 ## Checks
 

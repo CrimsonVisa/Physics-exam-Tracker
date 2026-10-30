@@ -1,0 +1,9 @@
+﻿Latin Modern fonts
+==================
+
+The application bundles Latin Modern Roman, Sans, Mono, and Math locally.
+
+Source: GUST Latin Modern 2.004 and CTAN lm-math
+License: GUST Font License (GFL), see GUST-FONT-LICENSE.txt
+
+No font is downloaded at runtime.

@@ -8,3 +8,4 @@ package-lock.json
 backups/
 exports/
 logs/
+public/fonts/

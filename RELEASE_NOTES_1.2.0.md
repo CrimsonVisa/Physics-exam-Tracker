@@ -1,6 +1,6 @@
-# CSIR-NET Physics Tracker 1.2.0 — Stages 1-3 Notes
+# CSIR-NET Physics Tracker 1.2.0 — Stages 1-4 Notes
 
-Status: **Stages 1-3 implementation — JSON portability, local PDF recovery, and backup/restore improvements**
+Status: **Stages 1-4 implementation — JSON portability, local PDF recovery, backup/restore improvements, and dark typography refinement**
 Release date: pending final v1.2.0 completion
 
 ## Stage 1 scope
@@ -60,6 +60,22 @@ Release date: pending final v1.2.0 completion
   or installer.
 - Database schema remains **10**; no migration is required.
 
+## Stage 4 scope — typography and dark colour refinement
+
+- Bundled Latin Modern Roman, Sans, Mono, and Math locally; no runtime font download.
+- Headings and reading content use Latin Modern Roman; interface text and navigation use Latin
+  Modern Sans; codes and identifiers use Latin Modern Mono.
+- Latin Modern Math is the fallback for Greek letters, mathematical symbols, subscripts, and
+  superscripts.
+- Applied the premium dark palette consistently: `#0B0E14` canvas, `#151B26` cards, `#202A39`
+  elevated surfaces, `#63C7D9` primary accent, `#D6B779` secondary accent, `#E7EAF0` main text,
+  `#9BAAC0` muted text, and restrained blue-grey borders.
+- Existing page layouts, navigation dimensions, card structure, spacing, tables, components, and
+  workflows are unchanged. This stage changes typography and colour only.
+- Fonts are licensed under the GUST Font License; the license is included at
+  `src/assets/fonts/GUST-FONT-LICENSE.txt`.
+- Database schema remains **10**; no data or functional changes were made.
+
 ## Safety
 
 - Import prefers a verified safety backup and a single transaction.
@@ -77,5 +93,7 @@ Release date: pending final v1.2.0 completion
   moved/deleted files, changed sizes, re-linking, replacement, removal failures, opening unavailable
   files, full resource backup/restore, manifest counts, PDF-byte exclusion, cross-machine restore,
   and legacy manifest compatibility.
+- Stage 4 is visual-only; the existing test suites pass unchanged, and the production build emits
+  the bundled Latin Modern font assets locally.
 - Database schema remains **10**; no migration was added.
 - The final 1.2.0 installer is not produced in this stage. The current public release remains 1.1.0.
