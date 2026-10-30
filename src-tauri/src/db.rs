@@ -9,12 +9,15 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
-use crate::{error::AppError, settings};
+use crate::{error::AppError, settings, syllabus};
 
 pub const DATABASE_FILE_NAME: &str = "csir-net-tracker.sqlite3";
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-const MIGRATIONS_SLICE: &[M<'static>] = &[M::up(include_str!("../migrations/0001_settings.sql"))];
+const MIGRATIONS_SLICE: &[M<'static>] = &[
+    M::up(include_str!("../migrations/0001_settings.sql")),
+    M::up(include_str!("../migrations/0002_syllabus.sql")),
+];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 /// Tauri-managed application state. Database initialization failures are kept
@@ -83,6 +86,7 @@ pub fn open_database(path: &Path, today: NaiveDate) -> Result<Connection, AppErr
     configure(&connection)?;
     migrate(&mut connection)?;
     settings::ensure_defaults(&mut connection, today)?;
+    syllabus::seed(&mut connection)?;
 
     Ok(connection)
 }
@@ -131,7 +135,7 @@ pub(crate) fn test_connection_with_defaults(today: NaiveDate) -> Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Settings;
+    use crate::settings::{Settings, SettingsInput};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).expect("test date should be valid")
@@ -152,18 +156,77 @@ mod tests {
     fn migrations_are_versioned_and_repeatable() {
         let mut connection = test_connection();
 
-        assert_eq!(schema_version(&connection), 1);
+        assert_eq!(schema_version(&connection), 2);
         let table_count: i64 = connection
             .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'settings'",
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'table'
+                   AND name IN (
+                       'settings',
+                       'syllabus_sources',
+                       'syllabus_sections',
+                       'syllabus_topics',
+                       'syllabus_progress'
+                   )",
                 [],
                 |row| row.get(0),
             )
-            .expect("settings table should be inspectable");
-        assert_eq!(table_count, 1);
+            .expect("migration tables should be inspectable");
+        assert_eq!(table_count, 5);
 
         migrate(&mut connection).expect("a repeated migration should be a no-op");
-        assert_eq!(schema_version(&connection), 1);
+        assert_eq!(schema_version(&connection), 2);
+    }
+
+    #[test]
+    fn version_one_database_upgrades_without_losing_settings_or_creating_progress() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join(DATABASE_FILE_NAME);
+
+        {
+            let mut connection = Connection::open(&path).expect("version one database should open");
+            configure(&connection).expect("version one database should be configured");
+            Migrations::from_slice(&MIGRATIONS_SLICE[..1])
+                .to_latest(&mut connection)
+                .expect("version one schema should apply");
+            assert_eq!(schema_version(&connection), 1);
+
+            settings::ensure_defaults(&mut connection, date(2026, 10, 29))
+                .expect("version one defaults should be created");
+            settings::update(
+                &mut connection,
+                SettingsInput {
+                    exam_date: "2027-06-15".to_owned(),
+                    preparation_start_date: "2026-11-01".to_owned(),
+                    daily_study_target_minutes: 300,
+                },
+            )
+            .expect("version one settings should be saved");
+        }
+
+        let connection =
+            open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
+
+        assert_eq!(schema_version(&connection), 2);
+        assert_eq!(
+            settings::load(&connection).expect("settings should survive the upgrade"),
+            Settings {
+                exam_date: "2027-06-15".to_owned(),
+                preparation_start_date: "2026-11-01".to_owned(),
+                daily_study_target_minutes: 300,
+            }
+        );
+
+        let topic_count: i64 = connection
+            .query_row("SELECT count(*) FROM syllabus_topics", [], |row| row.get(0))
+            .expect("seeded topics should be countable");
+        let progress_count: i64 = connection
+            .query_row("SELECT count(*) FROM syllabus_progress", [], |row| {
+                row.get(0)
+            })
+            .expect("progress rows should be countable");
+        assert_eq!(topic_count, 182);
+        assert_eq!(progress_count, 0);
     }
 
     #[test]

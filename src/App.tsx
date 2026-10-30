@@ -1,8 +1,12 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import { DateField } from './components/DateField';
+import { toCommandError } from './lib/commandError';
 import { countdownFor, formatDateLong, parseDateOnly, type Countdown } from './lib/dateOnly';
-import { getSettings, saveSettings, toCommandError, type Settings } from './lib/settingsApi';
+import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import { useTodayDateOnly } from './lib/useTodayDateOnly';
+import SyllabusScreen from './screens/SyllabusScreen';
+
+type AppView = 'overview' | 'syllabus';
 
 type FormState = {
   examDate: string;
@@ -114,7 +118,13 @@ function isDirty(form: FormState, settings: Settings): boolean {
   );
 }
 
-function Sidebar() {
+function Sidebar({
+  activeView,
+  onNavigate,
+}: {
+  activeView: AppView;
+  onNavigate: (view: AppView) => void;
+}) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -128,12 +138,22 @@ function Sidebar() {
       </div>
 
       <nav className="nav" aria-label="Primary navigation">
-        <span className="nav-item nav-item-active" aria-current="page">
+        <button
+          type="button"
+          className={`nav-item nav-button${activeView === 'overview' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'overview' ? 'page' : undefined}
+          onClick={() => onNavigate('overview')}
+        >
           Overview
-        </span>
-        <span className="nav-item nav-item-planned">
-          Syllabus <span className="nav-tag">Later</span>
-        </span>
+        </button>
+        <button
+          type="button"
+          className={`nav-item nav-button${activeView === 'syllabus' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'syllabus' ? 'page' : undefined}
+          onClick={() => onNavigate('syllabus')}
+        >
+          Syllabus
+        </button>
         <span className="nav-item nav-item-planned">
           Study timer <span className="nav-tag">Later</span>
         </span>
@@ -143,7 +163,8 @@ function Sidebar() {
       </nav>
 
       <p className="sidebar-note">
-        Local-first. Your settings are stored on this PC and never sent to a server.
+        Local-first. Your settings and syllabus progress are stored on this PC and never sent to a
+        server.
       </p>
     </aside>
   );
@@ -189,6 +210,7 @@ function CountdownBody({ countdown }: { countdown: Countdown | null }) {
 
 export default function App({ today }: AppProps) {
   const currentToday = useTodayDateOnly(today);
+  const [view, setView] = useState<AppView>('overview');
   const [settings, setSettings] = useState<Settings | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -311,177 +333,187 @@ export default function App({ today }: AppProps) {
 
   return (
     <div className="app-frame">
-      <Sidebar />
+      <Sidebar activeView={view} onNavigate={setView} />
 
       <main className="main-area">
-        <div className="page-container">
-          <header className="page-header">
-            <p className="eyebrow">Dashboard</p>
-            <h1>Exam countdown</h1>
-            <p className="page-lede">
-              Set the date you are working toward, see the days that remain, and keep your daily
-              target in view. Settings stay in a local SQLite database.
-            </p>
-          </header>
+        {view === 'syllabus' ? (
+          <SyllabusScreen />
+        ) : (
+          <div className="page-container">
+            <header className="page-header">
+              <p className="eyebrow">Dashboard</p>
+              <h1>Exam countdown</h1>
+              <p className="page-lede">
+                Set the date you are working toward, see the days that remain, and keep your daily
+                target in view. Settings stay in a local SQLite database.
+              </p>
+            </header>
 
-          {isLoading && (
-            <section className="state-card" role="status" aria-live="polite">
-              <p className="state-title">Loading local settings…</p>
-              <p className="state-copy">Opening the SQLite database on this device.</p>
-            </section>
-          )}
-
-          {!isLoading && loadError && (
-            <section className="state-card state-card-error" role="alert">
-              <p className="state-title">Settings could not be loaded</p>
-              <p className="state-copy">{loadError}</p>
-              <button type="button" className="primary-button" onClick={handleRetry}>
-                Retry
-              </button>
-            </section>
-          )}
-
-          {!isLoading && !loadError && form && settings && (
-            <div className="dashboard-grid">
-              <section className="countdown-card" aria-labelledby="countdown-heading">
-                <h2 className="sr-only" id="countdown-heading">
-                  Countdown details
-                </h2>
-
-                <div className="countdown-topline">
-                  <p className="eyebrow eyebrow-light">Target exam</p>
-                  <p className="exam-date-line">
-                    {examDateLabel ? (
-                      <>
-                        <time dateTime={form.examDate}>{examDateLabel}</time>
-                      </>
-                    ) : (
-                      'Choose a valid date'
-                    )}
-                  </p>
-                </div>
-
-                <div className="countdown-body" aria-live="polite">
-                  <CountdownBody countdown={countdown} />
-                </div>
-
-                <dl className="countdown-meta">
-                  <div>
-                    <dt>Preparation start</dt>
-                    <dd>{preparationStartLabel ?? 'Not set'}</dd>
-                  </div>
-                  <div>
-                    <dt>Daily target</dt>
-                    <dd>{formMinutes === null ? 'Not set' : formatHoursPerDay(formMinutes)}</dd>
-                  </div>
-                </dl>
-
-                <p className="provisional-note">
-                  <strong>Verify the exam date.</strong> 19 December is a provisional default, not
-                  an official schedule. Confirm the actual subject date on your admit card before
-                  relying on this countdown.
-                </p>
+            {isLoading && (
+              <section className="state-card" role="status" aria-live="polite">
+                <p className="state-title">Loading local settings…</p>
+                <p className="state-copy">Opening the SQLite database on this device.</p>
               </section>
+            )}
 
-              <section className="settings-card" aria-labelledby="settings-heading">
-                <div className="card-heading">
-                  <div>
-                    <p className="eyebrow">Planning</p>
-                    <h2 id="settings-heading">Settings</h2>
-                  </div>
-                  <span className="local-badge">SQLite · local</span>
-                </div>
+            {!isLoading && loadError && (
+              <section className="state-card state-card-error" role="alert">
+                <p className="state-title">Settings could not be loaded</p>
+                <p className="state-copy">{loadError}</p>
+                <button type="button" className="primary-button" onClick={handleRetry}>
+                  Retry
+                </button>
+              </section>
+            )}
 
-                <p className="settings-lede">
-                  Changes are saved only when you choose <strong>Save settings</strong>. Past dates
-                  are allowed so completed study cycles remain visible.
-                </p>
+            {!isLoading && !loadError && form && settings && (
+              <div className="dashboard-grid">
+                <section className="countdown-card" aria-labelledby="countdown-heading">
+                  <h2 className="sr-only" id="countdown-heading">
+                    Countdown details
+                  </h2>
 
-                <form className="settings-form" onSubmit={handleSubmit} noValidate>
-                  <DateField
-                    id={FIELD_IDS.examDate}
-                    label="Exam date"
-                    value={form.examDate}
-                    onChange={(value) => handleFieldChange('examDate', value)}
-                    hint="The provisional default is 19 December 2026."
-                    error={fieldErrors.examDate}
-                    disabled={isSaving}
-                  />
-
-                  <DateField
-                    id={FIELD_IDS.preparationStartDate}
-                    label="Preparation start date"
-                    value={form.preparationStartDate}
-                    onChange={(value) => handleFieldChange('preparationStartDate', value)}
-                    hint="First run uses today's date; adjust it if your preparation began earlier."
-                    error={fieldErrors.preparationStartDate}
-                    max={parseDateOnly(form.examDate) ? form.examDate : undefined}
-                    disabled={isSaving}
-                  />
-
-                  <div
-                    className={`form-field${fieldErrors.dailyMinutes ? ' form-field-invalid' : ''}`}
-                  >
-                    <label htmlFor={FIELD_IDS.dailyMinutes}>Daily study target</label>
-                    <div className="input-with-suffix">
-                      <input
-                        id={FIELD_IDS.dailyMinutes}
-                        type="number"
-                        inputMode="numeric"
-                        min={1}
-                        max={1440}
-                        step={1}
-                        value={form.dailyMinutes}
-                        onChange={(event) => handleFieldChange('dailyMinutes', event.target.value)}
-                        aria-invalid={fieldErrors.dailyMinutes ? true : undefined}
-                        aria-describedby={
-                          fieldErrors.dailyMinutes
-                            ? 'daily-target-hint daily-target-error'
-                            : 'daily-target-hint'
-                        }
-                        disabled={isSaving}
-                        required
-                      />
-                      <span aria-hidden="true">minutes</span>
-                    </div>
-                    <p className="field-hint" id="daily-target-hint">
-                      {formMinutes === null
-                        ? 'Enter a whole number of minutes from 1 to 1440.'
-                        : `${formMinutes} minutes is ${formatHoursPerDay(formMinutes)}.`}
+                  <div className="countdown-topline">
+                    <p className="eyebrow eyebrow-light">Target exam</p>
+                    <p className="exam-date-line">
+                      {examDateLabel ? (
+                        <>
+                          <time dateTime={form.examDate}>{examDateLabel}</time>
+                        </>
+                      ) : (
+                        'Choose a valid date'
+                      )}
                     </p>
-                    {fieldErrors.dailyMinutes && (
-                      <p className="field-error" id="daily-target-error" role="alert">
-                        {fieldErrors.dailyMinutes}
+                  </div>
+
+                  <div className="countdown-body" aria-live="polite">
+                    <CountdownBody countdown={countdown} />
+                  </div>
+
+                  <dl className="countdown-meta">
+                    <div>
+                      <dt>Preparation start</dt>
+                      <dd>{preparationStartLabel ?? 'Not set'}</dd>
+                    </div>
+                    <div>
+                      <dt>Daily target</dt>
+                      <dd>{formMinutes === null ? 'Not set' : formatHoursPerDay(formMinutes)}</dd>
+                    </div>
+                  </dl>
+
+                  <p className="provisional-note">
+                    <strong>Verify the exam date.</strong> 19 December is a provisional default, not
+                    an official schedule. Confirm the actual subject date on your admit card before
+                    relying on this countdown.
+                  </p>
+                </section>
+
+                <section className="settings-card" aria-labelledby="settings-heading">
+                  <div className="card-heading">
+                    <div>
+                      <p className="eyebrow">Planning</p>
+                      <h2 id="settings-heading">Settings</h2>
+                    </div>
+                    <span className="local-badge">SQLite · local</span>
+                  </div>
+
+                  <p className="settings-lede">
+                    Changes are saved only when you choose <strong>Save settings</strong>. Past
+                    dates are allowed so completed study cycles remain visible.
+                  </p>
+
+                  <form className="settings-form" onSubmit={handleSubmit} noValidate>
+                    <DateField
+                      id={FIELD_IDS.examDate}
+                      label="Exam date"
+                      value={form.examDate}
+                      onChange={(value) => handleFieldChange('examDate', value)}
+                      hint="The provisional default is 19 December 2026."
+                      error={fieldErrors.examDate}
+                      disabled={isSaving}
+                    />
+
+                    <DateField
+                      id={FIELD_IDS.preparationStartDate}
+                      label="Preparation start date"
+                      value={form.preparationStartDate}
+                      onChange={(value) => handleFieldChange('preparationStartDate', value)}
+                      hint="First run uses today's date; adjust it if your preparation began earlier."
+                      error={fieldErrors.preparationStartDate}
+                      max={parseDateOnly(form.examDate) ? form.examDate : undefined}
+                      disabled={isSaving}
+                    />
+
+                    <div
+                      className={`form-field${fieldErrors.dailyMinutes ? ' form-field-invalid' : ''}`}
+                    >
+                      <label htmlFor={FIELD_IDS.dailyMinutes}>Daily study target</label>
+                      <div className="input-with-suffix">
+                        <input
+                          id={FIELD_IDS.dailyMinutes}
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={1440}
+                          step={1}
+                          value={form.dailyMinutes}
+                          onChange={(event) =>
+                            handleFieldChange('dailyMinutes', event.target.value)
+                          }
+                          aria-invalid={fieldErrors.dailyMinutes ? true : undefined}
+                          aria-describedby={
+                            fieldErrors.dailyMinutes
+                              ? 'daily-target-hint daily-target-error'
+                              : 'daily-target-hint'
+                          }
+                          disabled={isSaving}
+                          required
+                        />
+                        <span aria-hidden="true">minutes</span>
+                      </div>
+                      <p className="field-hint" id="daily-target-hint">
+                        {formMinutes === null
+                          ? 'Enter a whole number of minutes from 1 to 1440.'
+                          : `${formMinutes} minutes is ${formatHoursPerDay(formMinutes)}.`}
+                      </p>
+                      {fieldErrors.dailyMinutes && (
+                        <p className="field-error" id="daily-target-error" role="alert">
+                          {fieldErrors.dailyMinutes}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="form-footer">
+                      <button
+                        type="submit"
+                        className="primary-button"
+                        disabled={!dirty || isSaving}
+                      >
+                        {isSaving ? 'Saving…' : 'Save settings'}
+                      </button>
+                      <span className="dirty-hint" aria-live="polite">
+                        {isSaving
+                          ? 'Writing to SQLite…'
+                          : dirty
+                            ? 'Unsaved changes'
+                            : 'All changes saved'}
+                      </span>
+                    </div>
+
+                    {saveFeedback && (
+                      <p
+                        className={`save-feedback save-feedback-${saveFeedback.tone}`}
+                        role={saveFeedback.tone === 'error' ? 'alert' : 'status'}
+                      >
+                        {saveFeedback.message}
                       </p>
                     )}
-                  </div>
-
-                  <div className="form-footer">
-                    <button type="submit" className="primary-button" disabled={!dirty || isSaving}>
-                      {isSaving ? 'Saving…' : 'Save settings'}
-                    </button>
-                    <span className="dirty-hint" aria-live="polite">
-                      {isSaving
-                        ? 'Writing to SQLite…'
-                        : dirty
-                          ? 'Unsaved changes'
-                          : 'All changes saved'}
-                    </span>
-                  </div>
-
-                  {saveFeedback && (
-                    <p
-                      className={`save-feedback save-feedback-${saveFeedback.tone}`}
-                      role={saveFeedback.tone === 'error' ? 'alert' : 'status'}
-                    >
-                      {saveFeedback.message}
-                    </p>
-                  )}
-                </form>
-              </section>
-            </div>
-          )}
-        </div>
+                  </form>
+                </section>
+              </div>
+            )}
+          </div>
+        )}
       </main>
     </div>
   );

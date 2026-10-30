@@ -2,6 +2,8 @@ mod date_only;
 mod db;
 mod error;
 mod settings;
+mod syllabus;
+mod syllabus_catalog;
 
 use chrono::Local;
 use serde::Serialize;
@@ -41,9 +43,49 @@ fn update_settings(
     state.with_connection(|connection| crate::settings::update(connection, settings))
 }
 
+#[tauri::command]
+fn get_syllabus_catalog(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<syllabus::SyllabusCatalog, AppError> {
+    state.with_connection(|connection| syllabus::load_catalog(connection))
+}
+
+#[tauri::command]
+fn search_syllabus_topics(
+    state: tauri::State<'_, db::AppState>,
+    filter: syllabus::SyllabusFilter,
+) -> Result<Vec<syllabus::SyllabusTopic>, AppError> {
+    state.with_connection(|connection| syllabus::search_topics(connection, filter))
+}
+
+#[tauri::command]
+fn get_topic_progress(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+) -> Result<syllabus::TopicProgress, AppError> {
+    state.with_connection(|connection| syllabus::load_progress(connection, topic_id))
+}
+
+#[tauri::command]
+fn update_topic_progress(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    progress: syllabus::TopicProgressInput,
+) -> Result<syllabus::TopicProgress, AppError> {
+    state.with_connection(|connection| syllabus::update_progress(connection, topic_id, progress))
+}
+
+#[tauri::command]
+fn get_syllabus_summary(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<syllabus::SyllabusSummary, AppError> {
+    state.with_connection(|connection| syllabus::summary(connection))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let today = Local::now().date_naive();
             let state = match app.path().app_data_dir() {
@@ -63,7 +105,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             get_settings,
-            update_settings
+            update_settings,
+            get_syllabus_catalog,
+            search_syllabus_topics,
+            get_topic_progress,
+            update_topic_progress,
+            get_syllabus_summary
         ])
         .run(tauri::generate_context!())
         .expect("error while running the CSIR-NET Physics Tracker application");

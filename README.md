@@ -2,10 +2,12 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 2 status:** the dashboard, persistent planning settings, and exam countdown are implemented.
-The study timer, syllabus checklist, PYQ and mock-test tracking, revisions, and backup/restore are not
-implemented yet. Navigation entries for those modules are clearly marked as planned and are not
-interactive.
+**Phase 3 status:** the dashboard, persistent planning settings, exam countdown, and the
+official-source Physical Sciences syllabus tracker are implemented. The syllabus is seeded with 182
+topics across General Aptitude and the nine Physical Sciences units, and each topic can store a
+personal status, priority, confidence rating, and notes. The study timer, dedicated PYQ and mock-test
+tracking, revision scheduling, analytics, and backup/restore are not implemented yet. Navigation
+entries for those modules are clearly marked as planned and are not interactive.
 
 ## Stack
 
@@ -74,8 +76,10 @@ The database is created outside the repository in Tauri's per-user application-d
 ```
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
-if needed. The schema is versioned with deterministic migrations, and the app enables foreign keys,
-WAL journaling, a busy timeout, and transactions for multi-step writes.
+if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
+2), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
+creating any progress rows.
 
 The initial single-row settings record uses:
 
@@ -87,6 +91,79 @@ The initial single-row settings record uses:
 Date-only values are stored as `YYYY-MM-DD` strings and validated in Rust as real calendar dates,
 including leap years. The frontend uses one date-only utility and one reusable date input; it never
 parses date-only strings through UTC timestamps.
+
+## Syllabus catalog and progress
+
+Migration `0002_syllabus.sql` adds four `STRICT` tables:
+
+- `syllabus_sources` — official document metadata and the date it was checked.
+- `syllabus_sections` — the ten units (General Aptitude plus the nine Physical Sciences units), with
+  stable codes and display order.
+- `syllabus_topics` — 182 catalog entries with stable codes, source references, category, ordering,
+  and an archive flag.
+- `syllabus_progress` — one optional row per topic containing the user's study record.
+
+Catalog definitions and study progress are deliberately separate. Seeding upserts the built-in
+catalog by stable code and never writes to `syllabus_progress`; the initial database therefore
+contains no fabricated progress. If a future catalog removes a topic, the topic is archived rather
+than deleted, and its existing progress row is preserved. Re-seeding the same catalog is idempotent.
+
+The catalog uses only three categories: **General Aptitude**, **Core**, and **Advanced**. These are
+the categories used by the syllabus document. They are distinct from the exam question paper's Parts
+A, B, and C; the app labels that distinction explicitly and does not call Core "Part A" or Advanced
+"Part B".
+
+### Official sources
+
+The catalog was checked on **29 October 2026** against:
+
+- CSIR-HRDG, **Proposed Syllabus for Physical Sciences** —
+  <https://csirhrdg.res.in/SiteContent/ManagedContent/ContentFiles/20201221140202824physicalscience_syllbus.pdf>
+  (source page: <https://csirhrdg.res.in/Home/Index/1/Default/3485/78>)
+- National Testing Agency, **Joint CSIR-UGC NET December 2026 Information Bulletin** —
+  <https://cdnbbsr.s3waas.gov.in/s3efdf562ce2fb0ad460fd8e9d33e57f57/uploads/2026/10/202610071407707951.pdf>
+  (source page: <https://csirnet.nta.nic.in/>)
+
+The CSIR PDF's own title, **Proposed Syllabus for Physical Sciences**, is preserved in the app and in
+this README. The six General Aptitude entries follow the bulletin's stated emphases: logical
+reasoning, graphical analysis, analytical and numerical ability, quantitative comparison, series
+formation, and puzzles.
+
+Topic titles were transcribed from these documents with typographic normalization for spacing,
+dashes, and symbols. They are not claimed to be a character-perfect OCR reproduction. No topic
+weighting or guaranteed exam appearance is implied.
+
+### Recorded progress
+
+Each topic supports:
+
+- Status: Not started, Learning, Revised, or Confident.
+- Priority: Low, Normal, High, or High-Yield.
+- Confidence: a whole number from 1 to 5.
+- Notes: up to 2,000 characters, stored only in the local SQLite database.
+- An updated timestamp shown by the editor after the first save.
+
+Priority and **High-Yield** are personal planning labels. They are not official CSIR weightings.
+Likewise, the summary percentage is a study-tracking approximation, not a marks prediction or an
+official CSIR score. It gives every active topic equal weight and uses these status scores:
+
+| Status      | Score |
+| ----------- | ----: |
+| Not started |     0 |
+| Learning    |   0.5 |
+| Revised     |  0.75 |
+| Confident   |     1 |
+
+The syllabus screen supports text search (topic title or code), section, category, status, and
+priority filters. Search is debounced, archived topics are excluded, and filters are validated in
+Rust. The UI includes loading, save-in-progress, validation, retry, and empty states.
+
+## Typography note
+
+Latin Modern is not currently bundled with the app. No font files or font packages were added in
+Phase 3; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
+headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
+task for a later phase.
 
 ## Checks
 
@@ -133,16 +210,21 @@ The executable and bundle are generated from the product identity in `src-tauri/
 ```text
 src/                     React frontend and tests
   components/DateField.tsx   reusable accessible date input
+  screens/SyllabusScreen.tsx syllabus catalog, filters, and topic editor
   lib/dateOnly.ts            timezone-independent date utilities
   lib/useTodayDateOnly.ts    local-date refresh for long-running windows
-  lib/settingsApi.ts         typed Tauri command wrappers
+  lib/settingsApi.ts         typed settings command wrappers
+  lib/syllabusApi.ts         typed syllabus command wrappers
+  lib/commandError.ts        shared structured-error decoding
 src-tauri/               Tauri configuration and Rust backend
   capabilities/          Tauri window permissions
   icons/                 Application icons
-  migrations/            Versioned SQL schema migrations
+  migrations/            Append-only SQL schema migrations
   src/db.rs              App-data path, connection setup, managed state, migrations
   src/date_only.rs       Authoritative date parsing and formatting
   src/settings.rs        Settings validation, defaults, load, and update
+  src/syllabus_catalog.rs Official-source catalog definitions
+  src/syllabus.rs        Catalog seeding, search, progress, summaries, and validation
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
   src/main.rs            Desktop entry point

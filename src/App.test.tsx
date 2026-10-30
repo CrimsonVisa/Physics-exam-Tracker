@@ -220,6 +220,58 @@ describe('settings dashboard', () => {
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 
+  it('navigates between the dashboard and the interactive syllabus screen', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      switch (command) {
+        case 'get_settings':
+          return Promise.resolve(DEFAULT_SETTINGS);
+        case 'get_syllabus_catalog':
+          return Promise.resolve({ sources: [], sections: [] });
+        case 'get_syllabus_summary':
+          return Promise.resolve({
+            totalTopics: 0,
+            statusCounts: { notStarted: 0, learning: 0, revised: 0, confident: 0 },
+            approximateProgress: 0,
+            sections: [],
+          });
+        case 'search_syllabus_topics':
+          return Promise.resolve([]);
+        default:
+          return Promise.reject(new Error(`Unexpected command: ${command}`));
+      }
+    });
+
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+    const overviewNav = screen.getByRole('button', { name: 'Overview' });
+    const syllabusNav = screen.getByRole('button', { name: 'Syllabus' });
+    expect(overviewNav).toHaveAttribute('aria-current', 'page');
+    expect(syllabusNav).not.toHaveAttribute('aria-current');
+
+    await userEvent.click(syllabusNav);
+
+    expect(
+      await screen.findByRole('heading', { name: 'Physical Sciences syllabus', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Syllabus' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('button', { name: 'Overview' })).not.toHaveAttribute('aria-current');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Overview' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Exam countdown', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(invokeMock.mock.calls.filter(([name]) => name === 'get_settings')).toHaveLength(1);
+  });
+
   it('shows a load error and retries with a fresh command call', async () => {
     invokeMock.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(DEFAULT_SETTINGS);
 

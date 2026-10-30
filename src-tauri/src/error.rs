@@ -60,6 +60,15 @@ impl AppError {
         }
     }
 
+    pub fn topic_not_found() -> Self {
+        Self {
+            code: "topic_not_found",
+            message: "This syllabus topic is not in the active catalog. Refresh the syllabus and try again."
+                .to_owned(),
+            field: Some("topicId"),
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             code: "internal_error",
