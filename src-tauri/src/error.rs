@@ -69,6 +69,61 @@ impl AppError {
         }
     }
 
+    pub fn session_not_found() -> Self {
+        Self {
+            code: "session_not_found",
+            message: "This study session is no longer available. Refresh the session history and try again."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn timer_active() -> Self {
+        Self {
+            code: "timer_active",
+            message:
+                "A study timer is already active. Finish or discard it before starting another."
+                    .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn timer_not_running() -> Self {
+        Self {
+            code: "timer_not_running",
+            message:
+                "There is no running or paused timer to update. Refresh the timer and try again."
+                    .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn timer_not_paused() -> Self {
+        Self {
+            code: "timer_not_paused",
+            message: "The timer is not paused, so it cannot be resumed.".to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn timer_empty() -> Self {
+        Self {
+            code: "timer_empty",
+            message: "This timer has not accumulated any focus time yet. Discard it instead."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn timer_unavailable() -> Self {
+        Self {
+            code: "timer_unavailable",
+            message: "The saved timer state could not be read. Restart the app to recreate it."
+                .to_owned(),
+            field: None,
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             code: "internal_error",

@@ -1,11 +1,13 @@
 mod date_only;
 mod db;
 mod error;
+mod sessions;
 mod settings;
 mod syllabus;
 mod syllabus_catalog;
+mod timer;
 
-use chrono::Local;
+use chrono::{Local, Utc};
 use serde::Serialize;
 use tauri::Manager;
 
@@ -82,10 +84,127 @@ fn get_syllabus_summary(
     state.with_connection(|connection| syllabus::summary(connection))
 }
 
+#[tauri::command]
+fn get_timer_snapshot(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<timer::TimerSnapshot, AppError> {
+    state.with_connection(|connection| timer::snapshot(connection, Utc::now()))
+}
+
+#[tauri::command]
+fn update_timer_settings(
+    state: tauri::State<'_, db::AppState>,
+    settings: timer::TimerSettingsInput,
+) -> Result<timer::TimerSnapshot, AppError> {
+    state.with_connection(|connection| {
+        timer::update_settings(connection, settings)?;
+        timer::snapshot(connection, Utc::now())
+    })
+}
+
+#[tauri::command]
+fn start_study_timer(
+    state: tauri::State<'_, db::AppState>,
+    mode: String,
+    topic_id: Option<i64>,
+) -> Result<timer::TimerSnapshot, AppError> {
+    state.with_connection(|connection| {
+        let now = Utc::now();
+        timer::start(connection, now, Local::now().date_naive(), &mode, topic_id)
+    })
+}
+
+#[tauri::command]
+fn pause_study_timer(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<timer::TimerSnapshot, AppError> {
+    state.with_connection(|connection| timer::pause(connection, Utc::now()))
+}
+
+#[tauri::command]
+fn resume_study_timer(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<timer::TimerSnapshot, AppError> {
+    state.with_connection(|connection| timer::resume(connection, Utc::now()))
+}
+
+#[tauri::command]
+fn finish_study_timer(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<timer::TimerSnapshot, AppError> {
+    state.with_connection(|connection| timer::finish(connection, Utc::now()))
+}
+
+#[tauri::command]
+fn discard_study_timer(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<timer::TimerSnapshot, AppError> {
+    state.with_connection(|connection| timer::discard(connection, Utc::now()))
+}
+
+#[tauri::command]
+fn get_study_sessions(
+    state: tauri::State<'_, db::AppState>,
+    filter: sessions::StudySessionFilter,
+) -> Result<Vec<sessions::StudySession>, AppError> {
+    state.with_connection(|connection| sessions::list(connection, filter))
+}
+
+#[tauri::command]
+fn get_session_topics(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<Vec<sessions::SessionTopic>, AppError> {
+    state.with_connection(|connection| sessions::list_topics(connection))
+}
+
+#[tauri::command]
+fn create_manual_session(
+    state: tauri::State<'_, db::AppState>,
+    session: sessions::StudySessionInput,
+) -> Result<sessions::StudySession, AppError> {
+    state.with_connection(|connection| sessions::create_manual(connection, session))
+}
+
+#[tauri::command]
+fn update_study_session(
+    state: tauri::State<'_, db::AppState>,
+    session_id: i64,
+    session: sessions::StudySessionInput,
+) -> Result<sessions::StudySession, AppError> {
+    state.with_connection(|connection| sessions::update(connection, session_id, session))
+}
+
+#[tauri::command]
+fn delete_study_session(
+    state: tauri::State<'_, db::AppState>,
+    session_id: i64,
+) -> Result<(), AppError> {
+    state.with_connection(|connection| sessions::delete(connection, session_id))
+}
+
+#[tauri::command]
+fn get_study_totals(
+    state: tauri::State<'_, db::AppState>,
+    from_date: String,
+    to_date: String,
+    topic_id: Option<i64>,
+) -> Result<sessions::StudyTotals, AppError> {
+    state.with_connection(|connection| {
+        sessions::totals(
+            connection,
+            &from_date,
+            &to_date,
+            Local::now().date_naive(),
+            topic_id,
+        )
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let today = Local::now().date_naive();
             let state = match app.path().app_data_dir() {
@@ -100,6 +219,13 @@ pub fn run() {
             };
 
             let _ = app.manage(state);
+            if app
+                .state::<db::AppState>()
+                .with_connection(|_| Ok(()))
+                .is_ok()
+            {
+                timer::start_heartbeat(app.handle().clone());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -110,7 +236,20 @@ pub fn run() {
             search_syllabus_topics,
             get_topic_progress,
             update_topic_progress,
-            get_syllabus_summary
+            get_syllabus_summary,
+            get_timer_snapshot,
+            update_timer_settings,
+            start_study_timer,
+            pause_study_timer,
+            resume_study_timer,
+            finish_study_timer,
+            discard_study_timer,
+            get_study_sessions,
+            get_session_topics,
+            create_manual_session,
+            update_study_session,
+            delete_study_session,
+            get_study_totals
         ])
         .run(tauri::generate_context!())
         .expect("error while running the CSIR-NET Physics Tracker application");

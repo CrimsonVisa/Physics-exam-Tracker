@@ -2,12 +2,13 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 3 status:** the dashboard, persistent planning settings, exam countdown, and the
-official-source Physical Sciences syllabus tracker are implemented. The syllabus is seeded with 182
-topics across General Aptitude and the nine Physical Sciences units, and each topic can store a
-personal status, priority, confidence rating, and notes. The study timer, dedicated PYQ and mock-test
-tracking, revision scheduling, analytics, and backup/restore are not implemented yet. Navigation
-entries for those modules are clearly marked as planned and are not interactive.
+**Phase 4 status:** the dashboard, persistent planning settings, exam countdown, official-source
+Physical Sciences syllabus tracker, persisted study timer, and study-session history are implemented.
+The syllabus is seeded with 182 topics across General Aptitude and the nine Physical Sciences units,
+and each topic can store a personal status, priority, confidence rating, and notes. The timer records
+focus sessions with restart and sleep recovery, and the dashboard shows today's focus time against the
+daily target. Dedicated PYQ and mock-test tracking, revision scheduling, fuller analytics, and
+backup/restore are not implemented yet.
 
 ## Stack
 
@@ -77,9 +78,10 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-2), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+3), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
-creating any progress rows.
+creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
+timer settings and an idle timer; it does not fabricate study sessions.
 
 The initial single-row settings record uses:
 
@@ -158,10 +160,76 @@ The syllabus screen supports text search (topic title or code), section, categor
 priority filters. Search is debounced, archived topics are excluded, and filters are validated in
 Rust. The UI includes loading, save-in-progress, validation, retry, and empty states.
 
+## Study timer and sessions
+
+Migration `0003_study_timer_and_sessions.sql` adds three `STRICT` tables:
+
+- `timer_settings` — the single settings row: focus, short-break, and long-break durations plus the
+  desktop-notification preference.
+- `timer_state` — the single active-timer row: status, mode, duration, accumulated active time,
+  segment start, first start, heartbeat, optional topic, local session date, and recovery/event state.
+- `study_sessions` — completed focus sessions with a stable ID, optional syllabus topic, local session
+  date, optional UTC start/end timestamps, duration, `timer` or `manual` source, notes, and
+  created/updated timestamps.
+
+Default durations are 25 minutes of focus, a 5-minute short break, and a 15-minute long break. Focus
+durations are limited to 1–240 minutes, short breaks to 1–60 minutes, and long breaks to 1–120
+minutes. One timer can be active at a time. Desktop notifications are off by default.
+
+### How elapsed time is protected
+
+The timer does not trust an interval callback in the webview. Running time is derived from persisted
+UTC timestamps. A Rust heartbeat runs every five seconds independently of the window, records a
+heartbeat timestamp, and completes a running timer when its configured duration is reached. The Timer
+page polls snapshots every five seconds for authoritative state and repaints the visible clock from
+the server timestamp every 250 milliseconds; minimization, delayed rendering, or a slow webview
+therefore do not change the accounting.
+
+The recovery policy is deliberately conservative:
+
+- If the app restarts while a timer is running, the timer comes back **paused** at the last
+  heartbeat. Time while the app was closed is excluded until the user resumes.
+- If heartbeats stop for more than 20 seconds — for example during computer sleep or a suspended
+  process — the next reconciliation pauses the timer and excludes the gap. Computer sleep is never
+  counted as study time.
+- Paused time is never counted. Only completed focus time is written to `study_sessions`; completed
+  short and long breaks never enter study totals.
+- Discarding a timer never reconciles or saves a session, even if the configured duration has passed.
+- Each recovery records its reason (`restart` or `inactivity`), the excluded milliseconds, and the
+  recovery timestamp. The Timer page shows this explanation alongside the saved focus time.
+
+### Session history and totals
+
+Timer sessions are inserted when a focus block completes, either naturally or when the user chooses
+**Finish & save**. Timer start and end timestamps are kept in UTC. A focus block that crosses midnight
+stays attributed to its **local start date**; the session date is not split between two days.
+
+Sessions can also be entered or corrected manually. Manual entries have no clock timestamps, accept a
+duration from 1 second to 24 hours, and support up to 2,000 characters of notes. Editing and deletion
+run in transactions and recalculate the affected totals. Deleting a session never changes syllabus
+progress or deletes a topic.
+
+The Sessions page filters by date range and optional topic, groups history by session date, and shows
+the selected-range, today, and current-week totals. Weeks run Monday through Sunday in the local
+calendar. Daily and weekly totals exclude breaks and paused time. Archived topics are not offered for
+new sessions, but they remain visible and filterable wherever historical sessions reference them; the
+topic foreign key is restrictive, so a topic with study history cannot be destructively removed.
+
+The dashboard adds a full-width study card showing today's focus time against the existing daily
+target, today's session count, and this week's total. It intentionally does not attempt the full
+analytics planned for a later phase.
+
+### Notification limits
+
+When notifications are enabled, the app asks Windows for permission and the Rust heartbeat sends a
+notification only when a timer completes naturally. A manually finished timer does not notify.
+Windows notification settings, Focus Assist, and system policy can still suppress delivery, so the
+in-app timer state remains authoritative. Notifications remain off unless the user opts in.
+
 ## Typography note
 
-Latin Modern is not currently bundled with the app. No font files or font packages were added in
-Phase 3; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
+Latin Modern is not currently bundled with the app. No font files or font packages were added through
+Phase 4; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
 headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
 task for a later phase.
 
@@ -209,13 +277,19 @@ The executable and bundle are generated from the product identity in `src-tauri/
 
 ```text
 src/                     React frontend and tests
-  components/DateField.tsx   reusable accessible date input
-  screens/SyllabusScreen.tsx syllabus catalog, filters, and topic editor
-  lib/dateOnly.ts            timezone-independent date utilities
-  lib/useTodayDateOnly.ts    local-date refresh for long-running windows
-  lib/settingsApi.ts         typed settings command wrappers
-  lib/syllabusApi.ts         typed syllabus command wrappers
-  lib/commandError.ts        shared structured-error decoding
+  components/DateField.tsx      reusable accessible date input
+  components/StudyTodayCard.tsx dashboard study total and target progress
+  screens/SyllabusScreen.tsx    syllabus catalog, filters, and topic editor
+  screens/TimerScreen.tsx       persisted timer, recovery display, and settings
+  screens/SessionsScreen.tsx    session history, filters, totals, and manual CRUD
+  lib/dateOnly.ts               timezone-independent date utilities
+  lib/studyTime.ts              duration and timer-clock formatting
+  lib/useTodayDateOnly.ts       local-date refresh for long-running windows
+  lib/settingsApi.ts            typed settings command wrappers
+  lib/syllabusApi.ts            typed syllabus command wrappers
+  lib/timerApi.ts               typed timer command wrappers
+  lib/sessionsApi.ts            typed session and totals command wrappers
+  lib/commandError.ts           shared structured-error decoding
 src-tauri/               Tauri configuration and Rust backend
   capabilities/          Tauri window permissions
   icons/                 Application icons
@@ -225,6 +299,8 @@ src-tauri/               Tauri configuration and Rust backend
   src/settings.rs        Settings validation, defaults, load, and update
   src/syllabus_catalog.rs Official-source catalog definitions
   src/syllabus.rs        Catalog seeding, search, progress, summaries, and validation
+  src/timer.rs           Timer state machine, heartbeat, recovery, and accounting
+  src/sessions.rs        Session CRUD, validation, filters, and study totals
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
   src/main.rs            Desktop entry point

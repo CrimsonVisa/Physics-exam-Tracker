@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addDaysDateOnly,
   calendarDaysBetween,
   countdownFor,
   daysInMonth,
@@ -91,6 +92,28 @@ describe('calendar-day arithmetic', () => {
   it('returns null instead of guessing for invalid input', () => {
     expect(calendarDaysBetween('2026-02-30', '2026-12-19')).toBeNull();
     expect(calendarDaysBetween('2026-12-19', 'not-a-date')).toBeNull();
+  });
+});
+
+describe('date-only arithmetic', () => {
+  it('adds and subtracts calendar days without timezone conversion', () => {
+    expect(addDaysDateOnly('2026-12-10', -29)).toBe('2026-11-11');
+    expect(addDaysDateOnly('2026-12-31', 1)).toBe('2027-01-01');
+    expect(addDaysDateOnly('2024-02-28', 1)).toBe('2024-02-29');
+    expect(addDaysDateOnly('2024-02-28', 2)).toBe('2024-03-01');
+    expect(addDaysDateOnly('2026-01-01', -1)).toBe('2025-12-31');
+  });
+
+  it('returns null for an invalid starting date', () => {
+    expect(addDaysDateOnly('2026-02-30', 1)).toBeNull();
+    expect(addDaysDateOnly('not-a-date', 1)).toBeNull();
+  });
+
+  it('returns null when the offset is not a whole day or leaves the supported range', () => {
+    expect(addDaysDateOnly('2026-12-10', 1.5)).toBeNull();
+    expect(addDaysDateOnly('2026-12-10', Number.NaN)).toBeNull();
+    expect(addDaysDateOnly('0001-01-01', -1)).toBeNull();
+    expect(addDaysDateOnly('9999-12-31', 1)).toBeNull();
   });
 });
 

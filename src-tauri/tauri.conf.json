@@ -34,7 +34,7 @@
     "copyright": "Copyright © 2026 CrimsonVisa",
     "category": "Education",
     "shortDescription": "Offline-first study tracker for CSIR-UGC NET Physical Sciences.",
-    "longDescription": "A Windows desktop study tracker for CSIR-UGC NET Physical Sciences. Phase 3 adds an official-source syllabus catalog with per-topic status, priority, confidence, and notes, stored locally alongside planning settings and the exam countdown.",
+    "longDescription": "A Windows desktop study tracker for CSIR-UGC NET Physical Sciences. Phase 4 adds a persisted focus timer and study-session history alongside the official-source syllabus catalog, per-topic progress, planning settings, and exam countdown. Timer and session data stay in a local SQLite database, with restart and sleep recovery that exclude time when the app was not actively tracking.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

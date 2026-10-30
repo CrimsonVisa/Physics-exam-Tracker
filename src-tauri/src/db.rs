@@ -5,11 +5,11 @@ use std::{
     time::Duration,
 };
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
-use crate::{error::AppError, settings, syllabus};
+use crate::{error::AppError, settings, syllabus, timer};
 
 pub const DATABASE_FILE_NAME: &str = "csir-net-tracker.sqlite3";
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -17,6 +17,9 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MIGRATIONS_SLICE: &[M<'static>] = &[
     M::up(include_str!("../migrations/0001_settings.sql")),
     M::up(include_str!("../migrations/0002_syllabus.sql")),
+    M::up(include_str!(
+        "../migrations/0003_study_timer_and_sessions.sql"
+    )),
 ];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -87,6 +90,8 @@ pub fn open_database(path: &Path, today: NaiveDate) -> Result<Connection, AppErr
     migrate(&mut connection)?;
     settings::ensure_defaults(&mut connection, today)?;
     syllabus::seed(&mut connection)?;
+    timer::ensure_defaults(&mut connection)?;
+    timer::recover_after_restart(&mut connection, Utc::now())?;
 
     Ok(connection)
 }
@@ -156,7 +161,7 @@ mod tests {
     fn migrations_are_versioned_and_repeatable() {
         let mut connection = test_connection();
 
-        assert_eq!(schema_version(&connection), 2);
+        assert_eq!(schema_version(&connection), 3);
         let table_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM sqlite_master
@@ -166,20 +171,23 @@ mod tests {
                        'syllabus_sources',
                        'syllabus_sections',
                        'syllabus_topics',
-                       'syllabus_progress'
+                       'syllabus_progress',
+                       'timer_settings',
+                       'timer_state',
+                       'study_sessions'
                    )",
                 [],
                 |row| row.get(0),
             )
             .expect("migration tables should be inspectable");
-        assert_eq!(table_count, 5);
+        assert_eq!(table_count, 8);
 
         migrate(&mut connection).expect("a repeated migration should be a no-op");
-        assert_eq!(schema_version(&connection), 2);
+        assert_eq!(schema_version(&connection), 3);
     }
 
     #[test]
-    fn version_one_database_upgrades_without_losing_settings_or_creating_progress() {
+    fn version_one_database_upgrades_without_losing_settings_or_creating_progress_or_sessions() {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let path = directory.path().join(DATABASE_FILE_NAME);
 
@@ -207,7 +215,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 2);
+        assert_eq!(schema_version(&connection), 3);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -227,6 +235,19 @@ mod tests {
             .expect("progress rows should be countable");
         assert_eq!(topic_count, 182);
         assert_eq!(progress_count, 0);
+
+        let session_count: i64 = connection
+            .query_row("SELECT count(*) FROM study_sessions", [], |row| row.get(0))
+            .expect("session rows should be countable");
+        let timer_state: (String, String, i64) = connection
+            .query_row(
+                "SELECT status, mode, accumulated_ms FROM timer_state WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("timer state should exist after the upgrade");
+        assert_eq!(session_count, 0);
+        assert_eq!(timer_state, ("idle".to_owned(), "focus".to_owned(), 0));
     }
 
     #[test]

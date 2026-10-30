@@ -1,12 +1,15 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import { DateField } from './components/DateField';
+import { StudyTodayCard } from './components/StudyTodayCard';
 import { toCommandError } from './lib/commandError';
 import { countdownFor, formatDateLong, parseDateOnly, type Countdown } from './lib/dateOnly';
 import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import { useTodayDateOnly } from './lib/useTodayDateOnly';
+import SessionsScreen from './screens/SessionsScreen';
 import SyllabusScreen from './screens/SyllabusScreen';
+import TimerScreen from './screens/TimerScreen';
 
-type AppView = 'overview' | 'syllabus';
+type AppView = 'overview' | 'timer' | 'sessions' | 'syllabus';
 
 type FormState = {
   examDate: string;
@@ -148,23 +151,33 @@ function Sidebar({
         </button>
         <button
           type="button"
+          className={`nav-item nav-button${activeView === 'timer' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'timer' ? 'page' : undefined}
+          onClick={() => onNavigate('timer')}
+        >
+          Timer
+        </button>
+        <button
+          type="button"
+          className={`nav-item nav-button${activeView === 'sessions' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'sessions' ? 'page' : undefined}
+          onClick={() => onNavigate('sessions')}
+        >
+          Sessions
+        </button>
+        <button
+          type="button"
           className={`nav-item nav-button${activeView === 'syllabus' ? ' nav-item-active' : ''}`}
           aria-current={activeView === 'syllabus' ? 'page' : undefined}
           onClick={() => onNavigate('syllabus')}
         >
           Syllabus
         </button>
-        <span className="nav-item nav-item-planned">
-          Study timer <span className="nav-tag">Later</span>
-        </span>
-        <span className="nav-item nav-item-planned">
-          Progress <span className="nav-tag">Later</span>
-        </span>
       </nav>
 
       <p className="sidebar-note">
-        Local-first. Your settings and syllabus progress are stored on this PC and never sent to a
-        server.
+        Local-first. Settings, syllabus progress, and study sessions are stored on this PC and never
+        sent to a server.
       </p>
     </aside>
   );
@@ -338,6 +351,10 @@ export default function App({ today }: AppProps) {
       <main className="main-area">
         {view === 'syllabus' ? (
           <SyllabusScreen />
+        ) : view === 'timer' ? (
+          <TimerScreen />
+        ) : view === 'sessions' ? (
+          <SessionsScreen today={currentToday} />
         ) : (
           <div className="page-container">
             <header className="page-header">
@@ -510,6 +527,12 @@ export default function App({ today }: AppProps) {
                     )}
                   </form>
                 </section>
+
+                <StudyTodayCard
+                  today={currentToday}
+                  targetMinutes={formMinutes ?? settings.dailyStudyTargetMinutes}
+                  onOpenSessions={() => setView('sessions')}
+                />
               </div>
             )}
           </div>

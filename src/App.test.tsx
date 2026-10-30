@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import type { Settings } from './lib/settingsApi';
+import type { StudyTotals } from './lib/sessionsApi';
+import type { TimerSnapshot } from './lib/timerApi';
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -10,6 +12,11 @@ const { invokeMock } = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+}));
+
+vi.mock('@tauri-apps/plugin-notification', () => ({
+  isPermissionGranted: vi.fn().mockResolvedValue(false),
+  requestPermission: vi.fn().mockResolvedValue('denied'),
 }));
 
 const DEFAULT_SETTINGS: Settings = {
@@ -20,8 +27,82 @@ const DEFAULT_SETTINGS: Settings = {
 
 const TODAY = '2026-12-10';
 
+const EMPTY_TOTALS: StudyTotals = {
+  rangeFrom: TODAY,
+  rangeTo: TODAY,
+  rangeSeconds: 0,
+  rangeSessionCount: 0,
+  todayDate: TODAY,
+  todaySeconds: 0,
+  weekStart: '2026-12-07',
+  weekEnd: '2026-12-13',
+  weekSeconds: 0,
+  daily: [],
+  weekly: [],
+};
+
+const TIMER_SNAPSHOT: TimerSnapshot = {
+  state: {
+    status: 'idle',
+    mode: 'focus',
+    durationMs: 25 * 60_000,
+    accumulatedMs: 0,
+    remainingMs: 25 * 60_000,
+    firstStartedAt: null,
+    sessionDate: null,
+    topic: null,
+    lastEvent: null,
+    lastEventAt: null,
+    lastEventDurationMs: 0,
+    lastCompletedSessionId: null,
+    recovery: null,
+  },
+  settings: {
+    focusMinutes: 25,
+    shortBreakMinutes: 5,
+    longBreakMinutes: 15,
+    notificationsEnabled: false,
+  },
+  serverNowMs: 1_800_000_000_000,
+};
+
+type MockHandler = (args?: Record<string, unknown>) => unknown;
+
+function mockBackend(overrides: Record<string, MockHandler> = {}) {
+  const handlers: Record<string, MockHandler> = {
+    get_settings: () => DEFAULT_SETTINGS,
+    update_settings: (args) => args?.settings,
+    get_study_totals: () => EMPTY_TOTALS,
+    get_syllabus_catalog: () => ({ sources: [], sections: [] }),
+    get_syllabus_summary: () => ({
+      totalTopics: 0,
+      statusCounts: { notStarted: 0, learning: 0, revised: 0, confident: 0 },
+      approximateProgress: 0,
+      sections: [],
+    }),
+    search_syllabus_topics: () => [],
+    get_timer_snapshot: () => TIMER_SNAPSHOT,
+    get_study_sessions: () => [],
+    get_session_topics: () => [],
+    ...overrides,
+  };
+
+  invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+    const handler = handlers[command];
+    if (!handler) {
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    }
+
+    return Promise.resolve(handler(args));
+  });
+}
+
 function renderApp(today = TODAY) {
   return render(<App today={today} />);
+}
+
+function callsFor(command: string) {
+  return invokeMock.mock.calls.filter(([name]) => name === command);
 }
 
 describe('settings dashboard', () => {
@@ -29,8 +110,8 @@ describe('settings dashboard', () => {
     invokeMock.mockReset();
   });
 
-  it('loads persisted settings and shows the countdown, dates, target, and provisional warning', async () => {
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS);
+  it('loads persisted settings and shows the countdown, dates, target, provisional warning, and study total', async () => {
+    mockBackend();
 
     renderApp();
 
@@ -44,6 +125,8 @@ describe('settings dashboard', () => {
       screen.getByText(/Confirm the actual subject date on your admit card/),
     ).toBeInTheDocument();
     expect(invokeMock).toHaveBeenCalledWith('get_settings');
+    expect(await screen.findByText("Today's study time")).toBeInTheDocument();
+    expect(await screen.findByText('of 4h daily target')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Exam countdown', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('CSIR-NET')).toBeInTheDocument();
     expect(screen.getByText('Physics Tracker')).toBeInTheDocument();
@@ -60,7 +143,7 @@ describe('settings dashboard', () => {
   });
 
   it('shows a zero-day countdown on exam day', async () => {
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS);
+    mockBackend({ get_settings: () => ({ ...DEFAULT_SETTINGS, examDate: '2026-12-19' }) });
 
     renderApp('2026-12-19');
 
@@ -70,7 +153,7 @@ describe('settings dashboard', () => {
   });
 
   it('describes a passed exam date without a negative countdown', async () => {
-    invokeMock.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, examDate: '2026-12-01' });
+    mockBackend({ get_settings: () => ({ ...DEFAULT_SETTINGS, examDate: '2026-12-01' }) });
 
     renderApp();
 
@@ -82,7 +165,7 @@ describe('settings dashboard', () => {
   });
 
   it('describes a single elapsed day correctly', async () => {
-    invokeMock.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, examDate: '2026-12-09' });
+    mockBackend({ get_settings: () => ({ ...DEFAULT_SETTINGS, examDate: '2026-12-09' }) });
 
     renderApp();
 
@@ -90,8 +173,7 @@ describe('settings dashboard', () => {
   });
 
   it('updates the preview as the exam date changes and saves the typed settings payload', async () => {
-    const updated: Settings = { ...DEFAULT_SETTINGS, examDate: '2026-12-20' };
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS).mockResolvedValueOnce(updated);
+    mockBackend();
 
     renderApp();
 
@@ -104,7 +186,7 @@ describe('settings dashboard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     expect(await screen.findByText('Settings saved to the local database.')).toBeInTheDocument();
-    expect(invokeMock).toHaveBeenNthCalledWith(2, 'update_settings', {
+    expect(invokeMock).toHaveBeenCalledWith('update_settings', {
       settings: {
         examDate: '2026-12-20',
         preparationStartDate: '2026-10-29',
@@ -116,8 +198,7 @@ describe('settings dashboard', () => {
   });
 
   it('saves an updated daily target with its hours hint', async () => {
-    const updated: Settings = { ...DEFAULT_SETTINGS, dailyStudyTargetMinutes: 300 };
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS).mockResolvedValueOnce(updated);
+    mockBackend();
 
     renderApp();
 
@@ -130,7 +211,7 @@ describe('settings dashboard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     await waitFor(() =>
-      expect(invokeMock).toHaveBeenNthCalledWith(2, 'update_settings', {
+      expect(invokeMock).toHaveBeenCalledWith('update_settings', {
         settings: {
           examDate: '2026-12-19',
           preparationStartDate: '2026-10-29',
@@ -146,7 +227,7 @@ describe('settings dashboard', () => {
     const pendingSave = new Promise<Settings>((resolve) => {
       resolveSave = resolve;
     });
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS).mockReturnValueOnce(pendingSave);
+    mockBackend({ update_settings: () => pendingSave });
 
     renderApp();
 
@@ -168,10 +249,13 @@ describe('settings dashboard', () => {
   });
 
   it('keeps the form open and reports a backend validation error on the responsible field', async () => {
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS).mockRejectedValueOnce({
-      code: 'validation_error',
-      message: 'Enter a real calendar date in YYYY-MM-DD format.',
-      field: 'examDate',
+    mockBackend({
+      update_settings: () =>
+        Promise.reject({
+          code: 'validation_error',
+          message: 'Enter a real calendar date in YYYY-MM-DD format.',
+          field: 'examDate',
+        }),
     });
 
     renderApp();
@@ -190,7 +274,7 @@ describe('settings dashboard', () => {
   });
 
   it('blocks an empty date locally before invoking the backend', async () => {
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS);
+    mockBackend();
 
     renderApp();
 
@@ -200,11 +284,11 @@ describe('settings dashboard', () => {
 
     expect(await screen.findByText('Choose a real calendar date.')).toBeInTheDocument();
     expect(examDate).toHaveAttribute('aria-invalid', 'true');
-    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(callsFor('update_settings')).toHaveLength(0);
   });
 
   it('does not allow a preparation start date after the exam date', async () => {
-    invokeMock.mockResolvedValueOnce(DEFAULT_SETTINGS);
+    mockBackend();
 
     renderApp();
 
@@ -217,29 +301,11 @@ describe('settings dashboard', () => {
     expect(
       await screen.findByText('Preparation start date cannot be after the exam date.'),
     ).toBeInTheDocument();
-    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(callsFor('update_settings')).toHaveLength(0);
   });
 
   it('navigates between the dashboard and the interactive syllabus screen', async () => {
-    invokeMock.mockImplementation((command: string) => {
-      switch (command) {
-        case 'get_settings':
-          return Promise.resolve(DEFAULT_SETTINGS);
-        case 'get_syllabus_catalog':
-          return Promise.resolve({ sources: [], sections: [] });
-        case 'get_syllabus_summary':
-          return Promise.resolve({
-            totalTopics: 0,
-            statusCounts: { notStarted: 0, learning: 0, revised: 0, confident: 0 },
-            approximateProgress: 0,
-            sections: [],
-          });
-        case 'search_syllabus_topics':
-          return Promise.resolve([]);
-        default:
-          return Promise.reject(new Error(`Unexpected command: ${command}`));
-      }
-    });
+    mockBackend();
 
     renderApp();
 
@@ -269,11 +335,37 @@ describe('settings dashboard', () => {
       'aria-current',
       'page',
     );
-    expect(invokeMock.mock.calls.filter(([name]) => name === 'get_settings')).toHaveLength(1);
+    expect(callsFor('get_settings')).toHaveLength(1);
+  });
+
+  it('navigates to the timer and sessions screens', async () => {
+    mockBackend();
+
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Timer' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Focused study blocks', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Timer' })).toHaveAttribute('aria-current', 'page');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Study-time history', level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('No study sessions in this range')).toBeInTheDocument();
   });
 
   it('shows a load error and retries with a fresh command call', async () => {
-    invokeMock.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(DEFAULT_SETTINGS);
+    let attempts = 0;
+    mockBackend({
+      get_settings: () => {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(new Error('boom')) : DEFAULT_SETTINGS;
+      },
+    });
 
     renderApp();
 
@@ -285,7 +377,6 @@ describe('settings dashboard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByText('days remaining')).toBeInTheDocument();
-    expect(invokeMock).toHaveBeenNthCalledWith(1, 'get_settings');
-    expect(invokeMock).toHaveBeenNthCalledWith(2, 'get_settings');
+    expect(callsFor('get_settings')).toHaveLength(2);
   });
 });

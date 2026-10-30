@@ -105,6 +105,50 @@ export function calendarDaysBetween(startDate: string, endDate: string): number 
   return daysFromCivil(end) - daysFromCivil(start);
 }
 
+function civilFromDays(days: number): DateParts {
+  const z = days + 719468;
+  const era = Math.floor(z / 146097);
+  const dayOfEra = z - era * 146097;
+  const yearOfEra = Math.floor(
+    (dayOfEra -
+      Math.floor(dayOfEra / 1460) +
+      Math.floor(dayOfEra / 36524) -
+      Math.floor(dayOfEra / 146096)) /
+      365,
+  );
+  const year = yearOfEra + era * 400;
+  const dayOfYear =
+    dayOfEra - (365 * yearOfEra + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100));
+  const monthPrime = Math.floor((5 * dayOfYear + 2) / 153);
+  const day = dayOfYear - Math.floor((153 * monthPrime + 2) / 5) + 1;
+  const month = monthPrime + (monthPrime < 10 ? 3 : -9);
+
+  return {
+    year: year + (month <= 2 ? 1 : 0),
+    month,
+    day,
+  };
+}
+
+/** Add a whole number of calendar days without involving time zones. */
+export function addDaysDateOnly(value: string, offset: number): string | null {
+  const parts = parseDateOnly(value);
+  if (!parts || !Number.isSafeInteger(offset)) {
+    return null;
+  }
+
+  const shifted = civilFromDays(daysFromCivil(parts) + offset);
+  if (shifted.year < 1 || shifted.year > 9999) {
+    return null;
+  }
+
+  const year = String(shifted.year).padStart(4, '0');
+  const month = String(shifted.month).padStart(2, '0');
+  const day = String(shifted.day).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
 export function countdownFor(examDate: string, today: string): Countdown | null {
   const days = calendarDaysBetween(today, examDate);
   if (days === null) {
