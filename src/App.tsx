@@ -1,15 +1,23 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import { DateField } from './components/DateField';
 import { StudyTodayCard } from './components/StudyTodayCard';
+import { TodayPlanCard } from './components/TodayPlanCard';
 import { toCommandError } from './lib/commandError';
 import { countdownFor, formatDateLong, parseDateOnly, type Countdown } from './lib/dateOnly';
+import {
+  applyExamDateChange,
+  previewExamDateChange,
+  type ExamReschedulePreview,
+} from './lib/plannerApi';
 import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import { useTodayDateOnly } from './lib/useTodayDateOnly';
+import CalendarScreen from './screens/CalendarScreen';
+import ChecklistScreen from './screens/ChecklistScreen';
 import SessionsScreen from './screens/SessionsScreen';
 import SyllabusScreen from './screens/SyllabusScreen';
 import TimerScreen from './screens/TimerScreen';
 
-type AppView = 'overview' | 'timer' | 'sessions' | 'syllabus';
+type AppView = 'overview' | 'timer' | 'sessions' | 'checklist' | 'calendar' | 'syllabus';
 
 type FormState = {
   examDate: string;
@@ -167,6 +175,22 @@ function Sidebar({
         </button>
         <button
           type="button"
+          className={`nav-item nav-button${activeView === 'checklist' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'checklist' ? 'page' : undefined}
+          onClick={() => onNavigate('checklist')}
+        >
+          Checklist
+        </button>
+        <button
+          type="button"
+          className={`nav-item nav-button${activeView === 'calendar' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'calendar' ? 'page' : undefined}
+          onClick={() => onNavigate('calendar')}
+        >
+          Calendar
+        </button>
+        <button
+          type="button"
           className={`nav-item nav-button${activeView === 'syllabus' ? ' nav-item-active' : ''}`}
           aria-current={activeView === 'syllabus' ? 'page' : undefined}
           onClick={() => onNavigate('syllabus')}
@@ -176,8 +200,8 @@ function Sidebar({
       </nav>
 
       <p className="sidebar-note">
-        Local-first. Settings, syllabus progress, and study sessions are stored on this PC and never
-        sent to a server.
+        Local-first. Settings, syllabus progress, checklist plans, and study sessions are stored on
+        this PC and never sent to a server.
       </p>
     </aside>
   );
@@ -230,9 +254,11 @@ export default function App({ today }: AppProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<SaveFeedback>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [focusField, setFocusField] = useState<FormField | null>(null);
+  const [examPreview, setExamPreview] = useState<ExamReschedulePreview | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -293,6 +319,19 @@ export default function App({ today }: AppProps) {
     });
     setFocusField(null);
     setSaveFeedback(null);
+    setExamPreview(null);
+  }
+
+  function handleSettingsError(error: unknown) {
+    const commandError = toCommandError(error);
+    const field = commandError.field ? BACKEND_FIELD_MAP[commandError.field] : undefined;
+
+    if (field) {
+      setFieldErrors({ [field]: commandError.message });
+      setFocusField(field);
+    }
+
+    setSaveFeedback({ tone: 'error', message: commandError.message });
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -303,6 +342,7 @@ export default function App({ today }: AppProps) {
     }
 
     setSaveFeedback(null);
+    setExamPreview(null);
     const validation = validateForm(form);
     setFieldErrors(validation.errors);
 
@@ -314,6 +354,14 @@ export default function App({ today }: AppProps) {
     setIsSaving(true);
 
     try {
+      if (validation.settings.examDate !== settings.examDate) {
+        setIsPreviewing(true);
+        const preview = await previewExamDateChange(validation.settings);
+        setExamPreview(preview);
+        setFocusField(null);
+        return;
+      }
+
       const saved = await saveSettings(validation.settings);
       setSettings(saved);
       setForm(formFromSettings(saved));
@@ -324,18 +372,62 @@ export default function App({ today }: AppProps) {
         message: 'Settings saved to the local database.',
       });
     } catch (error: unknown) {
-      const commandError = toCommandError(error);
-      const field = commandError.field ? BACKEND_FIELD_MAP[commandError.field] : undefined;
+      handleSettingsError(error);
+    } finally {
+      setIsSaving(false);
+      setIsPreviewing(false);
+    }
+  }
 
-      if (field) {
-        setFieldErrors({ [field]: commandError.message });
-        setFocusField(field);
-      }
+  async function handleApplyExamPreview() {
+    if (!examPreview || isSaving) {
+      return;
+    }
 
-      setSaveFeedback({ tone: 'error', message: commandError.message });
+    setIsSaving(true);
+
+    try {
+      const result = await applyExamDateChange({
+        settings: {
+          examDate: examPreview.proposedExamDate,
+          preparationStartDate: examPreview.proposedPreparationStartDate,
+          dailyStudyTargetMinutes: examPreview.proposedDailyStudyTargetMinutes,
+        },
+        expectedExamDate: examPreview.currentExamDate,
+        acceptedChanges: examPreview.changes.map((change) => ({
+          taskId: change.taskId,
+          expectedScheduledDate: change.currentScheduledDate,
+        })),
+      });
+
+      setSettings(result.settings);
+      setForm(formFromSettings(result.settings));
+      setFieldErrors({});
+      setFocusField(null);
+      setExamPreview(null);
+      setSaveFeedback({
+        tone: 'success',
+        message:
+          result.appliedTaskCount === 0
+            ? 'Exam date updated. No exam-anchored task dates needed to move.'
+            : `Exam date updated. ${result.appliedTaskCount} exam-anchored ${
+                result.appliedTaskCount === 1 ? 'task was' : 'tasks were'
+              } moved after confirmation.`,
+      });
+    } catch (error: unknown) {
+      setExamPreview(null);
+      handleSettingsError(error);
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function handleCancelExamPreview() {
+    setExamPreview(null);
+    setSaveFeedback({
+      tone: 'success',
+      message: 'Exam-date change cancelled. Nothing was saved.',
+    });
   }
 
   const countdown = form ? countdownFor(form.examDate, currentToday) : null;
@@ -343,6 +435,7 @@ export default function App({ today }: AppProps) {
   const preparationStartLabel = form ? formatDateLong(form.preparationStartDate) : null;
   const formMinutes = form ? parseDailyMinutes(form.dailyMinutes) : null;
   const dirty = Boolean(form && settings && isDirty(form, settings));
+  const activeExamDate = settings?.examDate ?? form?.examDate ?? currentToday;
 
   return (
     <div className="app-frame">
@@ -355,6 +448,10 @@ export default function App({ today }: AppProps) {
           <TimerScreen />
         ) : view === 'sessions' ? (
           <SessionsScreen today={currentToday} />
+        ) : view === 'checklist' ? (
+          <ChecklistScreen today={currentToday} examDate={activeExamDate} />
+        ) : view === 'calendar' ? (
+          <CalendarScreen today={currentToday} examDate={activeExamDate} />
         ) : (
           <div className="page-container">
             <header className="page-header">
@@ -504,16 +601,24 @@ export default function App({ today }: AppProps) {
                       <button
                         type="submit"
                         className="primary-button"
-                        disabled={!dirty || isSaving}
+                        disabled={!dirty || isSaving || examPreview !== null}
                       >
-                        {isSaving ? 'Saving…' : 'Save settings'}
+                        {isSaving && !examPreview
+                          ? 'Saving…'
+                          : examPreview
+                            ? 'Preview ready'
+                            : 'Save settings'}
                       </button>
                       <span className="dirty-hint" aria-live="polite">
                         {isSaving
-                          ? 'Writing to SQLite…'
-                          : dirty
-                            ? 'Unsaved changes'
-                            : 'All changes saved'}
+                          ? isPreviewing
+                            ? 'Reading the rescheduling preview…'
+                            : 'Writing to SQLite…'
+                          : examPreview
+                            ? 'Confirm or cancel the exam-date preview below'
+                            : dirty
+                              ? 'Unsaved changes'
+                              : 'All changes saved'}
                       </span>
                     </div>
 
@@ -526,7 +631,133 @@ export default function App({ today }: AppProps) {
                       </p>
                     )}
                   </form>
+
+                  {examPreview && (
+                    <section className="exam-preview-card" aria-labelledby="exam-preview-heading">
+                      <div className="card-heading">
+                        <div>
+                          <p className="eyebrow">Confirmation required</p>
+                          <h2 id="exam-preview-heading">Review the exam-date change</h2>
+                        </div>
+                        <span className="exam-preview-badge">Nothing saved yet</span>
+                      </div>
+
+                      <p className="exam-preview-lede">
+                        The exam date moves from{' '}
+                        <strong>
+                          {formatDateLong(examPreview.currentExamDate) ??
+                            examPreview.currentExamDate}
+                        </strong>{' '}
+                        to{' '}
+                        <strong>
+                          {formatDateLong(examPreview.proposedExamDate) ??
+                            examPreview.proposedExamDate}
+                        </strong>
+                        . The preparation start becomes{' '}
+                        {formatDateLong(examPreview.proposedPreparationStartDate) ??
+                          examPreview.proposedPreparationStartDate}
+                        . Apply only when this is the date you intend to use.
+                      </p>
+
+                      <div className="exam-preview-summary">
+                        <div>
+                          <span>Exam-anchored tasks to move</span>
+                          <strong>{examPreview.changes.length}</strong>
+                        </div>
+                        <div>
+                          <span>Completed tasks preserved</span>
+                          <strong>{examPreview.completedTasksUntouched}</strong>
+                        </div>
+                        <div>
+                          <span>Manual tasks preserved</span>
+                          <strong>{examPreview.manualTasksUntouched}</strong>
+                        </div>
+                        <div>
+                          <span>Planned blocks preserved</span>
+                          <strong>{examPreview.plannedBlocksUntouched}</strong>
+                        </div>
+                      </div>
+
+                      {examPreview.changes.length > 0 && (
+                        <div className="exam-preview-section">
+                          <h3>Future exam-anchored tasks</h3>
+                          <ul className="exam-preview-list">
+                            {examPreview.changes.map((change) => (
+                              <li key={`change-${change.taskId}`}>
+                                <span>{change.title}</span>
+                                <span>
+                                  {formatDateLong(change.currentScheduledDate) ??
+                                    change.currentScheduledDate}{' '}
+                                  →{' '}
+                                  {formatDateLong(change.proposedScheduledDate) ??
+                                    change.proposedScheduledDate}
+                                  {change.outsideWindow && (
+                                    <span className="exam-preview-warning">
+                                      {' '}
+                                      Moves outside the new preparation window
+                                    </span>
+                                  )}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {examPreview.outsideWindow.length > 0 && (
+                        <div className="exam-preview-section">
+                          <h3>Preserved outside the new window</h3>
+                          <p className="exam-preview-note">
+                            These dated items will not move. Remove or reschedule them separately if
+                            they no longer belong in the plan.
+                          </p>
+                          <ul className="exam-preview-list exam-preview-warning-list">
+                            {examPreview.outsideWindow.map((item) => (
+                              <li key={`outside-${item.kind}-${item.id}`}>
+                                <span>{item.title}</span>
+                                <span>
+                                  {formatDateLong(item.date) ?? item.date}
+                                  {item.kind === 'task_deadline' ? ' · deadline' : ''}
+                                  {item.kind === 'planned_block' ? ' · planned block' : ''}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      <p className="exam-preview-note">
+                        Completed tasks, historical sessions, recorded study time, and planned
+                        blocks are preserved. No manual task moves silently.
+                      </p>
+
+                      <div className="form-footer">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          onClick={() => void handleApplyExamPreview()}
+                          disabled={isSaving}
+                        >
+                          {isSaving ? 'Applying…' : 'Apply exam-date change'}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={handleCancelExamPreview}
+                          disabled={isSaving}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </section>
+                  )}
                 </section>
+
+                <TodayPlanCard
+                  today={currentToday}
+                  onOpenChecklist={() => setView('checklist')}
+                  onOpenCalendar={() => setView('calendar')}
+                />
 
                 <StudyTodayCard
                   today={currentToday}

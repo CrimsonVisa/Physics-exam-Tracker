@@ -20,6 +20,7 @@ const MIGRATIONS_SLICE: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0003_study_timer_and_sessions.sql"
     )),
+    M::up(include_str!("../migrations/0004_checklist_and_planner.sql")),
 ];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -140,7 +141,10 @@ pub(crate) fn test_connection_with_defaults(today: NaiveDate) -> Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{Settings, SettingsInput};
+    use crate::{
+        sessions,
+        settings::{Settings, SettingsInput},
+    };
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).expect("test date should be valid")
@@ -161,7 +165,7 @@ mod tests {
     fn migrations_are_versioned_and_repeatable() {
         let mut connection = test_connection();
 
-        assert_eq!(schema_version(&connection), 3);
+        assert_eq!(schema_version(&connection), 4);
         let table_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM sqlite_master
@@ -174,16 +178,18 @@ mod tests {
                        'syllabus_progress',
                        'timer_settings',
                        'timer_state',
-                       'study_sessions'
+                       'study_sessions',
+                       'checklist_tasks',
+                       'planned_study_blocks'
                    )",
                 [],
                 |row| row.get(0),
             )
             .expect("migration tables should be inspectable");
-        assert_eq!(table_count, 8);
+        assert_eq!(table_count, 10);
 
         migrate(&mut connection).expect("a repeated migration should be a no-op");
-        assert_eq!(schema_version(&connection), 3);
+        assert_eq!(schema_version(&connection), 4);
     }
 
     #[test]
@@ -208,6 +214,7 @@ mod tests {
                     preparation_start_date: "2026-11-01".to_owned(),
                     daily_study_target_minutes: 300,
                 },
+                date(2026, 10, 29),
             )
             .expect("version one settings should be saved");
         }
@@ -215,7 +222,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 3);
+        assert_eq!(schema_version(&connection), 4);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -246,8 +253,149 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .expect("timer state should exist after the upgrade");
+        let task_count: i64 = connection
+            .query_row("SELECT count(*) FROM checklist_tasks", [], |row| row.get(0))
+            .expect("task rows should be countable");
+        let block_count: i64 = connection
+            .query_row("SELECT count(*) FROM planned_study_blocks", [], |row| {
+                row.get(0)
+            })
+            .expect("planned blocks should be countable");
         assert_eq!(session_count, 0);
+        assert_eq!(task_count, 0);
+        assert_eq!(block_count, 0);
         assert_eq!(timer_state, ("idle".to_owned(), "focus".to_owned(), 0));
+    }
+
+    #[test]
+    fn version_three_database_upgrades_without_losing_progress_timer_or_sessions() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join(DATABASE_FILE_NAME);
+
+        {
+            let mut connection =
+                Connection::open(&path).expect("version three database should open");
+            configure(&connection).expect("version three database should be configured");
+            Migrations::from_slice(&MIGRATIONS_SLICE[..3])
+                .to_latest(&mut connection)
+                .expect("version three schema should apply");
+            assert_eq!(schema_version(&connection), 3);
+
+            settings::ensure_defaults(&mut connection, date(2026, 10, 29))
+                .expect("version three settings should be created");
+            syllabus::seed(&mut connection).expect("version three syllabus should be seeded");
+            timer::ensure_defaults(&mut connection).expect("version three timer should exist");
+
+            settings::update(
+                &mut connection,
+                SettingsInput {
+                    exam_date: "2027-02-20".to_owned(),
+                    preparation_start_date: "2026-11-15".to_owned(),
+                    daily_study_target_minutes: 210,
+                },
+                date(2026, 10, 29),
+            )
+            .expect("version three settings should update");
+
+            let topic_id: i64 = connection
+                .query_row(
+                    "SELECT id FROM syllabus_topics WHERE code = 'GA-01'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("seeded topic should exist");
+            syllabus::update_progress(
+                &mut connection,
+                topic_id,
+                syllabus::TopicProgressInput {
+                    status: "Learning".to_owned(),
+                    priority: "High".to_owned(),
+                    confidence: 4,
+                    notes: "Keep this progress".to_owned(),
+                },
+            )
+            .expect("version three progress should save");
+
+            sessions::create_manual(
+                &mut connection,
+                sessions::StudySessionInput {
+                    topic_id: Some(topic_id),
+                    session_date: "2026-10-29".to_owned(),
+                    duration_seconds: 2_700,
+                    notes: "Keep this session".to_owned(),
+                },
+            )
+            .expect("version three session should save");
+
+            connection
+                .execute(
+                    "UPDATE timer_state
+                     SET status = 'paused',
+                         duration_ms = 1500000,
+                         accumulated_ms = 12345,
+                         first_started_at = '2026-10-29T10:00:00.000Z',
+                         segment_started_at = NULL,
+                         last_heartbeat_at = NULL,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE id = 1",
+                    [],
+                )
+                .expect("version three timer state should update");
+        }
+
+        let connection =
+            open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
+
+        assert_eq!(schema_version(&connection), 4);
+        assert_eq!(
+            settings::load(&connection).expect("settings should survive the upgrade"),
+            Settings {
+                exam_date: "2027-02-20".to_owned(),
+                preparation_start_date: "2026-11-15".to_owned(),
+                daily_study_target_minutes: 210,
+            }
+        );
+
+        let topic_id: i64 = connection
+            .query_row(
+                "SELECT id FROM syllabus_topics WHERE code = 'GA-01'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("seeded topic should still exist");
+        let progress = syllabus::load_progress(&connection, topic_id)
+            .expect("the original topic progress should survive");
+        assert_eq!(progress.status, "Learning");
+        assert_eq!(progress.priority, "High");
+        assert_eq!(progress.confidence, 4);
+        assert_eq!(progress.notes, "Keep this progress");
+
+        let saved_sessions = sessions::list(&connection, sessions::StudySessionFilter::default())
+            .expect("sessions should survive the upgrade");
+        assert_eq!(saved_sessions.len(), 1);
+        assert_eq!(saved_sessions[0].session_date, "2026-10-29");
+        assert_eq!(saved_sessions[0].duration_seconds, 2_700);
+        assert_eq!(saved_sessions[0].notes, "Keep this session");
+
+        let timer_state: (String, i64) = connection
+            .query_row(
+                "SELECT status, accumulated_ms FROM timer_state WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("timer state should survive the upgrade");
+        assert_eq!(timer_state, ("paused".to_owned(), 12_345));
+
+        let task_count: i64 = connection
+            .query_row("SELECT count(*) FROM checklist_tasks", [], |row| row.get(0))
+            .expect("task rows should be countable");
+        let block_count: i64 = connection
+            .query_row("SELECT count(*) FROM planned_study_blocks", [], |row| {
+                row.get(0)
+            })
+            .expect("planned blocks should be countable");
+        assert_eq!(task_count, 0);
+        assert_eq!(block_count, 0);
     }
 
     #[test]

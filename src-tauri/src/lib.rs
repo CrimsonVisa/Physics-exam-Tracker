@@ -1,6 +1,8 @@
 mod date_only;
 mod db;
 mod error;
+mod planner;
+mod reschedule;
 mod sessions;
 mod settings;
 mod syllabus;
@@ -42,7 +44,171 @@ fn update_settings(
     state: tauri::State<'_, db::AppState>,
     settings: settings::SettingsInput,
 ) -> Result<settings::Settings, AppError> {
-    state.with_connection(|connection| crate::settings::update(connection, settings))
+    state.with_connection(|connection| {
+        crate::settings::update(connection, settings, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn preview_exam_date_change(
+    state: tauri::State<'_, db::AppState>,
+    settings: settings::SettingsInput,
+) -> Result<reschedule::ExamReschedulePreview, AppError> {
+    state.with_connection(|connection| {
+        reschedule::preview(connection, settings, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn apply_exam_date_change(
+    state: tauri::State<'_, db::AppState>,
+    change: reschedule::ApplyExamDateChangeInput,
+) -> Result<reschedule::ApplyExamDateChangeResult, AppError> {
+    state.with_connection(|connection| {
+        reschedule::apply(connection, change, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn get_planner_topics(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<Vec<planner::PlannerTopic>, AppError> {
+    state.with_connection(|connection| planner::list_topics(connection))
+}
+
+#[tauri::command]
+fn get_checklist_tasks(
+    state: tauri::State<'_, db::AppState>,
+    filter: planner::TaskFilter,
+) -> Result<Vec<planner::ChecklistTask>, AppError> {
+    state.with_connection(|connection| {
+        planner::list_tasks(connection, filter, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn create_checklist_task(
+    state: tauri::State<'_, db::AppState>,
+    task: planner::TaskInput,
+) -> Result<planner::ChecklistTask, AppError> {
+    state.with_connection(|connection| {
+        planner::create_task(connection, task, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn update_checklist_task(
+    state: tauri::State<'_, db::AppState>,
+    task_id: i64,
+    task: planner::TaskInput,
+) -> Result<planner::ChecklistTask, AppError> {
+    state.with_connection(|connection| {
+        planner::update_task(connection, task_id, task, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn complete_checklist_task(
+    state: tauri::State<'_, db::AppState>,
+    task_id: i64,
+) -> Result<planner::ChecklistTask, AppError> {
+    state.with_connection(|connection| {
+        planner::complete_task(connection, task_id, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn reopen_checklist_task(
+    state: tauri::State<'_, db::AppState>,
+    task_id: i64,
+) -> Result<planner::ChecklistTask, AppError> {
+    state.with_connection(|connection| {
+        planner::reopen_task(connection, task_id, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn reschedule_checklist_task(
+    state: tauri::State<'_, db::AppState>,
+    task_id: i64,
+    scheduled_date: String,
+) -> Result<planner::ChecklistTask, AppError> {
+    state.with_connection(|connection| {
+        planner::reschedule_task(
+            connection,
+            task_id,
+            &scheduled_date,
+            Local::now().date_naive(),
+        )
+    })
+}
+
+#[tauri::command]
+fn delete_checklist_task(
+    state: tauri::State<'_, db::AppState>,
+    task_id: i64,
+) -> Result<(), AppError> {
+    state.with_connection(|connection| planner::delete_task(connection, task_id))
+}
+
+#[tauri::command]
+fn get_calendar(
+    state: tauri::State<'_, db::AppState>,
+    from_date: String,
+    to_date: String,
+) -> Result<planner::CalendarData, AppError> {
+    state.with_connection(|connection| {
+        planner::calendar(connection, &from_date, &to_date, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn get_agenda(state: tauri::State<'_, db::AppState>) -> Result<planner::Agenda, AppError> {
+    state.with_connection(|connection| planner::agenda(connection, Local::now().date_naive()))
+}
+
+#[tauri::command]
+fn create_planned_block(
+    state: tauri::State<'_, db::AppState>,
+    block: planner::PlannedBlockInput,
+) -> Result<planner::PlannedBlock, AppError> {
+    state.with_connection(|connection| planner::create_block(connection, block))
+}
+
+#[tauri::command]
+fn update_planned_block(
+    state: tauri::State<'_, db::AppState>,
+    block_id: i64,
+    block: planner::PlannedBlockInput,
+) -> Result<planner::PlannedBlock, AppError> {
+    state.with_connection(|connection| planner::update_block(connection, block_id, block))
+}
+
+#[tauri::command]
+fn update_planned_block_status(
+    state: tauri::State<'_, db::AppState>,
+    block_id: i64,
+    status: String,
+) -> Result<planner::PlannedBlock, AppError> {
+    state.with_connection(|connection| planner::update_block_status(connection, block_id, &status))
+}
+
+#[tauri::command]
+fn link_planned_block_session(
+    state: tauri::State<'_, db::AppState>,
+    block_id: i64,
+    session_id: Option<i64>,
+) -> Result<planner::PlannedBlock, AppError> {
+    state
+        .with_connection(|connection| planner::link_block_session(connection, block_id, session_id))
+}
+
+#[tauri::command]
+fn delete_planned_block(
+    state: tauri::State<'_, db::AppState>,
+    block_id: i64,
+) -> Result<(), AppError> {
+    state.with_connection(|connection| planner::delete_block(connection, block_id))
 }
 
 #[tauri::command]
@@ -232,6 +398,23 @@ pub fn run() {
             get_app_info,
             get_settings,
             update_settings,
+            preview_exam_date_change,
+            apply_exam_date_change,
+            get_planner_topics,
+            get_checklist_tasks,
+            create_checklist_task,
+            update_checklist_task,
+            complete_checklist_task,
+            reopen_checklist_task,
+            reschedule_checklist_task,
+            delete_checklist_task,
+            get_calendar,
+            get_agenda,
+            create_planned_block,
+            update_planned_block,
+            update_planned_block_status,
+            link_planned_block_session,
+            delete_planned_block,
             get_syllabus_catalog,
             search_syllabus_topics,
             get_topic_progress,

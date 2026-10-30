@@ -25,6 +25,16 @@ const MONTH_NAMES = [
   'December',
 ] as const;
 
+const WEEKDAY_NAMES = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+] as const;
+
 export function isLeapYear(year: number): boolean {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }
@@ -79,6 +89,25 @@ export function formatDateLong(value: string): string | null {
   return `${parts.day} ${MONTH_NAMES[parts.month - 1]} ${parts.year}`;
 }
 
+export function formatDateWithWeekday(value: string): string | null {
+  const parts = parseDateOnly(value);
+  const weekday = weekdayIndexMonday(value);
+  if (!parts || weekday === null) {
+    return null;
+  }
+
+  return `${WEEKDAY_NAMES[weekday]}, ${formatDateLong(value)}`;
+}
+
+export function formatMonthYear(value: string): string | null {
+  const parts = parseDateOnly(value);
+  if (!parts) {
+    return null;
+  }
+
+  return `${MONTH_NAMES[parts.month - 1]} ${parts.year}`;
+}
+
 /**
  * Days since 1970-01-01 using the proleptic Gregorian calendar. This integer
  * algorithm is intentionally independent of local time and timezone offsets.
@@ -92,6 +121,17 @@ function daysFromCivil({ year, month, day }: DateParts): number {
     yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
 
   return era * 146097 + dayOfEra - 719468;
+}
+
+/** Monday-based weekday index: Monday 0 ... Sunday 6. */
+export function weekdayIndexMonday(value: string): number | null {
+  const parts = parseDateOnly(value);
+  if (!parts) {
+    return null;
+  }
+
+  // 1970-01-01 was a Thursday, which is index 3 in a Monday-based week.
+  return (((daysFromCivil(parts) + 3) % 7) + 7) % 7;
 }
 
 export function calendarDaysBetween(startDate: string, endDate: string): number | null {
@@ -147,6 +187,70 @@ export function addDaysDateOnly(value: string, offset: number): string | null {
   const day = String(shifted.day).padStart(2, '0');
 
   return `${year}-${month}-${day}`;
+}
+
+export function startOfWeekDateOnly(value: string): string | null {
+  const weekday = weekdayIndexMonday(value);
+  if (weekday === null) {
+    return null;
+  }
+
+  return addDaysDateOnly(value, -weekday);
+}
+
+export function startOfMonthDateOnly(value: string): string | null {
+  const parts = parseDateOnly(value);
+  if (!parts) {
+    return null;
+  }
+
+  return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-01`;
+}
+
+export function endOfMonthDateOnly(value: string): string | null {
+  const parts = parseDateOnly(value);
+  if (!parts) {
+    return null;
+  }
+
+  return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(
+    daysInMonth(parts.year, parts.month),
+  ).padStart(2, '0')}`;
+}
+
+/** Add whole months while clamping the day to the target month's length. */
+export function addMonthsDateOnly(value: string, offset: number): string | null {
+  const parts = parseDateOnly(value);
+  if (!parts || !Number.isSafeInteger(offset)) {
+    return null;
+  }
+
+  const targetIndex = parts.year * 12 + (parts.month - 1) + offset;
+  const year = Math.floor(targetIndex / 12);
+  const month = (((targetIndex % 12) + 12) % 12) + 1;
+  if (year < 1 || year > 9999) {
+    return null;
+  }
+
+  const day = Math.min(parts.day, daysInMonth(year, month));
+
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+export function monthGridRange(value: string): { start: string; end: string } | null {
+  const monthStart = startOfMonthDateOnly(value);
+  const monthEnd = endOfMonthDateOnly(value);
+  if (!monthStart || !monthEnd) {
+    return null;
+  }
+
+  const start = startOfWeekDateOnly(monthStart);
+  const end = addDaysDateOnly(monthEnd, 6 - (weekdayIndexMonday(monthEnd) ?? 0));
+  if (!start || !end) {
+    return null;
+  }
+
+  return { start, end };
 }
 
 export function countdownFor(examDate: string, today: string): Countdown | null {

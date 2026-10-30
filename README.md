@@ -2,12 +2,14 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 4 status:** the dashboard, persistent planning settings, exam countdown, official-source
-Physical Sciences syllabus tracker, persisted study timer, and study-session history are implemented.
-The syllabus is seeded with 182 topics across General Aptitude and the nine Physical Sciences units,
-and each topic can store a personal status, priority, confidence rating, and notes. The timer records
-focus sessions with restart and sleep recovery, and the dashboard shows today's focus time against the
-daily target. Dedicated PYQ and mock-test tracking, revision scheduling, fuller analytics, and
+**Phase 5 status:** the dashboard, persistent planning settings, exam countdown, official-source
+Physical Sciences syllabus tracker, persisted study timer, study-session history, dated checklist
+tasks, planned study blocks, and month/week/day calendar are implemented. The syllabus is seeded with
+182 topics across General Aptitude and the nine Physical Sciences units, and each topic can store a
+personal status, priority, confidence rating, and notes. The timer records focus sessions with restart
+and sleep recovery, and the dashboard shows today's focus time plus the day's tasks and planned blocks.
+Exam-date changes use a review-and-apply confirmation before any future exam-anchored task moves.
+Dedicated PYQ and mock-test tracking, spaced-repetition revision scheduling, fuller analytics, and
 backup/restore are not implemented yet.
 
 ## Stack
@@ -78,10 +80,12 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-3), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+4), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
-timer settings and an idle timer; it does not fabricate study sessions.
+timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
+adds checklist and planned-block tables without changing existing settings, syllabus progress, timer
+state, or study sessions.
 
 The initial single-row settings record uses:
 
@@ -226,10 +230,78 @@ notification only when a timer completes naturally. A manually finished timer do
 Windows notification settings, Focus Assist, and system policy can still suppress delivery, so the
 in-app timer state remains authoritative. Notifications remain off unless the user opts in.
 
+## Checklist, planner, and calendar
+
+Migration `0004_checklist_and_planner.sql` adds two `STRICT` tables:
+
+- `checklist_tasks` — dated actions with a title, optional description, scheduled date, optional
+  deadline, optional syllabus topic, priority, completion state/timestamp, and a manual or
+  exam-relative schedule anchor.
+- `planned_study_blocks` — manual calendar commitments with a title, optional topic, calendar date,
+  start/end time, status, notes, and an optional link to an existing study session.
+
+The migration is append-only. It does not rewrite the earlier settings, syllabus, timer, or session
+tables.
+
+### Checklist behavior
+
+Tasks are either `open` or `completed`. Completing a task stores a completion timestamp; completing
+an already-completed task is idempotent and does not replace that timestamp. Reopening clears the
+completion timestamp. Editing the title, description, dates, topic, priority, or schedule anchor never
+changes the completion state or timestamp.
+
+Open tasks can be rescheduled from the checklist. A reschedule changes the scheduled date and converts
+the task to a manual schedule anchor; completed tasks cannot be rescheduled. Deleting a task is
+confirmed in the UI and never deletes syllabus progress or study sessions.
+
+Tasks display overdue and upcoming indicators from the effective due date: the deadline when one is
+set, otherwise the scheduled date. The checklist supports open/completed/all views and title or
+description search. Priority and High-Yield remain personal planning labels.
+
+### Planned study blocks and explicit session links
+
+Planned blocks are calendar intentions, not recorded study time. They never contribute to daily,
+weekly, or range totals, and saving or completing a block never creates a study session. Dates are
+local `YYYY-MM-DD` values; times are strict local `HH:MM` values with an end later than the start on
+the same date.
+
+A block can link to an existing study session only after the block is marked completed, only through
+the editor's explicit save action, and only to a session recorded on the same local date. Clearing or
+cancelling the block clears the link. The link does not alter the session or its duration. If a linked
+session is deleted later, the block is kept and its session reference becomes empty.
+
+### Calendar
+
+The Calendar page provides month, week, and day views. Weeks run Monday through Sunday and use the
+same frontend `dateOnly` helpers and `DateField` input as the rest of the app; no second date system or
+UTC conversion is introduced. The page supports previous/next navigation, a Today shortcut, clicking a
+date, and typing a jump date.
+
+The calendar shows scheduled tasks, planned blocks, the selected day's task and block lists, deadlines
+on the selected day, upcoming deadlines for the next 30 days, and overdue open tasks. Each view has
+loading, error/retry, and empty states. Planned blocks remain visually distinct from study sessions.
+
+### Exam-date rescheduling
+
+Changing the exam date never writes immediately. The app first requests a preview that reports:
+
+- Future open tasks using an exam-relative offset and their old/new dates.
+- Future open tasks or planned blocks that would fall outside the proposed preparation start and exam
+  date.
+- Counts of completed tasks, manual tasks, and planned blocks that will be preserved.
+
+Applying the preview is transactional. Only the accepted future exam-anchored tasks move, using their
+stored offsets from the new exam date; settings are updated in the same transaction. Completed tasks,
+manual-dated tasks, planned blocks, historical sessions, recorded study time, and syllabus progress
+never move. Out-of-window items are preserved with warnings rather than silently changed. Cancelling
+the preview writes nothing. A stale preview is rejected if the exam date or an anchored task changed,
+and the user must preview again. Direct settings updates also refuse an exam-date change while future
+open exam-anchored tasks exist, requiring the preview flow.
+
 ## Typography note
 
 Latin Modern is not currently bundled with the app. No font files or font packages were added through
-Phase 4; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
+Phase 5; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
 headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
 task for a later phase.
 
@@ -279,16 +351,23 @@ The executable and bundle are generated from the product identity in `src-tauri/
 src/                     React frontend and tests
   components/DateField.tsx      reusable accessible date input
   components/StudyTodayCard.tsx dashboard study total and target progress
+  components/TodayPlanCard.tsx  dashboard tasks, blocks, and deadline summary
+  components/TaskEditor.tsx     checklist form with manual/exam scheduling
+  components/PlannedBlockEditor.tsx planned-block form and explicit session link
   screens/SyllabusScreen.tsx    syllabus catalog, filters, and topic editor
   screens/TimerScreen.tsx       persisted timer, recovery display, and settings
   screens/SessionsScreen.tsx    session history, filters, totals, and manual CRUD
-  lib/dateOnly.ts               timezone-independent date utilities
+  screens/ChecklistScreen.tsx   task CRUD, completion, rescheduling, and search
+  screens/CalendarScreen.tsx    month/week/day views and selected-day editing
+  lib/dateOnly.ts               timezone-independent date and calendar utilities
+  lib/timeOfDay.ts              strict local HH:MM validation and planned duration
   lib/studyTime.ts              duration and timer-clock formatting
   lib/useTodayDateOnly.ts       local-date refresh for long-running windows
   lib/settingsApi.ts            typed settings command wrappers
   lib/syllabusApi.ts            typed syllabus command wrappers
   lib/timerApi.ts               typed timer command wrappers
   lib/sessionsApi.ts            typed session and totals command wrappers
+  lib/plannerApi.ts             typed checklist, calendar, and rescheduling wrappers
   lib/commandError.ts           shared structured-error decoding
 src-tauri/               Tauri configuration and Rust backend
   capabilities/          Tauri window permissions
@@ -296,11 +375,13 @@ src-tauri/               Tauri configuration and Rust backend
   migrations/            Append-only SQL schema migrations
   src/db.rs              App-data path, connection setup, managed state, migrations
   src/date_only.rs       Authoritative date parsing and formatting
-  src/settings.rs        Settings validation, defaults, load, and update
+  src/settings.rs        Settings validation, defaults, load, and guarded update
   src/syllabus_catalog.rs Official-source catalog definitions
   src/syllabus.rs        Catalog seeding, search, progress, summaries, and validation
   src/timer.rs           Timer state machine, heartbeat, recovery, and accounting
   src/sessions.rs        Session CRUD, validation, filters, and study totals
+  src/planner.rs         Checklist, planned blocks, calendar, agenda, and validation
+  src/reschedule.rs      Exam-date preview, outside-window warnings, and apply
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
   src/main.rs            Desktop entry point

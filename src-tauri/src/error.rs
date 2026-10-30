@@ -78,6 +78,59 @@ impl AppError {
         }
     }
 
+    pub fn task_not_found() -> Self {
+        Self {
+            code: "task_not_found",
+            message:
+                "This checklist task is no longer available. Refresh the checklist and try again."
+                    .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn task_completed() -> Self {
+        Self {
+            code: "task_completed",
+            message: "Reopen this task before rescheduling it.".to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn block_not_found() -> Self {
+        Self {
+            code: "block_not_found",
+            message: "This planned study block is no longer available. Refresh the calendar and try again."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn block_not_completed() -> Self {
+        Self {
+            code: "block_not_completed",
+            message: "Mark the planned block completed before linking a study session.".to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn reschedule_confirmation_required() -> Self {
+        Self {
+            code: "reschedule_confirmation_required",
+            message: "Preview the exam-date change before saving it because exam-anchored tasks need confirmation."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn reschedule_stale() -> Self {
+        Self {
+            code: "reschedule_stale",
+            message: "The exam date or an anchored task changed after the preview. Review the new preview and try again."
+                .to_owned(),
+            field: None,
+        }
+    }
+
     pub fn timer_active() -> Self {
         Self {
             code: "timer_active",

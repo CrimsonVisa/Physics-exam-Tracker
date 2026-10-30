@@ -2,6 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import type {
+  Agenda,
+  ApplyExamDateChangeInput,
+  CalendarData,
+  ExamReschedulePreview,
+} from './lib/plannerApi';
 import type { Settings } from './lib/settingsApi';
 import type { StudyTotals } from './lib/sessionsApi';
 import type { TimerSnapshot } from './lib/timerApi';
@@ -41,6 +47,39 @@ const EMPTY_TOTALS: StudyTotals = {
   weekly: [],
 };
 
+const EMPTY_AGENDA: Agenda = {
+  today: TODAY,
+  todayTasks: [],
+  todayBlocks: [],
+  upcomingDeadlines: [],
+  overdueTasks: [],
+};
+
+const EMPTY_CALENDAR: CalendarData = {
+  fromDate: TODAY,
+  toDate: TODAY,
+  today: TODAY,
+  tasks: [],
+  blocks: [],
+  deadlines: [],
+  upcomingDeadlines: [],
+  overdueTasks: [],
+};
+
+function previewFor(settings: Settings): ExamReschedulePreview {
+  return {
+    currentExamDate: DEFAULT_SETTINGS.examDate,
+    proposedExamDate: settings.examDate,
+    proposedPreparationStartDate: settings.preparationStartDate,
+    proposedDailyStudyTargetMinutes: settings.dailyStudyTargetMinutes,
+    changes: [],
+    outsideWindow: [],
+    completedTasksUntouched: 0,
+    manualTasksUntouched: 0,
+    plannedBlocksUntouched: 0,
+  };
+}
+
 const TIMER_SNAPSHOT: TimerSnapshot = {
   state: {
     status: 'idle',
@@ -72,6 +111,19 @@ function mockBackend(overrides: Record<string, MockHandler> = {}) {
   const handlers: Record<string, MockHandler> = {
     get_settings: () => DEFAULT_SETTINGS,
     update_settings: (args) => args?.settings,
+    preview_exam_date_change: (args) => previewFor(args?.settings as Settings),
+    apply_exam_date_change: (args) => {
+      const change = args?.change as ApplyExamDateChangeInput;
+      return {
+        settings: change.settings,
+        appliedTaskCount: change.acceptedChanges.length,
+        preservedOutsideWindowCount: 0,
+      };
+    },
+    get_agenda: () => EMPTY_AGENDA,
+    get_calendar: () => EMPTY_CALENDAR,
+    get_checklist_tasks: () => [],
+    get_planner_topics: () => [],
     get_study_totals: () => EMPTY_TOTALS,
     get_syllabus_catalog: () => ({ sources: [], sections: [] }),
     get_syllabus_summary: () => ({
@@ -127,6 +179,12 @@ describe('settings dashboard', () => {
     expect(invokeMock).toHaveBeenCalledWith('get_settings');
     expect(await screen.findByText("Today's study time")).toBeInTheDocument();
     expect(await screen.findByText('of 4h daily target')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: /Plan for 10 December 2026/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Only completed focus sessions appear in study totals/),
+    ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Exam countdown', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('CSIR-NET')).toBeInTheDocument();
     expect(screen.getByText('Physics Tracker')).toBeInTheDocument();
@@ -148,7 +206,7 @@ describe('settings dashboard', () => {
     renderApp('2026-12-19');
 
     expect(await screen.findByText('Today is exam day. Focus on the paper.')).toBeInTheDocument();
-    expect(screen.getByText('0')).toHaveClass('countdown-value');
+    expect(screen.getByText('0', { selector: '.countdown-value' })).toBeInTheDocument();
     expect(screen.getByText('days remaining')).toBeInTheDocument();
   });
 
@@ -172,7 +230,7 @@ describe('settings dashboard', () => {
     expect(await screen.findByText('1 day ago')).toBeInTheDocument();
   });
 
-  it('updates the preview as the exam date changes and saves the typed settings payload', async () => {
+  it('previews an exam-date change and applies the accepted payload only after confirmation', async () => {
     mockBackend();
 
     renderApp();
@@ -185,16 +243,140 @@ describe('settings dashboard', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
-    expect(await screen.findByText('Settings saved to the local database.')).toBeInTheDocument();
-    expect(invokeMock).toHaveBeenCalledWith('update_settings', {
-      settings: {
-        examDate: '2026-12-20',
-        preparationStartDate: '2026-10-29',
-        dailyStudyTargetMinutes: 240,
+    expect(
+      await screen.findByRole('heading', { name: 'Review the exam-date change' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Nothing saved yet')).toBeInTheDocument();
+    expect(callsFor('preview_exam_date_change')).toHaveLength(1);
+    expect(callsFor('update_settings')).toHaveLength(0);
+    expect(callsFor('apply_exam_date_change')).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Apply exam-date change' }));
+
+    expect(
+      await screen.findByText('Exam date updated. No exam-anchored task dates needed to move.'),
+    ).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith('apply_exam_date_change', {
+      change: {
+        settings: {
+          examDate: '2026-12-20',
+          preparationStartDate: '2026-10-29',
+          dailyStudyTargetMinutes: 240,
+        },
+        expectedExamDate: '2026-12-19',
+        acceptedChanges: [],
       },
     });
     expect(screen.getByText('All changes saved')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+  });
+
+  it('cancels an exam-date preview without saving anything', async () => {
+    mockBackend();
+
+    renderApp();
+
+    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    fireEvent.change(examDate, { target: { value: '2026-12-20' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await screen.findByRole('heading', { name: 'Review the exam-date change' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByText('Exam-date change cancelled. Nothing was saved.')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Review the exam-date change' }),
+    ).not.toBeInTheDocument();
+    expect(callsFor('apply_exam_date_change')).toHaveLength(0);
+    expect(callsFor('update_settings')).toHaveLength(0);
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(screen.getByText('10')).toHaveClass('countdown-value');
+  });
+
+  it('lists anchored changes and warnings before applying them', async () => {
+    mockBackend({
+      preview_exam_date_change: (args) => ({
+        ...previewFor(args?.settings as Settings),
+        changes: [
+          {
+            taskId: 7,
+            title: 'Revision plan',
+            currentScheduledDate: '2026-12-09',
+            proposedScheduledDate: '2027-01-05',
+            offsetDays: -10,
+            outsideWindow: false,
+          },
+        ],
+        outsideWindow: [
+          {
+            kind: 'planned_block',
+            id: 4,
+            title: 'Late block',
+            date: '2027-02-01',
+            reason: 'block_after_exam_date',
+          },
+        ],
+        completedTasksUntouched: 2,
+        manualTasksUntouched: 3,
+        plannedBlocksUntouched: 1,
+      }),
+    });
+
+    renderApp();
+
+    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    fireEvent.change(examDate, { target: { value: '2027-01-15' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect(await screen.findByText('Revision plan')).toBeInTheDocument();
+    expect(screen.getByText('Late block')).toBeInTheDocument();
+    expect(screen.getByText('Completed tasks preserved').parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Manual tasks preserved').parentElement).toHaveTextContent('3');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Apply exam-date change' }));
+
+    expect(
+      await screen.findByText(
+        'Exam date updated. 1 exam-anchored task was moved after confirmation.',
+      ),
+    ).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith('apply_exam_date_change', {
+      change: {
+        settings: {
+          examDate: '2027-01-15',
+          preparationStartDate: '2026-10-29',
+          dailyStudyTargetMinutes: 240,
+        },
+        expectedExamDate: '2026-12-19',
+        acceptedChanges: [{ taskId: 7, expectedScheduledDate: '2026-12-09' }],
+      },
+    });
+  });
+
+  it('reports a stale preview without leaving a half-applied confirmation open', async () => {
+    mockBackend({
+      apply_exam_date_change: () =>
+        Promise.reject({
+          code: 'reschedule_stale',
+          message: 'The exam date or an anchored task changed after the preview.',
+        }),
+    });
+
+    renderApp();
+
+    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    fireEvent.change(examDate, { target: { value: '2026-12-20' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await screen.findByRole('heading', { name: 'Review the exam-date change' });
+    await userEvent.click(screen.getByRole('button', { name: 'Apply exam-date change' }));
+
+    expect(
+      await screen.findByText('The exam date or an anchored task changed after the preview.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Review the exam-date change' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
   });
 
   it('saves an updated daily target with its hours hint', async () => {
@@ -222,7 +404,7 @@ describe('settings dashboard', () => {
     expect(await screen.findByText('5 hours per day')).toBeInTheDocument();
   });
 
-  it('disables the controls and shows progress while a save is in flight', async () => {
+  it('disables the controls and shows progress while a settings save is in flight', async () => {
     let resolveSave!: (settings: Settings) => void;
     const pendingSave = new Promise<Settings>((resolve) => {
       resolveSave = resolve;
@@ -231,26 +413,26 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
-    fireEvent.change(examDate, { target: { value: '2026-12-20' } });
+    const dailyTarget = (await screen.findByLabelText('Daily study target')) as HTMLInputElement;
+    fireEvent.change(dailyTarget, { target: { value: '300' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
-    expect(examDate).toBeDisabled();
+    expect(dailyTarget).toBeDisabled();
     expect(screen.getByText('Writing to SQLite…')).toBeInTheDocument();
 
     await act(async () => {
-      resolveSave({ ...DEFAULT_SETTINGS, examDate: '2026-12-20' });
+      resolveSave({ ...DEFAULT_SETTINGS, dailyStudyTargetMinutes: 300 });
       await pendingSave;
     });
 
     expect(await screen.findByText('Settings saved to the local database.')).toBeInTheDocument();
-    expect(examDate).toBeEnabled();
+    expect(dailyTarget).toBeEnabled();
   });
 
-  it('keeps the form open and reports a backend validation error on the responsible field', async () => {
+  it('keeps the form open and reports a backend preview error on the responsible field', async () => {
     mockBackend({
-      update_settings: () =>
+      preview_exam_date_change: () =>
         Promise.reject({
           code: 'validation_error',
           message: 'Enter a real calendar date in YYYY-MM-DD format.',
@@ -356,6 +538,34 @@ describe('settings dashboard', () => {
       await screen.findByRole('heading', { name: 'Study-time history', level: 1 }),
     ).toBeInTheDocument();
     expect(await screen.findByText('No study sessions in this range')).toBeInTheDocument();
+  });
+
+  it('navigates to the checklist and calendar screens', async () => {
+    mockBackend();
+
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Checklist' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Tasks and next actions', level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('No open tasks')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Checklist' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Plan the study week', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Calendar' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(callsFor('get_calendar').length).toBeGreaterThan(0);
   });
 
   it('shows a load error and retries with a fresh command call', async () => {

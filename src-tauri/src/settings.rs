@@ -28,14 +28,14 @@ pub struct SettingsInput {
     pub daily_study_target_minutes: i64,
 }
 
-struct ValidatedSettings {
-    exam_date: NaiveDate,
-    preparation_start_date: NaiveDate,
-    daily_study_target_minutes: i64,
+pub(crate) struct ValidatedSettings {
+    pub(crate) exam_date: NaiveDate,
+    pub(crate) preparation_start_date: NaiveDate,
+    pub(crate) daily_study_target_minutes: i64,
 }
 
 impl ValidatedSettings {
-    fn into_input(self) -> SettingsInput {
+    pub(crate) fn into_input(self) -> SettingsInput {
         SettingsInput {
             exam_date: date_only::format_date_only(self.exam_date),
             preparation_start_date: date_only::format_date_only(self.preparation_start_date),
@@ -44,7 +44,7 @@ impl ValidatedSettings {
     }
 }
 
-fn validate(input: &SettingsInput) -> Result<ValidatedSettings, AppError> {
+pub(crate) fn validate(input: &SettingsInput) -> Result<ValidatedSettings, AppError> {
     let exam_date = date_only::parse_date_only(&input.exam_date).ok_or_else(|| {
         AppError::validation(
             "examDate",
@@ -149,11 +149,53 @@ pub fn ensure_defaults(connection: &mut Connection, today: NaiveDate) -> Result<
         .map_err(|error| AppError::database("Default settings could not be committed", error))
 }
 
-pub fn update(connection: &mut Connection, input: SettingsInput) -> Result<Settings, AppError> {
+pub fn update(
+    connection: &mut Connection,
+    input: SettingsInput,
+    today: NaiveDate,
+) -> Result<Settings, AppError> {
     let validated = validate(&input)?.into_input();
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The settings transaction could not be started", error)
     })?;
+
+    let current = load(&transaction)?;
+    if current.exam_date != validated.exam_date {
+        let has_task_table: i64 = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'checklist_tasks'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                AppError::database("The checklist schema could not be checked", error)
+            })?;
+
+        if has_task_table != 0 {
+            let anchored_future_tasks: i64 = transaction
+                .query_row(
+                    "SELECT EXISTS(
+                        SELECT 1
+                        FROM checklist_tasks
+                        WHERE status = 'open'
+                          AND schedule_anchor = 'exam'
+                          AND scheduled_date >= ?1
+                     )",
+                    [date_only::format_date_only(today)],
+                    |row| row.get(0),
+                )
+                .map_err(|error| {
+                    AppError::database("Exam-anchored checklist tasks could not be checked", error)
+                })?;
+
+            if anchored_future_tasks != 0 {
+                return Err(AppError::reschedule_confirmation_required());
+            }
+        }
+    }
 
     let changed = transaction
         .execute(
@@ -232,8 +274,12 @@ mod tests {
     #[test]
     fn ensuring_defaults_never_overwrites_existing_settings() {
         let mut connection = test_connection();
-        let saved = update(&mut connection, input("2027-01-10", "2026-11-01", 300))
-            .expect("settings should update");
+        let saved = update(
+            &mut connection,
+            input("2027-01-10", "2026-11-01", 300),
+            date(2026, 10, 29),
+        )
+        .expect("settings should update");
 
         ensure_defaults(&mut connection, date(2027, 2, 1))
             .expect("ensuring defaults should be idempotent");
@@ -244,8 +290,12 @@ mod tests {
     #[test]
     fn update_round_trips_through_the_database() {
         let mut connection = test_connection();
-        let saved = update(&mut connection, input("2027-01-10", "2026-11-01", 300))
-            .expect("settings should update");
+        let saved = update(
+            &mut connection,
+            input("2027-01-10", "2026-11-01", 300),
+            date(2026, 10, 29),
+        )
+        .expect("settings should update");
 
         assert_eq!(saved.exam_date, "2027-01-10");
         assert_eq!(saved.preparation_start_date, "2026-11-01");
@@ -262,8 +312,12 @@ mod tests {
         {
             let mut connection =
                 db::open_database(&path, date(2026, 10, 29)).expect("database should open");
-            saved = update(&mut connection, input("2027-01-10", "2026-11-01", 315))
-                .expect("settings should update");
+            saved = update(
+                &mut connection,
+                input("2027-01-10", "2026-11-01", 315),
+                date(2026, 10, 29),
+            )
+            .expect("settings should update");
         }
 
         let connection = db::open_database(&path, date(2026, 10, 29))
@@ -278,15 +332,23 @@ mod tests {
         let before = load(&connection).unwrap();
 
         for invalid_exam_date in ["2026-02-30", "2026-02-29", "2026-04-31", "2026-13-01"] {
-            let error = update(&mut connection, input(invalid_exam_date, "2026-01-01", 240))
-                .expect_err("invalid exam date should be rejected");
+            let error = update(
+                &mut connection,
+                input(invalid_exam_date, "2026-01-01", 240),
+                date(2026, 10, 29),
+            )
+            .expect_err("invalid exam date should be rejected");
 
             assert_eq!(error.code, "validation_error");
             assert_eq!(error.field, Some("examDate"));
         }
 
-        let error = update(&mut connection, input("2026-12-19", "2026-11-31", 240))
-            .expect_err("invalid preparation date should be rejected");
+        let error = update(
+            &mut connection,
+            input("2026-12-19", "2026-11-31", 240),
+            date(2026, 10, 29),
+        )
+        .expect_err("invalid preparation date should be rejected");
         assert_eq!(error.field, Some("preparationStartDate"));
 
         assert_eq!(load(&connection).unwrap(), before);
@@ -296,8 +358,12 @@ mod tests {
     fn leap_day_is_valid_when_it_exists_in_the_calendar() {
         let mut connection = test_connection();
 
-        let saved = update(&mut connection, input("2024-02-29", "2024-02-01", 240))
-            .expect("a leap day should be accepted");
+        let saved = update(
+            &mut connection,
+            input("2024-02-29", "2024-02-01", 240),
+            date(2024, 2, 1),
+        )
+        .expect("a leap day should be accepted");
 
         assert_eq!(saved.exam_date, "2024-02-29");
     }
@@ -307,8 +373,12 @@ mod tests {
         let mut connection = test_connection();
         let before = load(&connection).unwrap();
 
-        let error = update(&mut connection, input("2026-12-19", "2026-12-20", 240))
-            .expect_err("a later preparation start should be rejected");
+        let error = update(
+            &mut connection,
+            input("2026-12-19", "2026-12-20", 240),
+            date(2026, 10, 29),
+        )
+        .expect_err("a later preparation start should be rejected");
 
         assert_eq!(error.code, "validation_error");
         assert_eq!(error.field, Some("preparationStartDate"));
@@ -320,8 +390,12 @@ mod tests {
         let mut connection = test_connection();
 
         for minutes in [0, -1, 1441] {
-            let error = update(&mut connection, input("2026-12-19", "2026-10-29", minutes))
-                .expect_err("out-of-range target should be rejected");
+            let error = update(
+                &mut connection,
+                input("2026-12-19", "2026-10-29", minutes),
+                date(2026, 10, 29),
+            )
+            .expect_err("out-of-range target should be rejected");
 
             assert_eq!(error.code, "validation_error");
             assert_eq!(error.field, Some("dailyStudyTargetMinutes"));

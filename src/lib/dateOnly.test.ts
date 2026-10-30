@@ -1,14 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDaysDateOnly,
+  addMonthsDateOnly,
   calendarDaysBetween,
   countdownFor,
   daysInMonth,
+  endOfMonthDateOnly,
   formatDateLong,
+  formatDateWithWeekday,
+  formatMonthYear,
   isLeapYear,
   isValidDateOnly,
+  monthGridRange,
   parseDateOnly,
+  startOfMonthDateOnly,
+  startOfWeekDateOnly,
   todayDateOnly,
+  weekdayIndexMonday,
 } from './dateOnly';
 
 describe('date-only parsing', () => {
@@ -63,6 +71,47 @@ describe('date-only parsing', () => {
     expect(formatDateLong('2026-12-19')).toBe('19 December 2026');
     expect(formatDateLong('2024-02-29')).toBe('29 February 2024');
     expect(formatDateLong('2026-02-30')).toBeNull();
+    expect(formatDateWithWeekday('2026-10-30')).toBe('Friday, 30 October 2026');
+    expect(formatMonthYear('2026-10-30')).toBe('October 2026');
+    expect(formatDateWithWeekday('2026-02-30')).toBeNull();
+  });
+});
+
+describe('calendar grid helpers', () => {
+  it('uses Monday as the first day of the week', () => {
+    expect(weekdayIndexMonday('2026-10-26')).toBe(0);
+    expect(weekdayIndexMonday('2026-10-30')).toBe(4);
+    expect(weekdayIndexMonday('2026-11-01')).toBe(6);
+    expect(startOfWeekDateOnly('2026-10-30')).toBe('2026-10-26');
+    expect(startOfWeekDateOnly('2026-11-01')).toBe('2026-10-26');
+  });
+
+  it('finds month boundaries including leap years', () => {
+    expect(startOfMonthDateOnly('2026-02-15')).toBe('2026-02-01');
+    expect(endOfMonthDateOnly('2026-02-15')).toBe('2026-02-28');
+    expect(endOfMonthDateOnly('2024-02-15')).toBe('2024-02-29');
+    expect(endOfMonthDateOnly('2026-12-19')).toBe('2026-12-31');
+  });
+
+  it('adds months while clamping impossible days', () => {
+    expect(addMonthsDateOnly('2026-01-31', 1)).toBe('2026-02-28');
+    expect(addMonthsDateOnly('2024-01-31', 1)).toBe('2024-02-29');
+    expect(addMonthsDateOnly('2026-12-19', 1)).toBe('2027-01-19');
+    expect(addMonthsDateOnly('2026-01-19', -1)).toBe('2025-12-19');
+    expect(addMonthsDateOnly('2026-01-19', -13)).toBe('2024-12-19');
+    expect(addMonthsDateOnly('2026-02-30', 1)).toBeNull();
+  });
+
+  it('covers the full month grid from Monday through Sunday', () => {
+    expect(monthGridRange('2026-10-30')).toEqual({
+      start: '2026-09-28',
+      end: '2026-11-01',
+    });
+    expect(monthGridRange('2024-02-15')).toEqual({
+      start: '2024-01-29',
+      end: '2024-03-03',
+    });
+    expect(monthGridRange('2026-02-30')).toBeNull();
   });
 });
 
