@@ -287,95 +287,101 @@ export function TaskEditor({
         )}
       </div>
 
-      <div className={`form-field${errors.description ? ' form-field-invalid' : ''}`}>
-        <label htmlFor="task-description">Description (optional)</label>
-        <textarea
-          id="task-description"
-          className="planner-textarea"
-          value={form.description}
-          maxLength={MAX_DESCRIPTION_CHARS}
-          onChange={(event) => handleField('description', event.target.value)}
-          aria-invalid={errors.description ? true : undefined}
-          aria-describedby={errors.description ? 'task-description-error' : 'task-description-hint'}
-          disabled={isSaving}
-        />
-        <p className="field-hint" id="task-description-hint">
-          {form.description.length}/{MAX_DESCRIPTION_CHARS} characters.
-        </p>
-        {errors.description && (
-          <p className="field-error" id="task-description-error" role="alert">
-            {errors.description}
+      <div className="planner-form-row">
+        <div className={`form-field${errors.description ? ' form-field-invalid' : ''}`}>
+          <label htmlFor="task-description">Description (optional)</label>
+          <textarea
+            id="task-description"
+            className="planner-textarea"
+            value={form.description}
+            maxLength={MAX_DESCRIPTION_CHARS}
+            onChange={(event) => handleField('description', event.target.value)}
+            aria-invalid={errors.description ? true : undefined}
+            aria-describedby={
+              errors.description ? 'task-description-error' : 'task-description-hint'
+            }
+            disabled={isSaving}
+          />
+          <p className="field-hint" id="task-description-hint">
+            {form.description.length}/{MAX_DESCRIPTION_CHARS} characters.
           </p>
-        )}
-      </div>
-
-      <div className="form-field">
-        <label htmlFor="task-anchor">Schedule type</label>
-        <select
-          id="task-anchor"
-          value={form.scheduleAnchor}
-          onChange={(event) => handleField('scheduleAnchor', event.target.value)}
-          disabled={isSaving}
-        >
-          <option value="manual">Manual calendar date</option>
-          <option value="exam">Exam-relative date</option>
-        </select>
-        <p className="field-hint">
-          Exam-relative tasks follow the exam date only after you review and confirm an exam-date
-          change. Manual dates never move automatically.
-        </p>
-      </div>
-
-      {form.scheduleAnchor === 'manual' ? (
-        <DateField
-          id="task-scheduled-date"
-          label="Scheduled date"
-          value={form.scheduledDate}
-          onChange={(value) => handleField('scheduledDate', value)}
-          hint="The local calendar date this task first appears on."
-          error={errors.scheduledDate}
-          disabled={isSaving}
-        />
-      ) : (
-        <div className={`form-field${errors.scheduleOffsetDays ? ' form-field-invalid' : ''}`}>
-          <label htmlFor="task-offset-days">Days from the exam date</label>
-          <div className="input-with-suffix">
-            <input
-              id="task-offset-days"
-              type="number"
-              step={1}
-              min={MIN_OFFSET_DAYS}
-              max={MAX_OFFSET_DAYS}
-              value={form.offsetDays}
-              onChange={(event) => handleField('offsetDays', event.target.value)}
-              aria-invalid={errors.scheduleOffsetDays ? true : undefined}
-              aria-describedby="task-offset-hint"
-              disabled={isSaving}
-            />
-            <span aria-hidden="true">days</span>
-          </div>
-          <p className="field-hint" id="task-offset-hint">
-            {anchorPreview
-              ? `Currently resolves to ${formatDateLong(anchorPreview)}. Negative values are before the exam.`
-              : 'Negative values are before the exam; positive values are after it.'}
-          </p>
-          {errors.scheduleOffsetDays && (
-            <p className="field-error" role="alert">
-              {errors.scheduleOffsetDays}
+          {errors.description && (
+            <p className="field-error" id="task-description-error" role="alert">
+              {errors.description}
             </p>
           )}
         </div>
-      )}
 
-      <DateField
-        id="task-deadline-date"
-        label="Deadline date (optional)"
-        value={form.deadlineDate}
-        onChange={(value) => handleField('deadlineDate', value)}
-        hint="Leave blank when the scheduled date is the only date that matters."
-        error={errors.deadlineDate}
-        disabled={isSaving}
-      />
+        <div className="form-field">
+          <label htmlFor="task-anchor">Schedule type</label>
+          <select
+            id="task-anchor"
+            value={form.scheduleAnchor}
+            onChange={(event) => handleField('scheduleAnchor', event.target.value)}
+            disabled={isSaving}
+          >
+            <option value="manual">Manual calendar date</option>
+            <option value="exam">Exam-relative date</option>
+          </select>
+          <p className="field-hint">
+            Exam-relative dates adjust only after you confirm a new exam date. Manual dates never
+            move automatically.
+          </p>
+        </div>
+      </div>
+
+      <div className="planner-form-row">
+        {form.scheduleAnchor === 'manual' ? (
+          <DateField
+            id="task-scheduled-date"
+            label="Scheduled date"
+            value={form.scheduledDate}
+            onChange={(value) => handleField('scheduledDate', value)}
+            hint="The local calendar date this task first appears on."
+            error={errors.scheduledDate}
+            disabled={isSaving}
+          />
+        ) : (
+          <div className={`form-field${errors.scheduleOffsetDays ? ' form-field-invalid' : ''}`}>
+            <label htmlFor="task-offset-days">Days from the exam date</label>
+            <div className="input-with-suffix">
+              <input
+                id="task-offset-days"
+                type="number"
+                step={1}
+                min={MIN_OFFSET_DAYS}
+                max={MAX_OFFSET_DAYS}
+                value={form.offsetDays}
+                onChange={(event) => handleField('offsetDays', event.target.value)}
+                aria-invalid={errors.scheduleOffsetDays ? true : undefined}
+                aria-describedby="task-offset-hint"
+                disabled={isSaving}
+              />
+              <span aria-hidden="true">days</span>
+            </div>
+            <p className="field-hint" id="task-offset-hint">
+              {anchorPreview
+                ? `Currently resolves to ${formatDateLong(anchorPreview)}. Negative values are before the exam.`
+                : 'Negative values are before the exam; positive values are after it.'}
+            </p>
+            {errors.scheduleOffsetDays && (
+              <p className="field-error" role="alert">
+                {errors.scheduleOffsetDays}
+              </p>
+            )}
+          </div>
+        )}
+
+        <DateField
+          id="task-deadline-date"
+          label="Deadline date (optional)"
+          value={form.deadlineDate}
+          onChange={(value) => handleField('deadlineDate', value)}
+          hint="Leave blank when the scheduled date is the only date that matters."
+          error={errors.deadlineDate}
+          disabled={isSaving}
+        />
+      </div>
 
       <div className="planner-form-row">
         <div className={`form-field${errors.topicId ? ' form-field-invalid' : ''}`}>

@@ -28,9 +28,9 @@ See [RELEASE_NOTES_1.0.0.md](RELEASE_NOTES_1.0.0.md) for the release candidate s
 ### Verified release artifact
 
 - Installer: `src-tauri\target\release\bundle\nsis\CSIR-NET Physics Tracker_1.0.0_x64-setup.exe`
-- Installer size: 3,748,081 bytes (3.57 MiB)
-- Installer SHA-256: `DB7E552020A21F11D6405B902F5F661B0078F80889778F0FE11C4408B7187259`
-- Standalone executable SHA-256: `A5045544EF3C6593D57191A4B00B7DD68AEDFBDF64031A7B54DB1D2960B19A98`
+- Installer size: 3,750,533 bytes (3.58 MiB)
+- Installer SHA-256: `445856791BF7629004762C19CEFF74994EF0901A8CB35E74B3276F5729BF6A30`
+- Standalone executable SHA-256: `21D226FFD949AE6F164C648CCE058C0B6562FF19E041BD31583675C2BB451E05`
 - Default install location: `%LOCALAPPDATA%\CSIR-NET Physics Tracker`
 - Start Menu shortcut: `CSIR-NET Physics Tracker`
 - Uninstall removes program files and shortcuts. `%APPDATA%\com.crimsonvisa.csirnetphysics` is retained.

@@ -751,37 +751,39 @@ export default function SessionsScreen({ today }: { today: string }) {
               </p>
 
               <form className="session-form" onSubmit={handleSave} noValidate>
-                <DateField
-                  id="session-date"
-                  label="Session date"
-                  value={form.sessionDate}
-                  onChange={(value) => handleFormField('sessionDate', value)}
-                  hint="The local calendar date this focus time belongs to."
-                  error={formErrors.sessionDate}
-                  disabled={isSaving}
-                />
-
-                <div className="form-field">
-                  <label htmlFor="session-topic">Syllabus topic (optional)</label>
-                  <select
-                    id="session-topic"
-                    value={form.topicId}
-                    onChange={(event) => handleFormField('topicId', event.target.value)}
+                <div className="session-form-row">
+                  <DateField
+                    id="session-date"
+                    label="Session date"
+                    value={form.sessionDate}
+                    onChange={(value) => handleFormField('sessionDate', value)}
+                    hint="The local calendar date this focus time belongs to."
+                    error={formErrors.sessionDate}
                     disabled={isSaving}
-                  >
-                    <option value="">No specific topic</option>
-                    {formTopics.map((topic) => (
-                      <option value={topic.id} key={topic.id}>
-                        {topic.code} · {topic.title}
-                        {topic.archived ? ' (archived)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {formErrors.topicId && (
-                    <p className="field-error" role="alert">
-                      {formErrors.topicId}
-                    </p>
-                  )}
+                  />
+
+                  <div className="form-field">
+                    <label htmlFor="session-topic">Syllabus topic (optional)</label>
+                    <select
+                      id="session-topic"
+                      value={form.topicId}
+                      onChange={(event) => handleFormField('topicId', event.target.value)}
+                      disabled={isSaving}
+                    >
+                      <option value="">No specific topic</option>
+                      {formTopics.map((topic) => (
+                        <option value={topic.id} key={topic.id}>
+                          {topic.code} · {topic.title}
+                          {topic.archived ? ' (archived)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {formErrors.topicId && (
+                      <p className="field-error" role="alert">
+                        {formErrors.topicId}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 <fieldset
