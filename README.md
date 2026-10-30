@@ -2,15 +2,16 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 5 status:** the dashboard, persistent planning settings, exam countdown, official-source
+**Phase 6 status:** the dashboard, persistent planning settings, exam countdown, official-source
 Physical Sciences syllabus tracker, persisted study timer, study-session history, dated checklist
-tasks, planned study blocks, and month/week/day calendar are implemented. The syllabus is seeded with
-182 topics across General Aptitude and the nine Physical Sciences units, and each topic can store a
+tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank, mock-test
+history, CSV import workflows, and outcome analytics are implemented. The syllabus is seeded with 182
+topics across General Aptitude and the nine Physical Sciences units, and each topic can store a
 personal status, priority, confidence rating, and notes. The timer records focus sessions with restart
 and sleep recovery, and the dashboard shows today's focus time plus the day's tasks and planned blocks.
-Exam-date changes use a review-and-apply confirmation before any future exam-anchored task moves.
-Dedicated PYQ and mock-test tracking, spaced-repetition revision scheduling, fuller analytics, and
-backup/restore are not implemented yet.
+Exam-date changes use a review-and-apply confirmation before any future exam-anchored task moves. CSV
+templates are generated locally and saved to the user's Downloads folder. Spaced-repetition scheduling,
+backup/restore, and richer charting are not implemented yet.
 
 ## Stack
 
@@ -80,12 +81,13 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-4), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+5), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
 adds checklist and planned-block tables without changing existing settings, syllabus progress, timer
-state, or study sessions.
+state, or study sessions. Upgrading a version-4 database adds the PYQ and mock-test tables without
+changing any Phase 1–5 data.
 
 The initial single-row settings record uses:
 
@@ -298,6 +300,103 @@ the preview writes nothing. A stale preview is rejected if the exam date or an a
 and the user must preview again. Direct settings updates also refuse an exam-date change while future
 open exam-anchored tasks exist, requiring the preview flow.
 
+## PYQ bank and mock tests
+
+Migration `0005_pyq_and_mock_tests.sql` adds two independent `STRICT` tables:
+
+- `pyq_attempts` — one row per historical attempt, with question year, optional exam/session,
+  Part A/B/C, syllabus topic reference, user-supplied question reference, attempt date, outcome,
+  optional marks, time spent, notes, optional difficulty, and an import fingerprint.
+- `mock_tests` — one row per full mock test, with name, date, duration, maximum marks, optional
+  reported score, per-part question/correct/incorrect/unanswered counts, per-part marking values,
+  notes, review observations, and an import fingerprint.
+
+No examination questions are seeded, generated, or fetched. The app stores only the user's own
+references and attempt records. PYQ attempts and mock tests are separate domains: recording a mock
+test never creates individual PYQ attempts.
+
+### PYQ attempts
+
+PYQ statuses are `attempted`, `correct`, `incorrect`, and `skipped`. Accuracy uses only correct and
+incorrect outcomes; skipped and outcome-unknown attempts are reported separately. Multiple attempts
+for the same question reference remain separate historical records when entered manually.
+
+The PYQ screen filters by question year, part, syllabus unit, topic, status, and free-text search
+across reference, session, and notes. It supports full create/edit/delete, with confirmation before
+deletion. Topic references are validated against the local syllabus catalog, including archived
+topics for historical data.
+
+### Mock tests and scoring
+
+Mock tests record question counts per part. The following invariants are validated in Rust and in
+the database: correct + incorrect + unanswered must equal the part's question count, and a test must
+contain at least one question across Parts A, B, and C.
+
+Each part stores three editable marking values: marks for a correct answer, marks for an incorrect
+answer, and marks for an unanswered question. The calculated score is:
+
+```text
+sum over parts of:
+  correct × correct_marks
+  + incorrect × incorrect_marks
+  + unanswered × unanswered_marks
+```
+
+No universal marking scheme is assumed. Correct-answer marks must be supplied for any part with
+questions; incorrect and unanswered values default to zero (no penalty) when left blank. The optional
+reported score must not exceed maximum marks and is preserved for comparison, while analytics and
+trends use the calculated score.
+
+### Analytics
+
+The Analytics screen uses only saved records:
+
+- PYQ accuracy by topic and syllabus unit.
+- PYQ outcomes by examination year and Part A/B/C.
+- Correct, incorrect, skipped, and outcome-unknown counts.
+- Mock-test calculated-score trend, average, best, latest, and part-wise performance.
+- Descriptive study-time-versus-outcome rows, paired by local date. These are explicitly descriptive,
+  not causal.
+- A weak-topic screen that requires at least five correct-or-incorrect attempts and accuracy below
+  50%. Topics with fewer attempts are labelled **Insufficient data**, never “weak” from one or two
+  attempts.
+
+## CSV import
+
+PYQ and mock-test screens each have a separate CSV workflow. The header-only template is generated
+locally and saved to the user's Downloads folder without overwriting an existing file; no network
+access is used. Selecting a file first
+produces a preview with valid, duplicate, and rejected rows and row-level field errors. Nothing is
+written during preview. Confirmed imports run in one SQLite transaction, skip duplicates, and report
+imported, skipped, and rejected counts. Cancelling a preview writes nothing.
+
+The parser accepts UTF-8 (including a BOM), quoted fields with commas, doubled quotes, and embedded
+newlines. Headers are required exactly; missing, unknown, or duplicate headers are rejected. Invalid
+dates, references, numbers, and required fields reject the affected row rather than silently dropping
+it.
+
+### PYQ template columns
+
+```text
+question_year,exam_session,part,topic_code,question_reference,attempt_date,status,marks_obtained,max_marks,time_spent_seconds,notes,difficulty,external_id
+```
+
+Required: `question_year`, `part`, `topic_code`, `question_reference`, `attempt_date`, `status`.
+`external_id` is optional; when supplied it is the stable duplicate identifier. Otherwise a
+deterministic fingerprint of the source row is used. Imported records keep their fingerprint when
+edited, so reimporting the original source remains a duplicate. Status is `attempted`, `correct`,
+`incorrect`, or `skipped`; difficulty is optional 1–5.
+
+### Mock-test template columns
+
+```text
+test_name,test_date,duration_minutes,max_marks,marks_obtained,part_a_questions,part_a_correct,part_a_incorrect,part_a_unanswered,part_a_correct_marks,part_a_incorrect_marks,part_a_unanswered_marks,part_b_questions,part_b_correct,part_b_incorrect,part_b_unanswered,part_b_correct_marks,part_b_incorrect_marks,part_b_unanswered_marks,part_c_questions,part_c_correct,part_c_incorrect,part_c_unanswered,part_c_correct_marks,part_c_incorrect_marks,part_c_unanswered_marks,notes,review_observations,external_id
+```
+
+Required: test name/date/duration/maximum marks and all question/correct/incorrect/unanswered counts.
+Correct-answer marks are required for any part with questions; incorrect and unanswered marks default
+to zero. `external_id` is optional and behaves as for PYQ imports.
+
 ## Typography note
 
 Latin Modern is not currently bundled with the app. No font files or font packages were added through
@@ -354,11 +453,17 @@ src/                     React frontend and tests
   components/TodayPlanCard.tsx  dashboard tasks, blocks, and deadline summary
   components/TaskEditor.tsx     checklist form with manual/exam scheduling
   components/PlannedBlockEditor.tsx planned-block form and explicit session link
+  components/PyqEditor.tsx      PYQ attempt form with topic and outcome fields
+  components/MockTestEditor.tsx mock-test form with editable per-part marking
+  components/CsvImportPanel.tsx preview, validation report, and transactional import UI
   screens/SyllabusScreen.tsx    syllabus catalog, filters, and topic editor
   screens/TimerScreen.tsx       persisted timer, recovery display, and settings
   screens/SessionsScreen.tsx    session history, filters, totals, and manual CRUD
   screens/ChecklistScreen.tsx   task CRUD, completion, rescheduling, and search
   screens/CalendarScreen.tsx    month/week/day views and selected-day editing
+  screens/PyqScreen.tsx         PYQ filters, history, CRUD, and CSV workflow
+  screens/MockTestsScreen.tsx   mock-test history, scoring, CRUD, and CSV workflow
+  screens/AnalyticsScreen.tsx   PYQ, mock, part, weak-topic, and study-time analytics
   lib/dateOnly.ts               timezone-independent date and calendar utilities
   lib/timeOfDay.ts              strict local HH:MM validation and planned duration
   lib/studyTime.ts              duration and timer-clock formatting
@@ -368,6 +473,10 @@ src/                     React frontend and tests
   lib/timerApi.ts               typed timer command wrappers
   lib/sessionsApi.ts            typed session and totals command wrappers
   lib/plannerApi.ts             typed checklist, calendar, and rescheduling wrappers
+  lib/pyqApi.ts                 typed PYQ and PYQ-import command wrappers
+  lib/mockTestApi.ts            typed mock-test and import command wrappers
+  lib/analyticsApi.ts           typed analytics command wrappers
+  lib/csvImportApi.ts           shared import preview/result types
   lib/commandError.ts           shared structured-error decoding
 src-tauri/               Tauri configuration and Rust backend
   capabilities/          Tauri window permissions
@@ -382,6 +491,10 @@ src-tauri/               Tauri configuration and Rust backend
   src/sessions.rs        Session CRUD, validation, filters, and study totals
   src/planner.rs         Checklist, planned blocks, calendar, agenda, and validation
   src/reschedule.rs      Exam-date preview, outside-window warnings, and apply
+  src/pyq.rs             PYQ CRUD, filters, imports, and duplicate detection
+  src/mock_tests.rs      Mock-test CRUD, marking configuration, and imports
+  src/csv_import.rs      Strict CSV parser and shared import report types
+  src/analytics.rs       PYQ, mock, weak-topic, and study-performance calculations
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
   src/main.rs            Desktop entry point

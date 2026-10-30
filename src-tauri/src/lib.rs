@@ -1,13 +1,19 @@
+mod analytics;
+mod csv_import;
 mod date_only;
 mod db;
 mod error;
+mod mock_tests;
 mod planner;
+mod pyq;
 mod reschedule;
 mod sessions;
 mod settings;
 mod syllabus;
 mod syllabus_catalog;
 mod timer;
+
+use std::path::Path;
 
 use chrono::{Local, Utc};
 use serde::Serialize;
@@ -67,6 +73,205 @@ fn apply_exam_date_change(
     state.with_connection(|connection| {
         reschedule::apply(connection, change, Local::now().date_naive())
     })
+}
+
+#[tauri::command]
+fn get_pyq_options(state: tauri::State<'_, db::AppState>) -> Result<pyq::PyqOptions, AppError> {
+    state.with_connection(|connection| pyq::options(connection))
+}
+
+#[tauri::command]
+fn get_pyq_attempts(
+    state: tauri::State<'_, db::AppState>,
+    filter: pyq::PyqFilter,
+) -> Result<Vec<pyq::PyqAttempt>, AppError> {
+    state.with_connection(|connection| pyq::list(connection, filter))
+}
+
+#[tauri::command]
+fn create_pyq_attempt(
+    state: tauri::State<'_, db::AppState>,
+    attempt: pyq::PyqInput,
+) -> Result<pyq::PyqAttempt, AppError> {
+    state.with_connection(|connection| pyq::create(connection, attempt))
+}
+
+#[tauri::command]
+fn update_pyq_attempt(
+    state: tauri::State<'_, db::AppState>,
+    attempt_id: i64,
+    attempt: pyq::PyqInput,
+) -> Result<pyq::PyqAttempt, AppError> {
+    state.with_connection(|connection| pyq::update(connection, attempt_id, attempt))
+}
+
+#[tauri::command]
+fn delete_pyq_attempt(
+    state: tauri::State<'_, db::AppState>,
+    attempt_id: i64,
+) -> Result<(), AppError> {
+    state.with_connection(|connection| pyq::delete(connection, attempt_id))
+}
+
+#[tauri::command]
+fn save_pyq_csv_template(app: tauri::AppHandle) -> Result<String, AppError> {
+    save_csv_template(&app, "csir-net-pyq-template.csv", &pyq::template())
+}
+
+fn save_csv_template(
+    app: &tauri::AppHandle,
+    file_name: &str,
+    content: &str,
+) -> Result<String, AppError> {
+    let directory = app.path().download_dir().map_err(|error| {
+        AppError::file_operation("The Downloads folder could not be located", error)
+    })?;
+
+    Ok(write_csv_template(&directory, file_name, content)?
+        .display()
+        .to_string())
+}
+
+fn write_csv_template(
+    directory: &Path,
+    file_name: &str,
+    content: &str,
+) -> Result<std::path::PathBuf, AppError> {
+    std::fs::create_dir_all(directory).map_err(|error| {
+        AppError::file_operation("The Downloads folder could not be prepared", error)
+    })?;
+    let path = unique_template_path(directory, file_name);
+    std::fs::write(&path, content).map_err(|error| {
+        AppError::file_operation("The CSV template could not be saved to Downloads", error)
+    })?;
+
+    Ok(path)
+}
+
+fn unique_template_path(directory: &Path, file_name: &str) -> std::path::PathBuf {
+    let candidate = directory.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let source = Path::new(file_name);
+    let stem = source
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "template".to_owned());
+    let extension = source
+        .extension()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    for index in 1..=1_000 {
+        let candidate = if extension.is_empty() {
+            directory.join(format!("{stem} ({index})"))
+        } else {
+            directory.join(format!("{stem} ({index}).{extension}"))
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    let fallback = format!("{stem}-{}", std::process::id());
+    if extension.is_empty() {
+        directory.join(fallback)
+    } else {
+        directory.join(format!("{fallback}.{extension}"))
+    }
+}
+
+#[tauri::command]
+fn preview_pyq_import(
+    state: tauri::State<'_, db::AppState>,
+    csv: String,
+) -> Result<csv_import::ImportPreview, AppError> {
+    state.with_connection(|connection| pyq::preview_import(connection, &csv))
+}
+
+#[tauri::command]
+fn apply_pyq_import(
+    state: tauri::State<'_, db::AppState>,
+    csv: String,
+) -> Result<csv_import::ImportResult, AppError> {
+    state.with_connection(|connection| pyq::apply_import(connection, &csv))
+}
+
+#[tauri::command]
+fn get_pyq_analytics(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<analytics::PyqAnalytics, AppError> {
+    state.with_connection(|connection| analytics::pyq(connection))
+}
+
+#[tauri::command]
+fn get_mock_tests(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<Vec<mock_tests::MockTest>, AppError> {
+    state.with_connection(|connection| mock_tests::list(connection))
+}
+
+#[tauri::command]
+fn create_mock_test(
+    state: tauri::State<'_, db::AppState>,
+    test: mock_tests::MockTestInput,
+) -> Result<mock_tests::MockTest, AppError> {
+    state.with_connection(|connection| mock_tests::create(connection, test))
+}
+
+#[tauri::command]
+fn update_mock_test(
+    state: tauri::State<'_, db::AppState>,
+    test_id: i64,
+    test: mock_tests::MockTestInput,
+) -> Result<mock_tests::MockTest, AppError> {
+    state.with_connection(|connection| mock_tests::update(connection, test_id, test))
+}
+
+#[tauri::command]
+fn delete_mock_test(state: tauri::State<'_, db::AppState>, test_id: i64) -> Result<(), AppError> {
+    state.with_connection(|connection| mock_tests::delete(connection, test_id))
+}
+
+#[tauri::command]
+fn save_mock_csv_template(app: tauri::AppHandle) -> Result<String, AppError> {
+    save_csv_template(
+        &app,
+        "csir-net-mock-test-template.csv",
+        &mock_tests::template(),
+    )
+}
+
+#[tauri::command]
+fn preview_mock_import(
+    state: tauri::State<'_, db::AppState>,
+    csv: String,
+) -> Result<csv_import::ImportPreview, AppError> {
+    state.with_connection(|connection| mock_tests::preview_import(connection, &csv))
+}
+
+#[tauri::command]
+fn apply_mock_import(
+    state: tauri::State<'_, db::AppState>,
+    csv: String,
+) -> Result<csv_import::ImportResult, AppError> {
+    state.with_connection(|connection| mock_tests::apply_import(connection, &csv))
+}
+
+#[tauri::command]
+fn get_mock_analytics(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<analytics::MockAnalytics, AppError> {
+    state.with_connection(|connection| analytics::mocks(connection))
+}
+
+#[tauri::command]
+fn get_study_performance(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<analytics::StudyPerformance, AppError> {
+    state.with_connection(|connection| analytics::study_performance(connection))
 }
 
 #[tauri::command]
@@ -400,6 +605,24 @@ pub fn run() {
             update_settings,
             preview_exam_date_change,
             apply_exam_date_change,
+            get_pyq_options,
+            get_pyq_attempts,
+            create_pyq_attempt,
+            update_pyq_attempt,
+            delete_pyq_attempt,
+            save_pyq_csv_template,
+            preview_pyq_import,
+            apply_pyq_import,
+            get_pyq_analytics,
+            get_mock_tests,
+            create_mock_test,
+            update_mock_test,
+            delete_mock_test,
+            save_mock_csv_template,
+            preview_mock_import,
+            apply_mock_import,
+            get_mock_analytics,
+            get_study_performance,
             get_planner_topics,
             get_checklist_tasks,
             create_checklist_task,
@@ -448,5 +671,26 @@ mod tests {
 
         assert_eq!(info.name, "CSIR-NET Physics Tracker");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn csv_template_writer_avoids_overwriting_existing_files() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let nested = directory.path().join("downloads");
+        let first = write_csv_template(&nested, "template.csv", "a,b\r\n")
+            .expect("template should be written");
+        let second = write_csv_template(&nested, "template.csv", "c,d\r\n")
+            .expect("second template should be written");
+
+        assert_eq!(first, nested.join("template.csv"));
+        assert_eq!(second, nested.join("template (1).csv"));
+        assert_eq!(
+            std::fs::read_to_string(&first).expect("first template should be readable"),
+            "a,b\r\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&second).expect("second template should be readable"),
+            "c,d\r\n"
+        );
     }
 }

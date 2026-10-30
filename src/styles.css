@@ -3746,3 +3746,1025 @@ h1 {
     padding: 18px;
   }
 }
+
+/* Phase 6: PYQ bank, mock tests, CSV import, and analytics */
+
+.import-disclosure {
+  margin-top: 24px;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: 0 18px 40px rgb(53 45 30 / 6%);
+}
+
+.import-disclosure > summary {
+  color: var(--accent);
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.import-disclosure[open] > summary {
+  margin-bottom: 18px;
+}
+
+.import-card {
+  padding: 22px;
+  border: 1px solid #e7dfd1;
+  border-radius: 14px;
+  background: #fbf8f1;
+}
+
+.import-card h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: -0.02em;
+}
+
+.import-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+}
+
+.import-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 3px;
+}
+
+.import-preview,
+.import-result {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #e7dfd1;
+}
+
+.import-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.import-summary > div {
+  padding: 10px 12px;
+  border: 1px solid #e7dfd1;
+  border-radius: 9px;
+  background: #fffefb;
+}
+
+.import-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.import-summary strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.35rem;
+}
+
+.import-note,
+.import-empty,
+.import-template-note {
+  margin: 13px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.import-template-note {
+  padding: 9px 11px;
+  border: 1px solid #c8e5d5;
+  border-radius: 8px;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.import-template-note code {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.import-table-wrap {
+  max-height: 360px;
+  margin-top: 13px;
+  overflow: auto;
+  border: 1px solid #e7dfd1;
+  border-radius: 10px;
+  background: #fffefb;
+}
+
+.import-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.74rem;
+}
+
+.import-table th,
+.import-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee7db;
+  text-align: left;
+  vertical-align: top;
+}
+
+.import-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f7f2e9;
+  color: var(--muted);
+  font-size: 0.61rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.import-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.import-row-invalid {
+  background: #fff8f5;
+}
+
+.import-row-duplicate {
+  background: #fffaf0;
+}
+
+.import-row-imported {
+  background: #f7fbf9;
+}
+
+.import-status {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid #e5ded0;
+  border-radius: 999px;
+  background: #f5f0e7;
+  color: #746b5c;
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.import-status-valid,
+.import-status-imported {
+  border-color: #c8e5d5;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.import-status-duplicate {
+  border-color: #dfc38a;
+  background: #f8ecd7;
+  color: var(--warning-ink);
+}
+
+.import-status-invalid {
+  border-color: #ecc9c1;
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.import-errors {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--error);
+  line-height: 1.5;
+}
+
+.import-errors strong {
+  font-weight: 700;
+}
+
+.pyq-filter-card,
+.pyq-editor-card,
+.pyq-history-card,
+.mock-editor-card,
+.mock-history-card,
+.analytics-card {
+  padding: 24px 28px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--paper);
+  box-shadow: 0 18px 40px rgb(53 45 30 / 7%);
+}
+
+.pyq-filter-card h2,
+.pyq-editor-card h2,
+.pyq-history-card h2,
+.mock-editor-card h2,
+.mock-history-card h2,
+.analytics-card h2 {
+  margin: 0;
+  font-size: 1.55rem;
+  letter-spacing: -0.02em;
+}
+
+.pyq-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 0.7fr)) minmax(220px, 1.4fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 18px;
+}
+
+.pyq-filter-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-bottom: 1px;
+}
+
+.pyq-filter-search {
+  min-width: 0;
+}
+
+.pyq-editor-card,
+.pyq-history-card {
+  margin-top: 24px;
+}
+
+.pyq-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.pyq-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid #e7dfd1;
+  border-radius: 13px;
+  background: #fffefb;
+}
+
+.pyq-row-main {
+  flex: 1 1 520px;
+  min-width: 0;
+}
+
+.pyq-row-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pyq-row-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.pyq-badge {
+  display: inline-flex;
+  padding: 3px 8px;
+  border: 1px solid #e5ded0;
+  border-radius: 999px;
+  background: #f5f0e7;
+  color: #746b5c;
+  font-size: 0.61rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pyq-status {
+  display: inline-flex;
+  padding: 3px 8px;
+  border: 1px solid #e5ded0;
+  border-radius: 999px;
+  font-size: 0.61rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pyq-status-correct {
+  border-color: #c8e5d5;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.pyq-status-incorrect {
+  border-color: #ecc9c1;
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.pyq-status-skipped {
+  border-color: #e5ded0;
+  background: #f3eee4;
+  color: #746b5c;
+}
+
+.pyq-status-attempted {
+  border-color: #cddfe8;
+  background: #eaf2f7;
+  color: #2f5d7c;
+}
+
+.pyq-meta,
+.pyq-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+.pyq-stats {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pyq-notes {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 0.79rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.pyq-row-actions,
+.mock-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pyq-row-actions .secondary-button,
+.pyq-row-actions .danger-button,
+.mock-row-actions .secondary-button,
+.mock-row-actions .danger-button {
+  padding: 7px 12px;
+  font-size: 0.76rem;
+}
+
+.pyq-row .task-delete-confirm,
+.mock-row .task-delete-confirm {
+  flex-basis: 100%;
+}
+
+.mock-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.mock-summary-card {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgb(15 92 92 / 6%), transparent 12rem), var(--paper);
+  box-shadow: 0 14px 30px rgb(53 45 30 / 6%);
+}
+
+.mock-summary-card > span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.mock-summary-card strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.7rem;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.mock-summary-card small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.mock-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 22px 0;
+}
+
+.mock-latest-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.mock-editor-card,
+.mock-history-card {
+  margin-top: 22px;
+}
+
+.mock-form .mock-part-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.mock-part-card {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #e7dfd1;
+  border-radius: 12px;
+  background: #fbf8f1;
+}
+
+.mock-part-card legend {
+  padding: 0 5px;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.mock-part-counts,
+.mock-marking-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mock-marking-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e7dfd1;
+}
+
+.mock-part-card .form-field {
+  gap: 4px;
+}
+
+.mock-part-card .form-field label {
+  font-size: 0.7rem;
+}
+
+.mock-part-card .form-field input {
+  min-height: 36px;
+  padding: 7px 8px;
+  font-size: 0.78rem;
+}
+
+.mock-score-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #c8dfd8;
+  border-radius: 11px;
+  background: #f1f7f4;
+}
+
+.mock-score-preview span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mock-score-preview strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.35rem;
+}
+
+.mock-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.mock-row {
+  padding: 16px 18px;
+  border: 1px solid #e7dfd1;
+  border-radius: 13px;
+  background: #fffefb;
+}
+
+.mock-row-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mock-row-heading h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.mock-meta {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+.mock-score-block {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.mock-score-block span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.61rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mock-score-block strong {
+  display: block;
+  color: var(--accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.35rem;
+}
+
+.mock-score-block small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.mock-total-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid #eee7db;
+  border-radius: 8px;
+  background: #fbf8f1;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.mock-part-table-wrap,
+.analytics-table-wrap {
+  margin-top: 12px;
+  overflow-x: auto;
+  border: 1px solid #eee7db;
+  border-radius: 9px;
+}
+
+.mock-part-table,
+.analytics-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: #fffefb;
+  font-size: 0.75rem;
+}
+
+.mock-part-table th,
+.mock-part-table td,
+.analytics-table th,
+.analytics-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee7db;
+  text-align: right;
+  vertical-align: top;
+}
+
+.mock-part-table thead th,
+.analytics-table thead th {
+  background: #f7f2e9;
+  color: var(--muted);
+  font-size: 0.61rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mock-part-table th:first-child,
+.mock-part-table td:first-child,
+.analytics-table th:first-child,
+.analytics-table td:first-child {
+  text-align: left;
+}
+
+.mock-part-table tbody th,
+.analytics-table tbody th {
+  font-weight: 600;
+  text-align: left;
+}
+
+.mock-part-table tbody tr:last-child th,
+.mock-part-table tbody tr:last-child td,
+.analytics-table tbody tr:last-child th,
+.analytics-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.mock-notes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.mock-notes-grid h4 {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 0.63rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mock-notes-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.mock-row-actions {
+  margin-top: 12px;
+}
+
+.analytics-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.analytics-stat-card {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgb(217 164 65 / 7%), transparent 12rem), var(--paper);
+  box-shadow: 0 14px 30px rgb(53 45 30 / 6%);
+}
+
+.analytics-stat-card > span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.analytics-stat-card strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.7rem;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.analytics-stat-card small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.71rem;
+  line-height: 1.45;
+}
+
+.analytics-card {
+  margin-top: 22px;
+}
+
+.analytics-empty {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.weak-topic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 8px;
+}
+
+.weak-topic-grid h3 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.analytics-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.analytics-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #eee7db;
+  border-radius: 8px;
+  background: #fffefb;
+  font-size: 0.76rem;
+}
+
+.analytics-list strong {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+
+.analytics-list-muted strong {
+  color: var(--muted);
+}
+
+.analytics-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.analytics-two-column .analytics-card {
+  min-width: 0;
+}
+
+.analytics-table-compact {
+  min-width: 360px;
+}
+
+.analytics-table-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.analytics-tag {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid #e5ded0;
+  border-radius: 999px;
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.analytics-tag-insufficient {
+  border-color: #dfc38a;
+  background: #f8ecd7;
+  color: var(--warning-ink);
+}
+
+.analytics-tag-weak {
+  border-color: #ecc9c1;
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.analytics-tag-ok {
+  border-color: #c8e5d5;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.analytics-part-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.analytics-part-card {
+  padding: 13px 15px;
+  border: 1px solid #e7dfd1;
+  border-radius: 11px;
+  background: #fbf8f1;
+}
+
+.analytics-part-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.analytics-part-card strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.45rem;
+}
+
+.analytics-part-card small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.analytics-score-cell {
+  display: grid;
+  grid-template-columns: minmax(42px, auto) minmax(60px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.analytics-bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eee7db;
+}
+
+.analytics-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.analytics-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+@media (max-width: 1180px) {
+  .pyq-filter-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pyq-filter-search {
+    grid-column: span 2;
+  }
+
+  .pyq-filter-actions {
+    grid-column: span 1;
+  }
+
+  .mock-form .mock-part-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mock-marking-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1080px) {
+  .mock-summary-grid,
+  .analytics-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analytics-two-column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .import-file-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .import-file-actions {
+    padding-bottom: 0;
+  }
+
+  .pyq-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pyq-filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .weak-topic-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mock-part-table,
+  .analytics-table {
+    font-size: 0.7rem;
+  }
+}
+
+@media (max-width: 700px) {
+  .import-summary,
+  .mock-score-preview,
+  .analytics-part-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mock-row-heading {
+    flex-direction: column;
+  }
+
+  .mock-score-block {
+    text-align: left;
+  }
+
+  .mock-notes-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pyq-row-heading {
+    flex-direction: column;
+  }
+
+  .pyq-row-actions {
+    width: 100%;
+  }
+
+  .analytics-list li {
+    flex-direction: column;
+    gap: 3px;
+  }
+}
+
+@media (max-width: 560px) {
+  .pyq-filter-card,
+  .pyq-editor-card,
+  .pyq-history-card,
+  .mock-editor-card,
+  .mock-history-card,
+  .analytics-card,
+  .import-card {
+    padding: 20px;
+    border-radius: 16px;
+  }
+
+  .pyq-filter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pyq-filter-search,
+  .pyq-filter-actions {
+    grid-column: 1;
+  }
+
+  .mock-summary-grid,
+  .analytics-overview,
+  .import-summary,
+  .mock-score-preview,
+  .analytics-part-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pyq-filter-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pyq-filter-actions .primary-button,
+  .pyq-filter-actions .secondary-button {
+    width: 100%;
+  }
+
+  .import-disclosure {
+    padding: 16px;
+  }
+}

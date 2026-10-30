@@ -11,13 +11,25 @@ import {
 } from './lib/plannerApi';
 import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import { useTodayDateOnly } from './lib/useTodayDateOnly';
+import AnalyticsScreen from './screens/AnalyticsScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import ChecklistScreen from './screens/ChecklistScreen';
+import MockTestsScreen from './screens/MockTestsScreen';
+import PyqScreen from './screens/PyqScreen';
 import SessionsScreen from './screens/SessionsScreen';
 import SyllabusScreen from './screens/SyllabusScreen';
 import TimerScreen from './screens/TimerScreen';
 
-type AppView = 'overview' | 'timer' | 'sessions' | 'checklist' | 'calendar' | 'syllabus';
+type AppView =
+  | 'overview'
+  | 'timer'
+  | 'sessions'
+  | 'checklist'
+  | 'calendar'
+  | 'pyq'
+  | 'mock-tests'
+  | 'analytics'
+  | 'syllabus';
 
 type FormState = {
   examDate: string;
@@ -191,6 +203,30 @@ function Sidebar({
         </button>
         <button
           type="button"
+          className={`nav-item nav-button${activeView === 'pyq' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'pyq' ? 'page' : undefined}
+          onClick={() => onNavigate('pyq')}
+        >
+          PYQs
+        </button>
+        <button
+          type="button"
+          className={`nav-item nav-button${activeView === 'mock-tests' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'mock-tests' ? 'page' : undefined}
+          onClick={() => onNavigate('mock-tests')}
+        >
+          Mock tests
+        </button>
+        <button
+          type="button"
+          className={`nav-item nav-button${activeView === 'analytics' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'analytics' ? 'page' : undefined}
+          onClick={() => onNavigate('analytics')}
+        >
+          Analytics
+        </button>
+        <button
+          type="button"
           className={`nav-item nav-button${activeView === 'syllabus' ? ' nav-item-active' : ''}`}
           aria-current={activeView === 'syllabus' ? 'page' : undefined}
           onClick={() => onNavigate('syllabus')}
@@ -200,8 +236,8 @@ function Sidebar({
       </nav>
 
       <p className="sidebar-note">
-        Local-first. Settings, syllabus progress, checklist plans, and study sessions are stored on
-        this PC and never sent to a server.
+        Local-first. Settings, syllabus progress, checklist plans, PYQ and mock records, and study
+        sessions are stored on this PC and never sent to a server.
       </p>
     </aside>
   );
@@ -452,6 +488,12 @@ export default function App({ today }: AppProps) {
           <ChecklistScreen today={currentToday} examDate={activeExamDate} />
         ) : view === 'calendar' ? (
           <CalendarScreen today={currentToday} examDate={activeExamDate} />
+        ) : view === 'pyq' ? (
+          <PyqScreen today={currentToday} />
+        ) : view === 'mock-tests' ? (
+          <MockTestsScreen today={currentToday} />
+        ) : view === 'analytics' ? (
+          <AnalyticsScreen />
         ) : (
           <div className="page-container">
             <header className="page-header">

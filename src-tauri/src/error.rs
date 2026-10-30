@@ -131,6 +131,35 @@ impl AppError {
         }
     }
 
+    pub fn pyq_not_found() -> Self {
+        Self {
+            code: "pyq_not_found",
+            message: "This PYQ attempt is no longer available. Refresh the PYQ list and try again."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn mock_test_not_found() -> Self {
+        Self {
+            code: "mock_test_not_found",
+            message: "This mock test is no longer available. Refresh the mock-test history and try again."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn file_operation(context: &str, source: impl std::fmt::Display) -> Self {
+        eprintln!("{context}: {source}");
+        Self {
+            code: "file_operation_error",
+            message: format!(
+                "{context}. Check that your Downloads folder is available, then try again."
+            ),
+            field: None,
+        }
+    }
+
     pub fn timer_active() -> Self {
         Self {
             code: "timer_active",

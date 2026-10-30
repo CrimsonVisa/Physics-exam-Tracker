@@ -66,6 +66,32 @@ const EMPTY_CALENDAR: CalendarData = {
   overdueTasks: [],
 };
 
+const EMPTY_PYQ_ANALYTICS = {
+  totalRecords: 0,
+  correct: 0,
+  incorrect: 0,
+  skipped: 0,
+  outcomeUnknown: 0,
+  attempts: 0,
+  accuracy: null,
+  minimumWeakAttempts: 5,
+  weakAccuracyThreshold: 50,
+  byTopic: [],
+  byUnit: [],
+  byYear: [],
+  byPart: [],
+  weakTopics: [],
+};
+
+const EMPTY_MOCK_ANALYTICS = {
+  testCount: 0,
+  averagePercentage: null,
+  bestPercentage: null,
+  latestPercentage: null,
+  trend: [],
+  byPart: [],
+};
+
 function previewFor(settings: Settings): ExamReschedulePreview {
   return {
     currentExamDate: DEFAULT_SETTINGS.examDate,
@@ -124,6 +150,12 @@ function mockBackend(overrides: Record<string, MockHandler> = {}) {
     get_calendar: () => EMPTY_CALENDAR,
     get_checklist_tasks: () => [],
     get_planner_topics: () => [],
+    get_pyq_options: () => ({ years: [], sections: [], topics: [] }),
+    get_pyq_attempts: () => [],
+    get_mock_tests: () => [],
+    get_pyq_analytics: () => EMPTY_PYQ_ANALYTICS,
+    get_mock_analytics: () => EMPTY_MOCK_ANALYTICS,
+    get_study_performance: () => ({ days: [] }),
     get_study_totals: () => EMPTY_TOTALS,
     get_syllabus_catalog: () => ({ sources: [], sections: [] }),
     get_syllabus_summary: () => ({
@@ -566,6 +598,34 @@ describe('settings dashboard', () => {
       'page',
     );
     expect(callsFor('get_calendar').length).toBeGreaterThan(0);
+  });
+
+  it('navigates to the PYQ, mock-test, and analytics screens', async () => {
+    mockBackend();
+
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'PYQs' }));
+    expect(
+      await screen.findByRole('heading', { name: 'PYQ attempt bank', level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('No PYQ attempts recorded yet')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mock tests' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Full-test performance', level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('No mock tests recorded yet')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Analytics' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Study performance', level: 1 }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText('No PYQ topic outcomes have been recorded.'),
+    ).toBeInTheDocument();
   });
 
   it('shows a load error and retries with a fresh command call', async () => {
