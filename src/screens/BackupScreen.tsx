@@ -104,6 +104,29 @@ export default function BackupScreen({
   const [importFeedback, setImportFeedback] = useState<Feedback>(null);
   const [isPreviewingImport, setIsPreviewingImport] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const isBusy =
+    isSavingSettings ||
+    isBackingUp ||
+    isRestoring ||
+    isExportingCsv ||
+    isExportingJson ||
+    isPreviewingImport ||
+    isImporting;
+  const busyMessage = isBackingUp
+    ? 'Creating and verifying the database backup in the background…'
+    : isRestoring
+      ? 'Validating or applying the restore in the background…'
+      : isExportingCsv
+        ? 'Exporting CSV datasets in the background…'
+        : isExportingJson
+          ? 'Validating and exporting complete JSON in the background…'
+          : isPreviewingImport
+            ? 'Validating the JSON export in a temporary database…'
+            : isImporting
+              ? 'Importing in one transaction in the background…'
+              : isSavingSettings
+                ? 'Saving backup settings…'
+                : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -176,7 +199,7 @@ export default function BackupScreen({
   }
 
   async function handleSaveSettings() {
-    if (!autoForm || isSavingSettings) {
+    if (!autoForm || isBusy) {
       return;
     }
     const retention = Number(autoForm.retentionCount);
@@ -217,7 +240,7 @@ export default function BackupScreen({
   }
 
   async function handleManualBackup() {
-    if (isBackingUp) {
+    if (isBusy) {
       return;
     }
     setIsBackingUp(true);
@@ -268,7 +291,7 @@ export default function BackupScreen({
   }
 
   async function handleRestore() {
-    if (!restorePreview || !restorePath || isRestoring) {
+    if (!restorePreview || !restorePath || isBusy) {
       return;
     }
     const confirmed = window.confirm(
@@ -306,7 +329,7 @@ export default function BackupScreen({
   }
 
   async function handleCsvExport() {
-    if (!csvDirectory.trim() || isExportingCsv) {
+    if (!csvDirectory.trim() || isBusy) {
       return;
     }
     setIsExportingCsv(true);
@@ -339,7 +362,7 @@ export default function BackupScreen({
   }
 
   async function handleJsonExport() {
-    if (!jsonDirectory.trim() || isExportingJson) {
+    if (!jsonDirectory.trim() || isBusy) {
       return;
     }
     setIsExportingJson(true);
@@ -377,7 +400,7 @@ export default function BackupScreen({
       try {
         const preview = await previewJsonImport(selected);
         setImportPreview(preview);
-        setImportStrategy('merge');
+        setImportStrategy(preview.mergeSupported ? 'merge' : 'replace');
         setImportFeedback({
           tone: 'success',
           message:
@@ -396,7 +419,7 @@ export default function BackupScreen({
       importStrategy === 'merge'
         ? importPreview?.mergeSupported
         : importPreview?.replacementSupported;
-    if (!importPreview || !importPath || isImporting || !strategySupported) {
+    if (!importPreview || !importPath || isBusy || !strategySupported) {
       return;
     }
     const confirmation =
@@ -464,7 +487,7 @@ export default function BackupScreen({
   }
 
   return (
-    <div className="page-container backup-page">
+    <div className="page-container backup-page" aria-busy={isBusy}>
       <header className="page-header">
         <p className="eyebrow">Backup and data management</p>
         <h1>Protect local study data</h1>
@@ -474,6 +497,18 @@ export default function BackupScreen({
           or transmitted.
         </p>
       </header>
+
+      <p className="backup-warning backup-unencrypted-warning" role="note">
+        <strong>Unencrypted files:</strong> backup and export files are not encrypted. Anyone with
+        access to the selected folder can read them. Store them privately and move the backup with
+        its adjacent manifest.
+      </p>
+
+      {busyMessage && (
+        <p className="backup-busy-note" role="status" aria-live="polite">
+          {busyMessage} Data-changing actions are disabled until it completes.
+        </p>
+      )}
 
       <section className="backup-status-grid" aria-label="Backup status">
         <div className="backup-status-card">
@@ -518,7 +553,7 @@ export default function BackupScreen({
               value={manualDirectory}
               onChange={(event) => setManualDirectory(event.target.value)}
               readOnly
-              disabled={isBackingUp}
+              disabled={isBusy}
             />
             <p className="field-hint">Choose a local or removable-drive folder.</p>
           </div>
@@ -526,7 +561,7 @@ export default function BackupScreen({
             type="button"
             className="secondary-button"
             onClick={() => void handleManualDestination()}
-            disabled={isBackingUp}
+            disabled={isBusy}
           >
             Choose backup folder
           </button>
@@ -536,7 +571,7 @@ export default function BackupScreen({
             type="button"
             className="primary-button"
             onClick={() => void handleManualBackup()}
-            disabled={isBackingUp}
+            disabled={isBusy}
           >
             {isBackingUp ? 'Creating and verifying…' : 'Create backup now'}
           </button>
@@ -565,7 +600,7 @@ export default function BackupScreen({
                 setAutoForm({ ...autoForm, automaticEnabled: event.target.checked });
                 setSettingsFeedback(null);
               }}
-              disabled={isSavingSettings}
+              disabled={isBusy}
             />
             Enable automatic backups
           </label>
@@ -580,7 +615,7 @@ export default function BackupScreen({
                   frequency: event.target.value as AutoBackupForm['frequency'],
                 })
               }
-              disabled={isSavingSettings}
+              disabled={isBusy}
             >
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
@@ -597,7 +632,7 @@ export default function BackupScreen({
               step={1}
               value={autoForm.retentionCount}
               onChange={(event) => setAutoForm({ ...autoForm, retentionCount: event.target.value })}
-              disabled={isSavingSettings}
+              disabled={isBusy}
             />
             <p className="field-hint">Keep 1–100 automatic backups. The newest is always kept.</p>
           </div>
@@ -609,13 +644,13 @@ export default function BackupScreen({
                 type="text"
                 value={autoForm.destination}
                 readOnly
-                disabled={isSavingSettings}
+                disabled={isBusy}
               />
               <button
                 type="button"
                 className="secondary-button"
                 onClick={() => void handleAutoDestination()}
-                disabled={isSavingSettings}
+                disabled={isBusy}
               >
                 Choose
               </button>
@@ -627,7 +662,7 @@ export default function BackupScreen({
             type="button"
             className="primary-button"
             onClick={() => void handleSaveSettings()}
-            disabled={isSavingSettings}
+            disabled={isBusy}
           >
             {isSavingSettings ? 'Saving…' : 'Save backup settings'}
           </button>
@@ -652,7 +687,7 @@ export default function BackupScreen({
             type="button"
             className="secondary-button"
             onClick={() => void handleChooseRestore()}
-            disabled={isRestoring}
+            disabled={isBusy}
           >
             {isRestoring ? 'Validating…' : 'Choose backup file'}
           </button>
@@ -710,7 +745,7 @@ export default function BackupScreen({
               type="button"
               className="danger-button"
               onClick={() => void handleRestore()}
-              disabled={isRestoring}
+              disabled={isBusy}
             >
               {isRestoring ? 'Restoring…' : 'Restore selected backup'}
             </button>
@@ -739,14 +774,14 @@ export default function BackupScreen({
               type="text"
               value={csvDirectory}
               readOnly
-              disabled={isExportingCsv}
+              disabled={isBusy}
             />
           </div>
           <button
             type="button"
             className="secondary-button"
             onClick={() => void handleCsvDestination()}
-            disabled={isExportingCsv}
+            disabled={isBusy}
           >
             Choose CSV folder
           </button>
@@ -756,7 +791,7 @@ export default function BackupScreen({
             type="button"
             className="primary-button"
             onClick={() => void handleCsvExport()}
-            disabled={isExportingCsv || !csvDirectory}
+            disabled={isBusy || !csvDirectory}
           >
             {isExportingCsv ? 'Exporting CSV files…' : 'Export CSV datasets'}
           </button>
@@ -800,14 +835,14 @@ export default function BackupScreen({
               type="text"
               value={jsonDirectory}
               readOnly
-              disabled={isExportingJson}
+              disabled={isBusy}
             />
           </div>
           <button
             type="button"
             className="secondary-button"
             onClick={() => void handleJsonDestination()}
-            disabled={isExportingJson}
+            disabled={isBusy}
           >
             Choose JSON folder
           </button>
@@ -817,7 +852,7 @@ export default function BackupScreen({
             type="button"
             className="primary-button"
             onClick={() => void handleJsonExport()}
-            disabled={isExportingJson || !jsonDirectory}
+            disabled={isBusy || !jsonDirectory}
           >
             {isExportingJson ? 'Exporting and validating…' : 'Export complete JSON'}
           </button>
@@ -848,7 +883,7 @@ export default function BackupScreen({
             type="button"
             className="secondary-button"
             onClick={() => void handleChooseImport()}
-            disabled={isPreviewingImport || isImporting}
+            disabled={isBusy}
           >
             {isPreviewingImport ? 'Validating…' : 'Choose JSON export to import'}
           </button>
@@ -880,7 +915,19 @@ export default function BackupScreen({
                 <dt>Source application</dt>
                 <dd>{importPreview.applicationVersion}</dd>
               </div>
+              <div>
+                <dt>Import batch</dt>
+                <dd>{importPreview.importBatchId}</dd>
+              </div>
             </dl>
+            {importPreview.alreadyImported && (
+              <p className="backup-warning">
+                This exact export was already imported with the{' '}
+                {importPreview.alreadyImported.strategy} strategy on{' '}
+                {timestampLabel(importPreview.alreadyImported.importedAt)}. Merge is disabled to
+                avoid duplicate sessions and tasks.
+              </p>
+            )}
             {importPreview.conflicts.length > 0 && (
               <div className="backup-conflict-list">
                 <h4>Merge conflicts detected</h4>
@@ -906,7 +953,7 @@ export default function BackupScreen({
                   name="import-strategy"
                   checked={importStrategy === 'merge'}
                   onChange={() => setImportStrategy('merge')}
-                  disabled={isImporting}
+                  disabled={isImporting || !importPreview.mergeSupported}
                 />
                 Merge and preserve current configuration
               </label>
@@ -917,7 +964,7 @@ export default function BackupScreen({
                   name="import-strategy"
                   checked={importStrategy === 'replace'}
                   onChange={() => setImportStrategy('replace')}
-                  disabled={isImporting}
+                  disabled={isBusy}
                 />
                 Complete replacement
               </label>
@@ -927,7 +974,7 @@ export default function BackupScreen({
               type="button"
               className={importStrategy === 'replace' ? 'danger-button' : 'primary-button'}
               onClick={() => void handleImport()}
-              disabled={isImporting}
+              disabled={isBusy}
             >
               {isImporting
                 ? 'Importing in one transaction…'

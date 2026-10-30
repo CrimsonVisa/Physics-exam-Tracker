@@ -506,9 +506,12 @@ export default function App({ today }: AppProps) {
 
   return (
     <div className="app-frame">
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <Sidebar activeView={view} onNavigate={setView} />
 
-      <main className="main-area">
+      <main className="main-area" id="main-content" tabIndex={-1}>
         {view === 'syllabus' ? (
           <SyllabusScreen />
         ) : view === 'timer' ? (

@@ -13,7 +13,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::{backup, error::AppError, settings, syllabus, timer};
 
 pub const DATABASE_FILE_NAME: &str = "csir-net-tracker.sqlite3";
-pub const LATEST_SCHEMA_VERSION: i64 = 8;
+pub const LATEST_SCHEMA_VERSION: i64 = 9;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) const MIGRATIONS_SLICE: &[M<'static>] = &[
@@ -29,6 +29,7 @@ pub(crate) const MIGRATIONS_SLICE: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0008_backup_and_portability.sql"
     )),
+    M::up(include_str!("../migrations/0009_json_import_batches.sql")),
 ];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -404,7 +405,7 @@ mod tests {
     fn migrations_are_versioned_and_repeatable() {
         let mut connection = test_connection();
 
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
         let table_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM sqlite_master
@@ -427,16 +428,17 @@ mod tests {
                        'revision_history',
                        'dashboard_sections',
                        'database_metadata',
-                       'backup_settings'
+                       'backup_settings',
+                       'json_import_batches'
                    )",
                 [],
                 |row| row.get(0),
             )
             .expect("migration tables should be inspectable");
-        assert_eq!(table_count, 18);
+        assert_eq!(table_count, 19);
 
         migrate(&mut connection).expect("a repeated migration should be a no-op");
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
     }
 
     #[test]
@@ -469,7 +471,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -601,7 +603,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -734,7 +736,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
         assert_eq!(
             settings::load(&connection)
                 .expect("settings should load")
@@ -954,7 +956,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
         let progress: (String, String) = connection
             .query_row(
                 "SELECT status, notes FROM syllabus_progress LIMIT 1",
@@ -1159,7 +1161,7 @@ mod tests {
         }
 
         let connection = open_database(&path, today).expect("database should upgrade and open");
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
 
         let progress: (String, String) = connection
             .query_row(
@@ -1233,6 +1235,123 @@ mod tests {
             .expect("layout should query")
             .collect::<rusqlite::Result<Vec<_>>>()
             .expect("layout should load")
+    }
+
+    #[test]
+    fn version_eight_database_upgrades_without_losing_phase_nine_data() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let path = directory.path().join(DATABASE_FILE_NAME);
+        let today = date(2026, 10, 30);
+
+        {
+            let mut connection =
+                Connection::open(&path).expect("version eight database should open");
+            configure(&connection).expect("version eight database should configure");
+            Migrations::from_slice(&MIGRATIONS_SLICE[..8])
+                .to_latest(&mut connection)
+                .expect("version eight schema should apply");
+            assert_eq!(schema_version(&connection), 8);
+
+            settings::ensure_defaults(&mut connection, today)
+                .expect("version eight settings should exist");
+            syllabus::seed(&mut connection).expect("version eight syllabus should seed");
+            timer::ensure_defaults(&mut connection)
+                .expect("version eight timer settings should exist");
+            settings::update(
+                &mut connection,
+                SettingsInput {
+                    exam_date: "2027-01-10".to_owned(),
+                    preparation_start_date: "2026-10-01".to_owned(),
+                    daily_study_target_minutes: 300,
+                },
+                today,
+            )
+            .expect("version eight settings should update");
+
+            let topic_id: i64 = connection
+                .query_row(
+                    "SELECT id FROM syllabus_topics WHERE code = 'MMP-C01'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("topic should exist");
+            syllabus::update_progress(
+                &mut connection,
+                topic_id,
+                syllabus::TopicProgressInput {
+                    status: "Confident".to_owned(),
+                    priority: "High-Yield".to_owned(),
+                    confidence: 5,
+                    notes: "Phase 9 progress".to_owned(),
+                },
+            )
+            .expect("version eight progress should save");
+            sessions::create_manual(
+                &mut connection,
+                sessions::StudySessionInput {
+                    topic_id: Some(topic_id),
+                    session_date: "2026-10-30".to_owned(),
+                    duration_seconds: 3_600,
+                    notes: "Phase 9 session".to_owned(),
+                },
+            )
+            .expect("version eight session should save");
+        }
+
+        let connection =
+            open_database(&path, today).expect("version eight database should upgrade");
+        assert_eq!(schema_version(&connection), 9);
+
+        let settings = settings::load(&connection).expect("upgraded settings should load");
+        assert_eq!(settings.exam_date, "2027-01-10");
+        assert_eq!(settings.preparation_start_date, "2026-10-01");
+        assert_eq!(settings.daily_study_target_minutes, 300);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT notes FROM syllabus_progress WHERE topic_id = (
+                        SELECT id FROM syllabus_topics WHERE code = 'MMP-C01'
+                     )",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("upgraded progress should load"),
+            "Phase 9 progress"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT notes FROM study_sessions", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .expect("upgraded session should load"),
+            "Phase 9 session"
+        );
+
+        let import_batches: i64 = connection
+            .query_row("SELECT count(*) FROM json_import_batches", [], |row| {
+                row.get(0)
+            })
+            .expect("import batch table should exist");
+        assert_eq!(import_batches, 0);
+        assert_eq!(install_layout_order(&connection).len(), 9);
+
+        let backups_dir = directory.path().join("backups");
+        let mut entries = fs::read_dir(&backups_dir)
+            .expect("pre-migration backups should exist")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("csir-net-tracker-pre-migration-")
+                    && entry.file_name().to_string_lossy().ends_with(".sqlite3")
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        assert_eq!(entries.len(), 1);
+        let verified = backup::verify_backup(&entries[0].path())
+            .expect("version eight migration backup should verify");
+        assert_eq!(verified.manifest.schema_version, 8);
     }
 
     #[test]
@@ -1310,7 +1429,7 @@ mod tests {
         }
 
         let connection = open_database(&path, today).expect("database should upgrade");
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
         let metadata_id = backup::database_identifier(&connection)
             .expect("identity should load")
             .expect("identity should exist");
@@ -1356,6 +1475,24 @@ mod tests {
         assert_eq!(error.code, "backup_failed");
         let connection = Connection::open(&path).expect("database should still open");
         assert_eq!(schema_version(&connection), 7);
+    }
+
+    #[test]
+    fn corrupt_database_is_not_deleted_or_silently_overwritten() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let data_dir = directory.path().join("app-data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let path = database_path(&data_dir);
+        let corrupt = b"not a sqlite database";
+        fs::write(&path, corrupt).expect("corrupt database should be written");
+        let before = fs::read(&path).unwrap();
+
+        let state = AppState::initialize(&data_dir, date(2026, 10, 30));
+        let error = state
+            .with_connection(|connection| settings::load(connection))
+            .expect_err("corrupt database should not open");
+        assert_eq!(error.code, "database_unavailable");
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 
     #[test]
@@ -1425,7 +1562,7 @@ mod tests {
                     .expect("restored connection should exist")
             )
             .unwrap(),
-            8
+            9
         );
     }
 

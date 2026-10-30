@@ -257,8 +257,8 @@ const EMPTY_BACKUP_SETTINGS = {
 const EMPTY_BACKUP_OVERVIEW = {
   settings: EMPTY_BACKUP_SETTINGS,
   defaultDirectory: 'C:\\Users\\Test\\AppData\\backups',
-  schemaVersion: 8,
-  applicationVersion: '0.1.0',
+  schemaVersion: 9,
+  applicationVersion: '1.0.0',
   databaseId: '0123456789abcdef0123456789abcdef',
 };
 
@@ -502,6 +502,7 @@ describe('settings dashboard', () => {
     renderApp();
 
     const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    await screen.findByText('days remaining');
     fireEvent.change(examDate, { target: { value: '2026-12-20' } });
 
     expect(screen.getByText('10')).toHaveClass('countdown-value');
@@ -543,6 +544,7 @@ describe('settings dashboard', () => {
     renderApp();
 
     const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    await screen.findByText('days remaining');
     fireEvent.change(examDate, { target: { value: '2026-12-20' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByRole('heading', { name: 'Review the exam-date change' });

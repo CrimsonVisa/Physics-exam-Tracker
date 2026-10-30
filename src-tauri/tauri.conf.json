@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "CSIR-NET Physics Tracker",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.crimsonvisa.csirnetphysics",
   "build": {
     "frontendDist": "../dist",
@@ -34,7 +34,7 @@
     "copyright": "Copyright © 2026 CrimsonVisa",
     "category": "Education",
     "shortDescription": "Offline-first study tracker for CSIR-UGC NET Physical Sciences.",
-    "longDescription": "A Windows desktop study tracker for CSIR-UGC NET Physical Sciences. Phase 4 adds a persisted focus timer and study-session history alongside the official-source syllabus catalog, per-topic progress, planning settings, and exam countdown. Timer and session data stay in a local SQLite database, with restart and sleep recovery that exclude time when the app was not actively tracking.",
+    "longDescription": "A complete offline-first Windows study tracker for CSIR-UGC NET Physical Sciences: official-source syllabus progress, focus timer and sessions, checklist and calendar planning, PYQ and mock-test analytics, spaced-repetition revision scheduling, study insights, verified backup and restore, and CSV/JSON portability. All personal study data stays in a local SQLite database.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +42,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"],
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "startMenuFolder": "CSIR-NET Physics Tracker"
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

@@ -87,6 +87,11 @@ export type ImportTableConflict = {
   reason: string;
 };
 
+export type ImportBatchInfo = {
+  importedAt: string;
+  strategy: string;
+};
+
 export type JsonImportPreview = {
   fileName: string;
   fileSha256: string;
@@ -95,6 +100,8 @@ export type JsonImportPreview = {
   schemaVersion: number;
   exportedAt: string;
   databaseId: string;
+  importBatchId: string;
+  alreadyImported: ImportBatchInfo | null;
   recordCounts: Record<string, number>;
   existingCounts: Record<string, number>;
   conflicts: ImportTableConflict[];
@@ -122,6 +129,7 @@ export type JsonImportResult = {
   rejected: number;
   perTable: Record<string, ImportTableResult>;
   safetyBackupFile: string;
+  batchId: string;
   warnings: string[];
 };
 

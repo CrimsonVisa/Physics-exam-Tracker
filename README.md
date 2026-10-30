@@ -2,17 +2,101 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Phase 9 status:** the preparation dashboard, persistent planning settings, exam countdown,
+**Release 1.0.0 status:** the preparation dashboard, persistent planning settings, exam countdown,
 official-source Physical Sciences syllabus tracker, persisted study timer, study-session history, dated
 checklist tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank,
 mock-test history, CSV import workflows, outcome analytics, configurable spaced-repetition revision
 scheduler, study trends, topic intelligence, preparation timeline, SQLite-backed dashboard
-customization, verified full-database backup and restore, automatic backup retention, per-dataset CSV
-export, and complete versioned JSON portability are implemented. The syllabus is seeded with 182 topics
-across General Aptitude and the nine Physical Sciences units, and each topic can store a personal
-status, priority, confidence rating, and notes. The timer records focus sessions with restart and sleep
-recovery. Exam-date changes use a review-and-apply confirmation before any future exam-anchored task
-moves. CSV templates are generated locally and saved to the user's Downloads folder.
+customization, verified full-database backup and restore, automatic backup retention, repeat-safe JSON
+imports, per-dataset CSV export, and complete versioned JSON portability are implemented. The syllabus
+is seeded with 182 topics across General Aptitude and the nine Physical Sciences units, and each topic
+can store a personal status, priority, confidence rating, and notes. The timer records focus sessions
+with restart and sleep recovery. Exam-date changes use a review-and-apply confirmation before any future
+exam-anchored task moves. CSV templates are generated locally and saved to the user's Downloads folder.
+
+See [RELEASE_NOTES_1.0.0.md](RELEASE_NOTES_1.0.0.md) for the release candidate summary.
+
+## Release
+
+- Product: **CSIR-NET Physics Tracker 1.0.0**
+- Platform: Windows 10/11 x64
+- Installer: NSIS, per-current-user by default
+- Data: local SQLite database under `%APPDATA%\com.crimsonvisa.csirnetphysics`
+- Network requirement: none for core functionality
+- Backup encryption: **not implemented**; backup and export files are unencrypted
+
+### Verified release artifact
+
+- Installer: `src-tauri\target\release\bundle\nsis\CSIR-NET Physics Tracker_1.0.0_x64-setup.exe`
+- Installer size: 3,748,081 bytes (3.57 MiB)
+- Installer SHA-256: `DB7E552020A21F11D6405B902F5F661B0078F80889778F0FE11C4408B7187259`
+- Standalone executable SHA-256: `A5045544EF3C6593D57191A4B00B7DD68AEDFBDF64031A7B54DB1D2960B19A98`
+- Default install location: `%LOCALAPPDATA%\CSIR-NET Physics Tracker`
+- Start Menu shortcut: `CSIR-NET Physics Tracker`
+- Uninstall removes program files and shortcuts. `%APPDATA%\com.crimsonvisa.csirnetphysics` is retained.
+
+On 30 October 2026 the installer was verified with silent install, launch, uninstall, reinstall, and a
+second uninstall. The existing schema-9 database and settings survived every step. First-run
+initialization was also verified by the release executable against an isolated empty data profile
+(schema 9, default settings, 182 topics, 9 dashboard sections). A separate physical clean Windows VM
+was not available, so that last check is application-level rather than a second-machine install test.
+
+## System requirements
+
+- Windows 10 or Windows 11, 64-bit
+- Microsoft Edge WebView2 runtime (the installer can bootstrap it if missing)
+- Enough local disk space for the application, SQLite database, and any backups/exports you create
+- No internet connection is required after installation
+
+## Installation
+
+1. Run `CSIR-NET Physics Tracker_1.0.0_x64-setup.exe`.
+2. The default installer mode is per-current-user and does not require Administrator access.
+3. A Start Menu shortcut is created under **CSIR-NET Physics Tracker**.
+4. Launch from the Start Menu.
+5. The default exam date is **provisional**; verify it and edit it in Overview settings.
+
+A desktop shortcut is not configured by default. Creating one from the Start Menu shortcut is safe.
+
+## Uninstall and data preservation
+
+The uninstaller removes installed application files and shortcuts. It does **not** remove the user
+database, backups, or exports stored outside the installation directory. Reinstalling the application
+will reopen the existing database and run any required append-only schema upgrades.
+
+To remove all personal data after uninstalling, manually delete:
+
+```text
+%APPDATA%\com.crimsonvisa.csirnetphysics
+```
+
+Only do that after creating and verifying a backup if you may need the data again.
+
+## Troubleshooting
+
+- **Database unavailable on startup:** close other instances, confirm the application-data folder is
+  writable, and restart. Do not delete the database before copying it aside.
+- **Database locked:** close any duplicate app process and retry. The app uses a busy timeout for short
+  contention, not for permanently locked files.
+- **Backup folder unavailable:** choose an existing local or removable-drive folder. Explicit UNC
+  network paths are rejected.
+- **Restore rejected:** keep the `.sqlite3` and `.sqlite3.manifest.json` files together and unmodified.
+  A missing manifest, changed checksum, truncated file, or newer schema is refused.
+- **Notifications do not appear:** check Windows notification permission and Focus Assist. Revision
+  reminders are optional and off by default.
+- **A screen shows cached data after import:** use the app's reload action. Backup/restore and import
+  operations are completed in the Rust process before the webview reloads.
+- **Need to recover after a failed operation:** look under
+  `%APPDATA%\com.crimsonvisa.csirnetphysics\backups\safety` for verified safety snapshots.
+
+## Offline and accessibility
+
+Core functionality has no required external API or remote asset. The Content Security Policy blocks
+remote scripts/styles/network connections except the Tauri IPC endpoint and local assets. Fonts are
+installed Windows system fonts; no web font is downloaded. The app supports keyboard navigation,
+visible focus rings, a skip-to-content link, labelled forms, semantic tables, status announcements, and
+native dialogs. Charts provide textual supporting values and empty states. Official-source links open
+in the external browser only when the user selects them.
 
 ## Stack
 
@@ -82,7 +166,7 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-8), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+9), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
@@ -93,8 +177,9 @@ changing settings, syllabus progress, sessions, planner records, PYQ attempts, o
 Upgrading a version-6 database adds the dashboard section-preference table and seeds the default
 layout without changing any Phase 1–7 data. Upgrading a version-7 database adds database identity and
 backup configuration tables without changing any study record, and creates the identifier used by
-backup manifests. Every upgrade from an existing database first creates a verified pre-migration
-snapshot; if that snapshot fails, the upgrade is aborted.
+backup manifests. Upgrading a version-8 database adds import-batch provenance for repeat-safe JSON
+merges without changing any study record. Every upgrade from an existing database first creates a
+verified pre-migration snapshot; if that snapshot fails, the upgrade is aborted.
 
 The initial single-row settings record uses:
 
@@ -647,14 +732,19 @@ according to CSV rules. Export queries are read-only.
 ### Complete JSON export and validated import
 
 The complete JSON format is versioned (`formatVersion: 1`) and records application version, schema
-version, export timestamp, database identifier, per-table record counts, and all user tables:
-settings, syllabus sources/sections/topics/progress, timer settings/state, sessions, tasks, blocks,
-PYQs, mocks, revision settings/schedules/history, and dashboard sections. Safe backup preferences are
-included without machine-specific destination paths. The serialized file is parsed and inserted into a
-temporary migrated database before success is reported.
+version, export timestamp, database identifier, a unique `importBatchId`, per-table record counts, and
+all user tables: settings, syllabus sources/sections/topics/progress, timer settings/state, sessions,
+tasks, blocks, PYQs, mocks, revision settings/schedules/history, and dashboard sections. Safe backup
+preferences are included without machine-specific destination paths. The serialized file is parsed and
+inserted into a temporary migrated database before success is reported.
 
-JSON import requires the current schema version so every relation can be validated. It validates the
-whole file in a temporary database before taking a safety backup or writing current data. Duplicate
+Migration `0009_json_import_batches.sql` adds `json_import_batches`. Successful imports record the
+batch identifier and result counts there. Preview detects an export that was already merged and
+disables merge, preventing duplicate sessions and tasks. Complete replacement remains an explicit
+opt-in and can intentionally reapply a file.
+
+JSON import accepts schema 8 or 9 exports and validates the whole file in a temporary schema-9
+database before taking a safety backup or writing current data. Duplicate
 primary keys, duplicate unique keys, missing fields, unknown fields, malformed JSON, incompatible
 format/schema versions, and relationship violations reject the entire file.
 
@@ -672,6 +762,12 @@ Two explicit strategies are available:
 Imports report imported, skipped, conflicting, and rejected counts per table. Any failure rolls back
 the entire transaction. The app must be reloaded after import to refresh every screen.
 
+Backup, restore, CSV/JSON export, JSON preview/import, and PYQ/mock CSV preview/import commands run on a Tauri blocking worker
+rather than the UI thread. The Backup screen shows a persistent busy state and disables conflicting
+actions until completion. Cancellation is not exposed because interrupting a replacement or restore
+would create an avoidable recovery risk; the safety-snapshot and rollback procedures remain available
+if an operation fails.
+
 ### Privacy and file handling
 
 Backup and export files are personal study data. They are written only to user-selected local or
@@ -683,14 +779,14 @@ credentials or unrelated machine information are placed in manifests or JSON exp
 Backups and exports are **not encrypted**. Anyone with file access can read them. Keep them in a
 private folder or encrypted removable drive. Restore requires the adjacent manifest, so move or copy
 both files together. Automatic backups run only while the app is running; they are not a background
-Windows service. JSON import intentionally requires the current schema so every relationship can be
-validated; use the SQLite backup restore workflow for older schemas.
+Windows service. JSON import supports schema 8 and 9; use the SQLite backup restore workflow for older
+database schemas.
 
 ## Typography note
 
 Latin Modern is not currently bundled with the app. No font files or font packages were added through
-Phase 9; the interface continues to use system fonts (Segoe UI for UI text and Georgia for display
-headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
+Phase 10; the interface continues to use local system fonts (Segoe UI for UI text and Georgia for
+display headings). Adopting a self-hosted Latin Modern or comparable math-friendly face remains a UI polish
 task for a later phase.
 
 ## Checks
@@ -731,7 +827,7 @@ The executable and bundle are generated from the product identity in `src-tauri/
 
 - Product: CSIR-NET Physics Tracker
 - Identifier: `com.crimsonvisa.csirnetphysics`
-- Version: `0.1.0`
+- Version: `1.0.0`
 
 ## Project structure
 

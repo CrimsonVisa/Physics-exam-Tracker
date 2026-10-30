@@ -79,6 +79,29 @@ textarea {
   min-height: 100vh;
 }
 
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 9px 13px;
+  border: 2px solid #d9a441;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #123231;
+  font-size: 0.8rem;
+  font-weight: 700;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.main-area:focus {
+  outline: none;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -6465,6 +6488,23 @@ h1 {
 
 .backup-page {
   gap: 18px;
+}
+
+.backup-unencrypted-warning {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+.backup-busy-note {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid #c8dfd8;
+  border-radius: 9px;
+  background: #eef7f3;
+  color: #245d50;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .backup-status-grid {

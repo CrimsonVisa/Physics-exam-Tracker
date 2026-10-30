@@ -6,7 +6,9 @@ use std::{
 };
 
 use chrono::{Local, SecondsFormat, Utc};
-use rusqlite::{Connection, ToSql, Transaction, params_from_iter, types::ValueRef};
+use rusqlite::{
+    Connection, OptionalExtension, ToSql, Transaction, params_from_iter, types::ValueRef,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -15,6 +17,7 @@ use uuid::Uuid;
 use crate::{backup, db, error::AppError};
 
 pub const JSON_EXPORT_FORMAT_VERSION: u32 = 1;
+pub const MIN_JSON_IMPORT_SCHEMA_VERSION: i64 = 8;
 pub const MAX_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
 pub const CSV_BOM: &str = "\u{feff}";
 
@@ -55,9 +58,18 @@ pub struct JsonExportEnvelope {
     pub schema_version: i64,
     pub exported_at: String,
     pub database_id: String,
+    #[serde(default)]
+    pub import_batch_id: Option<String>,
     pub record_counts: BTreeMap<String, i64>,
     pub tables: BTreeMap<String, Vec<Value>>,
     pub backup_preferences: JsonBackupPreferences,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBatchInfo {
+    pub imported_at: String,
+    pub strategy: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -102,6 +114,8 @@ pub struct JsonImportPreview {
     pub schema_version: i64,
     pub exported_at: String,
     pub database_id: String,
+    pub import_batch_id: String,
+    pub already_imported: Option<ImportBatchInfo>,
     pub record_counts: BTreeMap<String, i64>,
     pub existing_counts: BTreeMap<String, i64>,
     pub conflicts: Vec<ImportTableConflict>,
@@ -138,6 +152,7 @@ pub struct JsonImportResult {
     pub rejected: i64,
     pub per_table: BTreeMap<String, ImportTableResult>,
     pub safety_backup_file: String,
+    pub batch_id: String,
     pub warnings: Vec<String>,
 }
 
@@ -546,6 +561,7 @@ pub fn export_json(
         schema_version,
         exported_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
         database_id,
+        import_batch_id: Some(Uuid::new_v4().simple().to_string()),
         record_counts,
         tables,
         backup_preferences: JsonBackupPreferences {
@@ -742,6 +758,8 @@ pub fn preview_json_import(
     let (bytes, sha256) = read_import_file(path)?;
     let envelope = parse_envelope(&bytes)?;
     validate_envelope_with_temporary_database(&envelope)?;
+    let import_batch_id = effective_import_batch_id(&envelope, &sha256)?;
+    let already_imported = lookup_import_batch(connection, &import_batch_id)?;
     let existing_counts = backup::table_counts(connection)?;
     let conflicts = detect_merge_conflicts(connection, &envelope)?;
     let mut warnings = vec![
@@ -749,6 +767,12 @@ pub fn preview_json_import(
             .to_owned(),
         "A verified safety backup of the current database is created before import.".to_owned(),
     ];
+    if let Some(previous) = &already_imported {
+        warnings.push(format!(
+            "This exact export was already imported with the {} strategy on {}. Merge is disabled to prevent duplicate sessions and tasks.",
+            previous.strategy, previous.imported_at
+        ));
+    }
     let unknown_topics = imported_topic_codes(&envelope)
         .into_iter()
         .filter(|code| {
@@ -767,6 +791,7 @@ pub fn preview_json_import(
             "{unknown_topics} imported topic code(s) are not in this installation's syllabus catalog. Related merge rows will be rejected; replacement preserves the exported catalog."
         ));
     }
+    let merge_supported = already_imported.is_none();
 
     Ok(JsonImportPreview {
         file_name: path
@@ -779,11 +804,13 @@ pub fn preview_json_import(
         schema_version: envelope.schema_version,
         exported_at: envelope.exported_at,
         database_id: envelope.database_id,
+        import_batch_id,
+        already_imported,
         record_counts: envelope.record_counts,
         existing_counts,
         conflicts,
         warnings,
-        merge_supported: true,
+        merge_supported,
         replacement_supported: true,
         merge_description: "Merge appends study history under new local IDs, matches syllabus topics by stable code, skips conflicting progress/schedules/import-key rows, and keeps the current settings, timer state, revision rules, and dashboard layout.".to_owned(),
         replacement_description: "Replace removes all current user records and inserts the complete validated export, preserving the exported IDs and relationships. Current backup settings and the local database identifier are kept.".to_owned(),
@@ -815,16 +842,26 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
             "This JSON export format version is not supported.",
         ));
     }
-    if envelope.schema_version != db::LATEST_SCHEMA_VERSION {
+    if !(MIN_JSON_IMPORT_SCHEMA_VERSION..=db::LATEST_SCHEMA_VERSION)
+        .contains(&envelope.schema_version)
+    {
         return Err(AppError::import_failed(format!(
-            "This JSON export uses schema version {}. JSON import requires schema {} so every relation can be validated; use the SQLite backup restore workflow for older databases.",
+            "This JSON export uses schema version {}. JSON import supports schemas {} through {}; use the SQLite backup restore workflow for older databases.",
             envelope.schema_version,
+            MIN_JSON_IMPORT_SCHEMA_VERSION,
             db::LATEST_SCHEMA_VERSION
         )));
     }
-    if envelope.database_id.len() != 32 {
+    if !is_hex_identifier(&envelope.database_id) {
         return Err(AppError::import_failed(
             "The JSON export database identifier is invalid.",
+        ));
+    }
+    if let Some(batch_id) = &envelope.import_batch_id
+        && !is_hex_identifier(batch_id)
+    {
+        return Err(AppError::import_failed(
+            "The JSON export import-batch identifier is invalid.",
         ));
     }
     for table in USER_TABLES {
@@ -1205,6 +1242,107 @@ fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn is_hex_identifier(value: &str) -> bool {
+    value.len() == 32
+        && value == value.to_lowercase()
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn effective_import_batch_id(
+    envelope: &JsonExportEnvelope,
+    file_sha256: &str,
+) -> Result<String, AppError> {
+    if let Some(batch_id) = &envelope.import_batch_id {
+        if !is_hex_identifier(batch_id) {
+            return Err(AppError::import_failed(
+                "The JSON export import-batch identifier is invalid.",
+            ));
+        }
+        return Ok(batch_id.clone());
+    }
+    Ok(file_sha256[..32].to_owned())
+}
+
+fn lookup_import_batch(
+    connection: &Connection,
+    batch_id: &str,
+) -> Result<Option<ImportBatchInfo>, AppError> {
+    connection
+        .query_row(
+            "SELECT imported_at, strategy
+             FROM json_import_batches
+             WHERE batch_id = ?1",
+            [batch_id],
+            |row| {
+                Ok(ImportBatchInfo {
+                    imported_at: row.get(0)?,
+                    strategy: row.get(1)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| AppError::database("Import batch identity could not be checked", error))
+}
+
+fn record_import_batch(
+    transaction: &Transaction<'_>,
+    batch_id: &str,
+    envelope: &JsonExportEnvelope,
+    file_sha256: &str,
+    strategy: JsonImportStrategy,
+    per_table: &BTreeMap<String, ImportTableResult>,
+) -> Result<(), AppError> {
+    let imported = per_table
+        .values()
+        .map(|result| result.imported)
+        .sum::<i64>();
+    let skipped = per_table.values().map(|result| result.skipped).sum::<i64>();
+    let conflicting = per_table
+        .values()
+        .map(|result| result.conflicting)
+        .sum::<i64>();
+    let rejected = per_table
+        .values()
+        .map(|result| result.rejected)
+        .sum::<i64>();
+    transaction
+        .execute(
+            "INSERT INTO json_import_batches (
+                batch_id, source_database_id, file_sha256, strategy,
+                imported_at, imported_count, skipped_count,
+                conflicting_count, rejected_count
+             ) VALUES (
+                ?1, ?2, ?3, ?4,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?5, ?6,
+                ?7, ?8
+             )
+             ON CONFLICT(batch_id) DO UPDATE SET
+                source_database_id = excluded.source_database_id,
+                file_sha256 = excluded.file_sha256,
+                strategy = excluded.strategy,
+                imported_at = excluded.imported_at,
+                imported_count = excluded.imported_count,
+                skipped_count = excluded.skipped_count,
+                conflicting_count = excluded.conflicting_count,
+                rejected_count = excluded.rejected_count",
+            params_from_iter([
+                SqlValue::Text(batch_id.to_owned()),
+                SqlValue::Text(envelope.database_id.clone()),
+                SqlValue::Text(file_sha256.to_owned()),
+                SqlValue::Text(match strategy {
+                    JsonImportStrategy::Merge => "merge".to_owned(),
+                    JsonImportStrategy::Replace => "replace".to_owned(),
+                }),
+                SqlValue::Integer(imported),
+                SqlValue::Integer(skipped),
+                SqlValue::Integer(conflicting),
+                SqlValue::Integer(rejected),
+            ]),
+        )
+        .map_err(|error| AppError::database("Import batch metadata could not be stored", error))?;
+    Ok(())
+}
+
 pub fn apply_json_import(
     connection: &mut Connection,
     path: &Path,
@@ -1220,6 +1358,15 @@ pub fn apply_json_import(
     }
     let envelope = parse_envelope(&bytes)?;
     validate_envelope_with_temporary_database(&envelope)?;
+    let batch_id = effective_import_batch_id(&envelope, &sha256)?;
+    if strategy == JsonImportStrategy::Merge
+        && let Some(previous) = lookup_import_batch(connection, &batch_id)?
+    {
+        return Err(AppError::import_failed(format!(
+            "This exact JSON export was already imported with the {} strategy on {}. Merge was blocked to prevent duplicate sessions and tasks. Choose complete replacement only if you intend to replace current data.",
+            previous.strategy, previous.imported_at
+        )));
+    }
 
     let reason = match strategy {
         JsonImportStrategy::Merge => "pre-json-import",
@@ -1231,10 +1378,12 @@ pub fn apply_json_import(
     let mut per_table = empty_import_counts();
     let merge_warnings = match strategy {
         JsonImportStrategy::Replace => {
-            replace_from_json(connection, &envelope, &mut per_table)?;
+            replace_from_json(connection, &envelope, &sha256, &batch_id, &mut per_table)?;
             Vec::new()
         }
-        JsonImportStrategy::Merge => merge_from_json(connection, &envelope, &mut per_table)?,
+        JsonImportStrategy::Merge => {
+            merge_from_json(connection, &envelope, &sha256, &batch_id, &mut per_table)?
+        }
     };
 
     let mut imported = 0_i64;
@@ -1265,6 +1414,7 @@ pub fn apply_json_import(
         rejected,
         per_table,
         safety_backup_file: safety.file_name,
+        batch_id,
         warnings,
     })
 }
@@ -1289,6 +1439,8 @@ fn empty_import_counts() -> BTreeMap<String, ImportTableResult> {
 fn replace_from_json(
     connection: &mut Connection,
     envelope: &JsonExportEnvelope,
+    file_sha256: &str,
+    batch_id: &str,
     per_table: &mut BTreeMap<String, ImportTableResult>,
 ) -> Result<(), AppError> {
     let transaction = connection.transaction().map_err(|error| {
@@ -1340,6 +1492,14 @@ fn replace_from_json(
         .map_err(|error| {
             AppError::database("Revision-history protection could not be restored", error)
         })?;
+    record_import_batch(
+        &transaction,
+        batch_id,
+        envelope,
+        file_sha256,
+        JsonImportStrategy::Replace,
+        per_table,
+    )?;
     verify_foreign_keys(&transaction)?;
     verify_imported_counts(&transaction, envelope)?;
     transaction
@@ -1371,6 +1531,8 @@ fn verify_imported_counts(
 fn merge_from_json(
     connection: &mut Connection,
     envelope: &JsonExportEnvelope,
+    file_sha256: &str,
+    batch_id: &str,
     per_table: &mut BTreeMap<String, ImportTableResult>,
 ) -> Result<Vec<String>, AppError> {
     let transaction = connection.transaction().map_err(|error| {
@@ -1617,6 +1779,14 @@ fn merge_from_json(
             .imported += 1;
     }
 
+    record_import_batch(
+        &transaction,
+        batch_id,
+        envelope,
+        file_sha256,
+        JsonImportStrategy::Merge,
+        per_table,
+    )?;
     verify_foreign_keys(&transaction)?;
     transaction
         .commit()
@@ -1907,8 +2077,9 @@ mod tests {
         let envelope: JsonExportEnvelope =
             serde_json::from_slice(&bytes).expect("JSON should parse");
         assert_eq!(envelope.format_version, 1);
-        assert_eq!(envelope.schema_version, 8);
-        assert_eq!(envelope.application_version, "0.1.0");
+        assert_eq!(envelope.schema_version, 9);
+        assert_eq!(envelope.application_version, "1.0.0");
+        assert_eq!(envelope.import_batch_id.as_deref().map(str::len), Some(32));
         assert_eq!(envelope.tables.keys().count(), 16);
         assert_eq!(envelope.record_counts["study_sessions"], 1);
         assert_eq!(envelope.record_counts["revision_history"], 1);
@@ -2069,6 +2240,31 @@ mod tests {
         )
         .expect_err("changed hash should fail");
         assert_eq!(conflict_error.code, "import_failed");
+
+        let repeated =
+            preview_json_import(&target_db, &export_path).expect("repeated preview should load");
+        assert!(repeated.already_imported.is_some());
+        assert!(!repeated.merge_supported);
+        let counts_before_repeat = backup::table_counts(&target_db).expect("counts should load");
+        let repeated_error = apply_json_import(
+            &mut target_db,
+            &export_path,
+            JsonImportStrategy::Merge,
+            &repeated.file_sha256,
+            target.path(),
+        )
+        .expect_err("repeated merge should be blocked");
+        assert!(repeated_error.message.contains("already imported"));
+        assert_eq!(
+            backup::table_counts(&target_db).expect("counts should load"),
+            counts_before_repeat
+        );
+        let batch_rows: i64 = target_db
+            .query_row("SELECT count(*) FROM json_import_batches", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(batch_rows, 1);
     }
 
     #[test]
@@ -2174,6 +2370,16 @@ mod tests {
         populate_source(&mut source_db);
         let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
         let export_path = export_dir.path().join(&exported.file_name);
+        let mut older: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        older["schemaVersion"] = Value::from(8);
+        older.as_object_mut().unwrap().remove("importBatchId");
+        let older_path = export_dir.path().join("older.json");
+        fs::write(&older_path, serde_json::to_vec_pretty(&older).unwrap()).unwrap();
+        let older_preview =
+            preview_json_import(&target_db, &older_path).expect("schema 8 JSON should be accepted");
+        assert_eq!(older_preview.schema_version, 8);
+        assert_eq!(older_preview.import_batch_id.len(), 32);
+
         let mut newer: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
         newer["schemaVersion"] = Value::from(99);
         let newer_path = export_dir.path().join("newer.json");

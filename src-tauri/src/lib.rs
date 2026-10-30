@@ -6,6 +6,8 @@ mod date_only;
 mod db;
 mod error;
 mod mock_tests;
+#[cfg(test)]
+mod performance_audit;
 mod planner;
 mod portability;
 mod pyq;
@@ -23,9 +25,26 @@ use std::path::Path;
 
 use chrono::{Local, Utc};
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 use error::AppError;
+
+async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(&db::AppState) -> Result<T, AppError> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<db::AppState>();
+        operation(state.inner())
+    })
+    .await
+    .map_err(|_| {
+        AppError::internal(
+            "The background operation ended unexpectedly. Refresh the screen and try again.",
+        )
+    })?
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,93 +82,120 @@ fn update_backup_settings(
 }
 
 #[tauri::command]
-fn create_manual_backup(
-    state: tauri::State<'_, db::AppState>,
+async fn create_manual_backup(
+    app: AppHandle,
     destination: Option<String>,
 ) -> Result<backup::BackupResult, AppError> {
-    let data_dir = state.data_dir()?.to_path_buf();
-    state.with_connection(|connection| {
-        backup::create_manual_backup(connection, destination.as_deref(), &data_dir)
+    run_blocking(app, move |state| {
+        let data_dir = state.data_dir()?.to_path_buf();
+        state.with_connection(|connection| {
+            backup::create_manual_backup(connection, destination.as_deref(), &data_dir)
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn run_automatic_backup_if_due(
-    state: tauri::State<'_, db::AppState>,
+async fn run_automatic_backup_if_due(
+    app: AppHandle,
 ) -> Result<backup::AutoBackupOutcome, AppError> {
-    let data_dir = state.data_dir()?.to_path_buf();
-    state.with_connection(|connection| backup::automatic_backup(connection, &data_dir, Utc::now()))
+    run_blocking(app, move |state| {
+        let data_dir = state.data_dir()?.to_path_buf();
+        state.with_connection(|connection| {
+            backup::automatic_backup(connection, &data_dir, Utc::now())
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-fn preview_restore_backup(
-    state: tauri::State<'_, db::AppState>,
+async fn preview_restore_backup(
+    app: AppHandle,
     path: String,
 ) -> Result<backup::RestorePreview, AppError> {
-    let current_path = state.database_path().map(Path::to_path_buf);
-    state.with_connection(|connection| {
-        backup::preview_restore(
-            Path::new(&path),
-            backup::schema_version(connection)?,
-            current_path.as_deref(),
-        )
+    run_blocking(app, move |state| {
+        let current_path = state.database_path().map(Path::to_path_buf);
+        state.with_connection(|connection| {
+            backup::preview_restore(
+                Path::new(&path),
+                backup::schema_version(connection)?,
+                current_path.as_deref(),
+            )
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn apply_restore_backup(
-    state: tauri::State<'_, db::AppState>,
+async fn apply_restore_backup(
+    app: AppHandle,
     path: String,
 ) -> Result<backup::BackupResult, AppError> {
-    state.restore_from_backup(Path::new(&path), Local::now().date_naive())
+    run_blocking(app, move |state| {
+        state.restore_from_backup(Path::new(&path), Local::now().date_naive())
+    })
+    .await
 }
 
 #[tauri::command]
-fn export_csv_data(
-    state: tauri::State<'_, db::AppState>,
+async fn export_csv_data(
+    app: AppHandle,
     destination: String,
 ) -> Result<portability::CsvExportResult, AppError> {
-    state.with_connection(|connection| {
-        portability::export_csv_datasets(connection, Path::new(&destination))
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            portability::export_csv_datasets(connection, Path::new(&destination))
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn export_json_data(
-    state: tauri::State<'_, db::AppState>,
+async fn export_json_data(
+    app: AppHandle,
     destination: String,
 ) -> Result<portability::JsonExportResult, AppError> {
-    state
-        .with_connection(|connection| portability::export_json(connection, Path::new(&destination)))
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            portability::export_json(connection, Path::new(&destination))
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-fn preview_json_import(
-    state: tauri::State<'_, db::AppState>,
+async fn preview_json_import(
+    app: AppHandle,
     path: String,
 ) -> Result<portability::JsonImportPreview, AppError> {
-    state.with_connection(|connection| {
-        portability::preview_json_import(connection, Path::new(&path))
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            portability::preview_json_import(connection, Path::new(&path))
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn apply_json_import(
-    state: tauri::State<'_, db::AppState>,
+async fn apply_json_import(
+    app: AppHandle,
     path: String,
     strategy: portability::JsonImportStrategy,
     expected_sha256: String,
 ) -> Result<portability::JsonImportResult, AppError> {
-    let data_dir = state.data_dir()?.to_path_buf();
-    state.with_connection(|connection| {
-        portability::apply_json_import(
-            connection,
-            Path::new(&path),
-            strategy,
-            &expected_sha256,
-            &data_dir,
-        )
+    run_blocking(app, move |state| {
+        let data_dir = state.data_dir()?.to_path_buf();
+        state.with_connection(|connection| {
+            portability::apply_json_import(
+                connection,
+                Path::new(&path),
+                strategy,
+                &expected_sha256,
+                &data_dir,
+            )
+        })
     })
+    .await
 }
 
 #[tauri::command]
@@ -296,19 +342,25 @@ fn unique_template_path(directory: &Path, file_name: &str) -> std::path::PathBuf
 }
 
 #[tauri::command]
-fn preview_pyq_import(
-    state: tauri::State<'_, db::AppState>,
+async fn preview_pyq_import(
+    app: AppHandle,
     csv: String,
 ) -> Result<csv_import::ImportPreview, AppError> {
-    state.with_connection(|connection| pyq::preview_import(connection, &csv))
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| pyq::preview_import(connection, &csv))
+    })
+    .await
 }
 
 #[tauri::command]
-fn apply_pyq_import(
-    state: tauri::State<'_, db::AppState>,
+async fn apply_pyq_import(
+    app: AppHandle,
     csv: String,
 ) -> Result<csv_import::ImportResult, AppError> {
-    state.with_connection(|connection| pyq::apply_import(connection, &csv))
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| pyq::apply_import(connection, &csv))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -357,19 +409,25 @@ fn save_mock_csv_template(app: tauri::AppHandle) -> Result<String, AppError> {
 }
 
 #[tauri::command]
-fn preview_mock_import(
-    state: tauri::State<'_, db::AppState>,
+async fn preview_mock_import(
+    app: AppHandle,
     csv: String,
 ) -> Result<csv_import::ImportPreview, AppError> {
-    state.with_connection(|connection| mock_tests::preview_import(connection, &csv))
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| mock_tests::preview_import(connection, &csv))
+    })
+    .await
 }
 
 #[tauri::command]
-fn apply_mock_import(
-    state: tauri::State<'_, db::AppState>,
+async fn apply_mock_import(
+    app: AppHandle,
     csv: String,
 ) -> Result<csv_import::ImportResult, AppError> {
-    state.with_connection(|connection| mock_tests::apply_import(connection, &csv))
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| mock_tests::apply_import(connection, &csv))
+    })
+    .await
 }
 
 #[tauri::command]

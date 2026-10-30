@@ -24,25 +24,25 @@ const OVERVIEW: BackupOverview = {
     destination: null,
     retentionCount: 5,
     lastSuccessAt: '2026-10-29T12:00:00.000Z',
-    lastSuccessFile: 'csir-net-tracker-manual-v8-20261029-120000.sqlite3',
+    lastSuccessFile: 'csir-net-tracker-manual-v9-20261029-120000.sqlite3',
     lastFailureAt: '2026-10-28T12:00:00.000Z',
     lastFailureMessage: 'The selected backup folder was unavailable.',
     updatedAt: '2026-10-29T12:00:00.000Z',
   },
   defaultDirectory: 'C:\\Users\\Test\\AppData\\backups',
-  schemaVersion: 8,
-  applicationVersion: '0.1.0',
+  schemaVersion: 9,
+  applicationVersion: '1.0.0',
   databaseId: '0123456789abcdef0123456789abcdef',
 };
 
 const MANIFEST = {
   formatVersion: 1,
-  applicationVersion: '0.1.0',
-  schemaVersion: 8,
+  applicationVersion: '1.0.0',
+  schemaVersion: 9,
   createdAt: '2026-10-30T10:00:00.000Z',
   databaseId: OVERVIEW.databaseId,
   reason: 'manual',
-  backupFileName: 'csir-net-tracker-manual-v8-20261030-100000.sqlite3',
+  backupFileName: 'csir-net-tracker-manual-v9-20261030-100000.sqlite3',
   backupSizeBytes: 270_000,
   sha256: 'a'.repeat(64),
   integrityCheck: 'ok',
@@ -51,7 +51,7 @@ const MANIFEST = {
 const RESTORE_PREVIEW: RestorePreview = {
   manifest: MANIFEST,
   recordCounts: { settings: 1, syllabus_topics: 182, study_sessions: 4 },
-  currentSchemaVersion: 8,
+  currentSchemaVersion: 9,
   requiresUpgrade: false,
   warnings: ['Restoring replaces the current application data.'],
 };
@@ -60,10 +60,12 @@ const JSON_PREVIEW: JsonImportPreview = {
   fileName: 'export.json',
   fileSha256: 'b'.repeat(64),
   formatVersion: 1,
-  applicationVersion: '0.1.0',
-  schemaVersion: 8,
+  applicationVersion: '1.0.0',
+  schemaVersion: 9,
   exportedAt: '2026-10-30T10:00:00.000Z',
   databaseId: OVERVIEW.databaseId,
+  importBatchId: 'c'.repeat(32),
+  alreadyImported: null,
   recordCounts: { settings: 1, study_sessions: 2, pyq_attempts: 3 },
   existingCounts: { study_sessions: 1 },
   conflicts: [
@@ -144,6 +146,7 @@ function mockBackend() {
           study_sessions: { imported: 2, skipped: 0, conflicting: 0, rejected: 0 },
         },
         safetyBackupFile: 'safety-import.sqlite3',
+        batchId: JSON_PREVIEW.importBatchId,
         warnings: [],
       });
     }
@@ -164,7 +167,7 @@ describe('backup and data management screen', () => {
 
     expect(await screen.findByText('Last successful backup')).toBeInTheDocument();
     expect(
-      screen.getByText('csir-net-tracker-manual-v8-20261029-120000.sqlite3'),
+      screen.getByText('csir-net-tracker-manual-v9-20261029-120000.sqlite3'),
     ).toBeInTheDocument();
     expect(screen.getByText('The selected backup folder was unavailable.')).toBeInTheDocument();
     expect(screen.getByText(/Database 0123456789abcdef/)).toBeInTheDocument();
@@ -286,6 +289,38 @@ describe('backup and data management screen', () => {
       screen.getByRole('button', { name: 'Reload application with imported data' }),
     );
     expect(reload).toHaveBeenCalled();
+  });
+
+  it('blocks merge when the exact export batch was already imported', async () => {
+    mockBackend();
+    openDialogMock.mockResolvedValue('C:\\Exports\\export.json');
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_backup_overview') {
+        return Promise.resolve(OVERVIEW);
+      }
+      if (command === 'preview_json_import') {
+        return Promise.resolve({
+          ...JSON_PREVIEW,
+          alreadyImported: {
+            importedAt: '2026-10-30T11:00:00.000Z',
+            strategy: 'merge',
+          },
+          mergeSupported: false,
+          warnings: ['This exact export was already imported.'],
+        });
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+    render(<BackupScreen />);
+    await screen.findByText('Import complete JSON data');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Choose JSON export to import' }));
+
+    expect(
+      await screen.findByText(/This exact export was already imported with the merge strategy/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Merge and preserve/ })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: /Complete replacement/ })).toBeChecked();
   });
 
   it('shows a load error and retries', async () => {
