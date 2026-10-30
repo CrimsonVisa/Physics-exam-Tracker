@@ -493,8 +493,10 @@ export default function BackupScreen({
         <h1>Protect local study data</h1>
         <p className="page-lede">
           Backups include every settings row, syllabus record, session, plan, PYQ, mock test,
-          revision outcome, and dashboard preference. Files stay on this PC. They are never uploaded
-          or transmitted.
+          revision outcome, dashboard preference, and, when present, the resource catalogue,
+          resource study progress/notes, local PDF paths, and discovery history. SQLite backups
+          store PDF paths as references, never PDF contents. Files stay on this PC and are never
+          uploaded or transmitted.
         </p>
       </header>
 
@@ -720,6 +722,32 @@ export default function BackupScreen({
                 <dd>{countRows(restorePreview.recordCounts)}</dd>
               </div>
               <div>
+                <dt>Resource catalogue</dt>
+                <dd>{restorePreview.recordCounts.study_resources ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Resource study progress</dt>
+                <dd>{restorePreview.recordCounts.resource_progress ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Local PDF references</dt>
+                <dd>{restorePreview.recordCounts.resource_local_files ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Discovery runs</dt>
+                <dd>{restorePreview.recordCounts.resource_discovery_runs ?? 0}</dd>
+              </div>
+              {restorePreview.localFiles && (
+                <div>
+                  <dt>Local PDF availability</dt>
+                  <dd>
+                    {restorePreview.localFiles.available} available ·{' '}
+                    {restorePreview.localFiles.missing} missing ·{' '}
+                    {restorePreview.localFiles.changed} changed
+                  </dd>
+                </div>
+              )}
+              <div>
                 <dt>Size</dt>
                 <dd>{formatBytes(restorePreview.manifest.backupSizeBytes)}</dd>
               </div>
@@ -732,6 +760,15 @@ export default function BackupScreen({
                 <dd className="backup-hash">{restorePreview.manifest.sha256}</dd>
               </div>
             </dl>
+            <p className="backup-preview-note">
+              This restores the complete SQLite database, including settings, syllabus progress,
+              study sessions, planner records, PYQs, mock tests, revision history, dashboard layout,
+              and any resource catalogue, resource progress/notes, local PDF paths, and discovery
+              history. PDF files are never stored in the backup: local PDF paths are references
+              only, and restore does not copy, download, or overwrite PDF files. After restore,
+              missing or changed local copies keep the catalogue entry and study history and can be
+              re-linked or replaced.
+            </p>
             {restorePreview.warnings.map((warning) => (
               <p className="backup-warning" key={warning}>
                 {warning}

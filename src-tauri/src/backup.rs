@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::error::AppError;
+use crate::{error::AppError, resources::local_file_status};
 
 pub const BACKUP_FORMAT_VERSION: u32 = 1;
 pub const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
@@ -19,7 +19,8 @@ pub const MAX_DESTINATION_CHARS: usize = 2_048;
 pub const BACKUP_PREFIX: &str = "csir-net-tracker";
 pub const MANIFEST_SUFFIX: &str = ".manifest.json";
 
-pub const BACKUP_TABLES: [&str; 16] = [
+/// Core tables present in JSON format 1 and every backup schema.
+pub const CORE_BACKUP_TABLES: [&str; 16] = [
     "settings",
     "syllabus_sources",
     "syllabus_sections",
@@ -38,6 +39,31 @@ pub const BACKUP_TABLES: [&str; 16] = [
     "dashboard_sections",
 ];
 
+/// Every table counted for a current-schema backup, including the four study
+/// resource tables. Older schemas are counted only for tables that actually exist.
+pub const BACKUP_TABLES: [&str; 20] = [
+    "settings",
+    "syllabus_sources",
+    "syllabus_sections",
+    "syllabus_topics",
+    "syllabus_progress",
+    "timer_settings",
+    "timer_state",
+    "study_sessions",
+    "checklist_tasks",
+    "planned_study_blocks",
+    "pyq_attempts",
+    "mock_tests",
+    "revision_settings",
+    "revision_schedules",
+    "revision_history",
+    "dashboard_sections",
+    "study_resources",
+    "resource_progress",
+    "resource_local_files",
+    "resource_discovery_runs",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupManifest {
@@ -51,6 +77,10 @@ pub struct BackupManifest {
     pub backup_size_bytes: u64,
     pub sha256: String,
     pub integrity_check: String,
+    /// Optional for compatibility with manifests written before v1.2.0. New
+    /// manifests include counts for all core and resource tables.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub record_counts: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -107,9 +137,19 @@ pub struct AutoBackupOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalFileRestoreSummary {
+    pub registered: i64,
+    pub available: i64,
+    pub missing: i64,
+    pub changed: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VerifiedBackup {
     pub manifest: BackupManifest,
     pub record_counts: BTreeMap<String, i64>,
+    pub local_files: Option<LocalFileRestoreSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -117,6 +157,7 @@ pub struct VerifiedBackup {
 pub struct RestorePreview {
     pub manifest: BackupManifest,
     pub record_counts: BTreeMap<String, i64>,
+    pub local_files: Option<LocalFileRestoreSummary>,
     pub current_schema_version: i64,
     pub requires_upgrade: bool,
     pub warnings: Vec<String>,
@@ -379,6 +420,7 @@ pub fn create_backup(
     }
 
     let schema_version = schema_version(connection)?;
+    let record_counts = table_counts(connection)?;
     let database_id = match preferred_database_id.filter(|value| is_database_id(value)) {
         Some(value) => value.to_owned(),
         None => ensure_database_identifier(connection, None)?,
@@ -437,6 +479,7 @@ pub fn create_backup(
         backup_size_bytes: size_bytes,
         sha256,
         integrity_check: "ok".to_owned(),
+        record_counts,
     };
     if let Err(error) = write_manifest(&final_path, &manifest) {
         let _ = fs::remove_file(&final_path);
@@ -485,11 +528,36 @@ pub fn verify_backup(path: &Path) -> Result<VerifiedBackup, AppError> {
         ));
     }
     let record_counts = table_counts(&connection)?;
+    validate_manifest_counts(&manifest, &record_counts)?;
+    let local_files = local_file_restore_summary(&connection)?;
 
     Ok(VerifiedBackup {
         manifest,
         record_counts,
+        local_files,
     })
+}
+
+fn validate_manifest_counts(
+    manifest: &BackupManifest,
+    actual_counts: &BTreeMap<String, i64>,
+) -> Result<(), AppError> {
+    for (table, expected) in &manifest.record_counts {
+        if !is_known_backup_table(table) {
+            continue;
+        }
+        let actual = actual_counts.get(table).copied().unwrap_or(0);
+        if actual != *expected {
+            return Err(AppError::restore_failed(
+                "The backup manifest record counts do not match the database inside the file.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_known_backup_table(table: &str) -> bool {
+    BACKUP_TABLES.contains(&table)
 }
 
 pub fn preview_restore(
@@ -533,11 +601,32 @@ pub fn preview_restore(
     if verified.manifest.database_id.is_empty() {
         warnings.push("The backup does not expose a database identifier.".to_owned());
     }
+    if let Some(local_files) = &verified.local_files {
+        if local_files.registered > 0 {
+            warnings.push(
+                "Local PDF paths are references only. The backup does not contain PDF bytes, and restore never copies, downloads, or overwrites PDF files."
+                    .to_owned(),
+            );
+        }
+        if local_files.missing > 0 {
+            warnings.push(format!(
+                "{} local PDF reference(s) are unavailable on this computer. The catalogue entry, study status, notes, and history will still be restored; these PDFs will show as Local copy missing until re-linked or replaced.",
+                local_files.missing
+            ));
+        }
+        if local_files.changed > 0 {
+            warnings.push(format!(
+                "{} local PDF reference(s) point to files whose size differs from the recorded copy. They will show as Local copy changed until re-linked or replaced.",
+                local_files.changed
+            ));
+        }
+    }
 
     Ok(RestorePreview {
         requires_upgrade: verified.manifest.schema_version < current_schema_version,
         manifest: verified.manifest,
         record_counts: verified.record_counts,
+        local_files: verified.local_files,
         current_schema_version,
         warnings,
     })
@@ -755,6 +844,18 @@ fn cleanup_automatic_backups(directory: &Path, keep: i64) -> CleanupResult {
 pub fn table_counts(connection: &Connection) -> Result<BTreeMap<String, i64>, AppError> {
     let mut counts = BTreeMap::new();
     for table in BACKUP_TABLES {
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1
+                 )",
+                [table],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::database("A backup table could not be inspected", error))?;
+        if !exists {
+            continue;
+        }
         let count: i64 = connection
             .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
                 row.get(0)
@@ -763,6 +864,55 @@ pub fn table_counts(connection: &Connection) -> Result<BTreeMap<String, i64>, Ap
         counts.insert(table.to_owned(), count);
     }
     Ok(counts)
+}
+
+fn local_file_restore_summary(
+    connection: &Connection,
+) -> Result<Option<LocalFileRestoreSummary>, AppError> {
+    let exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'resource_local_files'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            AppError::database("Local PDF references could not be inspected", error)
+        })?;
+    if !exists {
+        return Ok(None);
+    }
+
+    let mut statement = connection
+        .prepare("SELECT file_path, size_bytes FROM resource_local_files")
+        .map_err(|error| AppError::database("Local PDF references could not be read", error))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|error| AppError::database("Local PDF references could not be read", error))?;
+    let mut summary = LocalFileRestoreSummary {
+        registered: 0,
+        available: 0,
+        missing: 0,
+        changed: 0,
+    };
+    for row in rows {
+        let (path, size) = row
+            .map_err(|error| AppError::database("Local PDF references could not be read", error))?;
+        summary.registered += 1;
+        let (exists, size_matches) = local_file_status(&path, size);
+        if !exists {
+            summary.missing += 1;
+        } else if size_matches {
+            summary.available += 1;
+        } else {
+            summary.changed += 1;
+        }
+    }
+    Ok(Some(summary))
 }
 
 pub fn schema_version(connection: &Connection) -> Result<i64, AppError> {
@@ -978,7 +1128,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{db, sessions, syllabus};
+    use crate::{db, resources, sessions, syllabus};
 
     fn date(year: i32, month: u32, day: u32) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(year, month, day).expect("test date should be valid")
@@ -1000,6 +1150,380 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("topic should exist")
+    }
+
+    const NOW: &str = "2026-10-30T12:00:00.000Z";
+    const FIRST_URL: &str = "https://drive.google.com/file/d/stage3-first/view";
+    const SECOND_URL: &str = "https://example.com/stage3-second.pdf";
+    const SOURCE_PAGE: &str = "https://example.com/stage3-notes";
+    const PDF_PAYLOAD: &[u8] = b"%PDF-1.4\nstage3-unique-private-pdf-payload-7c1e9a\n%%EOF\n";
+
+    struct ResourceFixture {
+        first_id: i64,
+        second_id: i64,
+        first_key: String,
+        local_file: resources::LocalResourceFile,
+    }
+
+    fn seed_resources(
+        connection: &mut Connection,
+        library: &Path,
+        source_pdf: &Path,
+    ) -> ResourceFixture {
+        let first = resources::create_manual(
+            connection,
+            resources::ManualResourceInput {
+                title: "Stage 3 Quantum Notes".to_owned(),
+                description: Some("Backup integration fixture".to_owned()),
+                category: "handwritten_notes".to_owned(),
+                unit: "Quantum Mechanics".to_owned(),
+                topic_code: None,
+                original_url: FIRST_URL.to_owned(),
+                source_page_url: Some(SOURCE_PAGE.to_owned()),
+            },
+        )
+        .expect("first resource should save");
+        let second = resources::create_manual(
+            connection,
+            resources::ManualResourceInput {
+                title: "Stage 3 Reference PDF".to_owned(),
+                description: Some("Second backup integration fixture".to_owned()),
+                category: "recommended_books".to_owned(),
+                unit: "Classical Mechanics".to_owned(),
+                topic_code: None,
+                original_url: SECOND_URL.to_owned(),
+                source_page_url: Some(SOURCE_PAGE.to_owned()),
+            },
+        )
+        .expect("second resource should save");
+        resources::update_progress(
+            connection,
+            first.id,
+            resources::ResourceProgressInput {
+                status: "studying".to_owned(),
+                notes: "Stage 3 personal notes for the first resource.".to_owned(),
+            },
+            NOW,
+        )
+        .expect("first progress should save");
+        resources::update_progress(
+            connection,
+            second.id,
+            resources::ResourceProgressInput {
+                status: "completed".to_owned(),
+                notes: "Stage 3 completed notes for the second resource.".to_owned(),
+            },
+            NOW,
+        )
+        .expect("second progress should save");
+        connection
+            .execute(
+                "INSERT INTO resource_discovery_runs (
+                    started_at, finished_at, status, pages_ok, pages_failed,
+                    resources_seen, resources_added, resources_updated,
+                    resources_removed, message
+                 ) VALUES (?1, ?1, 'partial', 3, 1, 5, 2, 1, 0, 'Stage 3 discovery history')",
+                [NOW],
+            )
+            .expect("discovery history should save");
+
+        fs::write(source_pdf, PDF_PAYLOAD).expect("PDF fixture should write");
+        let local_file =
+            resources::import_local_pdf(connection, first.id, source_pdf, library, NOW)
+                .expect("PDF should import");
+        ResourceFixture {
+            first_id: first.id,
+            second_id: second.id,
+            first_key: first.resource_key,
+            local_file,
+        }
+    }
+
+    #[test]
+    fn full_backup_and_restore_preserve_resource_tables_and_exclude_pdf_bytes() {
+        let source = tempfile::tempdir().expect("source temp");
+        let destination = tempfile::tempdir().expect("destination temp");
+        let pdf_source = tempfile::tempdir().expect("PDF source temp");
+        let library = tempfile::tempdir().expect("PDF library temp");
+        let mut connection = database(&source);
+        let fixture = seed_resources(
+            &mut connection,
+            library.path(),
+            &pdf_source.path().join("stage3.pdf"),
+        );
+
+        let result = create_backup(&connection, destination.path(), "manual", None)
+            .expect("backup should succeed");
+        let backup_path = destination.path().join(&result.file_name);
+
+        for (table, expected) in [
+            ("study_resources", 2),
+            ("resource_progress", 2),
+            ("resource_local_files", 1),
+            ("resource_discovery_runs", 1),
+        ] {
+            assert_eq!(result.manifest.record_counts[table], expected);
+        }
+        let verified = verify_backup(&backup_path).expect("backup should verify");
+        assert_eq!(verified.record_counts["study_resources"], 2);
+        assert_eq!(verified.record_counts["resource_progress"], 2);
+        assert_eq!(verified.record_counts["resource_local_files"], 1);
+        assert_eq!(verified.record_counts["resource_discovery_runs"], 1);
+        assert_eq!(
+            verified.local_files.as_ref().map(|files| files.available),
+            Some(1)
+        );
+
+        let backup_bytes = fs::read(&backup_path).expect("backup bytes should read");
+        assert!(
+            !backup_bytes
+                .windows(PDF_PAYLOAD.len())
+                .any(|window| window == PDF_PAYLOAD),
+            "the SQLite backup must not contain PDF bytes"
+        );
+
+        let target_dir = tempfile::tempdir().expect("target temp");
+        let sentinel = target_dir.path().join("keep-me.pdf");
+        fs::write(&sentinel, b"unrelated user-owned file").expect("sentinel should write");
+        let target = db::AppState::initialize(target_dir.path(), date(2026, 10, 30));
+        target
+            .restore_from_backup(&backup_path, date(2026, 10, 30))
+            .expect("restore should succeed");
+
+        let (
+            catalogue,
+            first_progress,
+            second_progress,
+            discovery_runs,
+            local_row,
+            integrity,
+            foreign_keys,
+        ) = target
+            .with_connection(|connection| {
+                let catalogue = resources::list_resources(connection)?;
+                let first_progress: (String, String) = connection
+                    .query_row(
+                        "SELECT study_status, personal_notes
+                         FROM resource_progress WHERE resource_id = ?1",
+                        [fixture.first_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .expect("first progress should query");
+                let second_progress: (String, String) = connection
+                    .query_row(
+                        "SELECT study_status, personal_notes
+                         FROM resource_progress WHERE resource_id = ?1",
+                        [fixture.second_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .expect("second progress should query");
+                let discovery_runs: i64 = connection
+                    .query_row("SELECT count(*) FROM resource_discovery_runs", [], |row| {
+                        row.get(0)
+                    })
+                    .expect("discovery history should query");
+                let local_row: (String, String, i64) = connection
+                    .query_row(
+                        "SELECT file_path, sha256, size_bytes
+                         FROM resource_local_files WHERE resource_id = ?1",
+                        [fixture.first_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .expect("local reference should query");
+                let integrity: String = connection
+                    .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+                    .expect("integrity check should run");
+                let foreign_keys: i64 = connection
+                    .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get(0)
+                    })
+                    .expect("foreign-key check should run");
+                Ok((
+                    catalogue,
+                    first_progress,
+                    second_progress,
+                    discovery_runs,
+                    local_row,
+                    integrity,
+                    foreign_keys,
+                ))
+            })
+            .expect("restored data should query");
+
+        assert_eq!(catalogue.len(), 2);
+        assert_eq!(integrity, "ok");
+        assert_eq!(foreign_keys, 0);
+        assert_eq!(discovery_runs, 1);
+        assert_eq!(
+            first_progress,
+            (
+                "studying".to_owned(),
+                "Stage 3 personal notes for the first resource.".to_owned()
+            )
+        );
+        assert_eq!(
+            second_progress,
+            (
+                "completed".to_owned(),
+                "Stage 3 completed notes for the second resource.".to_owned()
+            )
+        );
+        assert_eq!(local_row.0, fixture.local_file.file_path);
+        assert_eq!(local_row.1, fixture.local_file.sha256);
+        assert_eq!(local_row.2, fixture.local_file.size_bytes);
+
+        let first = catalogue
+            .iter()
+            .find(|resource| resource.id == fixture.first_id)
+            .expect("first resource should survive");
+        assert_eq!(first.resource_key, fixture.first_key);
+        assert_eq!(first.original_url, FIRST_URL);
+        assert_eq!(first.source_page_url.as_deref(), Some(SOURCE_PAGE));
+        let second = catalogue
+            .iter()
+            .find(|resource| resource.id == fixture.second_id)
+            .expect("second resource should survive");
+        assert_eq!(second.original_url, SECOND_URL);
+        assert_eq!(second.source_page_url.as_deref(), Some(SOURCE_PAGE));
+        assert_eq!(
+            fs::read(&sentinel).expect("sentinel should remain"),
+            b"unrelated user-owned file"
+        );
+    }
+
+    #[test]
+    fn cross_machine_restore_keeps_metadata_and_allows_relinking_missing_pdfs() {
+        let source = tempfile::tempdir().expect("source temp");
+        let destination = tempfile::tempdir().expect("destination temp");
+        let pdf_source = tempfile::tempdir().expect("PDF source temp");
+        let library = tempfile::tempdir().expect("PDF library temp");
+        let mut connection = database(&source);
+        let fixture = seed_resources(
+            &mut connection,
+            library.path(),
+            &pdf_source.path().join("stage3.pdf"),
+        );
+        let result = create_backup(&connection, destination.path(), "manual", None)
+            .expect("backup should succeed");
+        let backup_path = destination.path().join(&result.file_name);
+        let stored_path = fixture.local_file.file_path.clone();
+
+        drop(library);
+        assert!(!Path::new(&stored_path).exists());
+
+        let preview = preview_restore(&backup_path, 10, None).expect("preview should load");
+        assert_eq!(preview.record_counts["study_resources"], 2);
+        assert_eq!(
+            preview
+                .local_files
+                .as_ref()
+                .map(|files| (files.registered, files.missing)),
+            Some((1, 1))
+        );
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unavailable on this computer"))
+        );
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("references only"))
+        );
+
+        let target_dir = tempfile::tempdir().expect("target temp");
+        let target = db::AppState::initialize(target_dir.path(), date(2026, 10, 30));
+        target
+            .restore_from_backup(&backup_path, date(2026, 10, 30))
+            .expect("restore should succeed");
+
+        let (catalogue, overview, notes) = target
+            .with_connection(|connection| {
+                let catalogue = resources::list_resources(connection)?;
+                let overview = resources::overview(connection)?;
+                let notes: String = connection
+                    .query_row(
+                        "SELECT personal_notes FROM resource_progress WHERE resource_id = ?1",
+                        [fixture.first_id],
+                        |row| row.get(0),
+                    )
+                    .expect("notes should query");
+                Ok((catalogue, overview, notes))
+            })
+            .expect("restored resources should query");
+
+        assert_eq!(catalogue.len(), 2);
+        assert_eq!(overview.local_count, 0);
+        assert_eq!(notes, "Stage 3 personal notes for the first resource.");
+        let first = catalogue
+            .iter()
+            .find(|resource| resource.id == fixture.first_id)
+            .expect("missing-PDF resource should remain visible");
+        let local_file = first
+            .local_file
+            .as_ref()
+            .expect("the local reference should survive");
+        assert!(!local_file.exists);
+        assert!(!local_file.size_matches);
+        assert!(!Path::new(&stored_path).exists());
+        assert!(!target_dir.path().join(&local_file.file_name).exists());
+        assert!(
+            !target_dir
+                .path()
+                .read_dir()
+                .expect("target dir should read")
+                .filter_map(Result::ok)
+                .any(|entry| entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf")))
+        );
+
+        let relink_dir = tempfile::tempdir().expect("relink temp");
+        let moved = relink_dir.path().join("moved-stage3.pdf");
+        fs::write(&moved, PDF_PAYLOAD).expect("moved PDF should write");
+        let relinked = target
+            .with_connection(|connection| {
+                resources::relink_local_pdf(connection, fixture.first_id, &moved)
+            })
+            .expect("missing PDF should re-link");
+        assert!(relinked.exists && relinked.size_matches);
+        assert_eq!(relinked.file_path, moved.to_string_lossy());
+        assert_eq!(relinked.sha256, fixture.local_file.sha256);
+        assert_eq!(
+            fs::read(&moved).expect("re-linked file should remain"),
+            PDF_PAYLOAD
+        );
+        let local_count = target
+            .with_connection(|connection| resources::overview(connection))
+            .expect("overview should reload")
+            .local_count;
+        assert_eq!(local_count, 1);
+    }
+
+    #[test]
+    fn manifest_record_counts_must_match_backup_contents() {
+        let source = tempfile::tempdir().expect("source temp");
+        let destination = tempfile::tempdir().expect("destination temp");
+        let connection = database(&source);
+        let result = create_backup(&connection, destination.path(), "manual", None)
+            .expect("backup should succeed");
+        let path = destination.path().join(&result.file_name);
+        let manifest_file = manifest_path(&path);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_file).expect("manifest should read"))
+                .expect("manifest should parse");
+        value["recordCounts"]["study_sessions"] = serde_json::Value::from(99);
+        fs::write(
+            &manifest_file,
+            serde_json::to_vec_pretty(&value).expect("manifest should encode"),
+        )
+        .expect("tampered manifest should write");
+
+        let error = verify_backup(&path).expect_err("count mismatch should be rejected");
+        assert!(error.message.contains("record counts"));
     }
 
     #[test]
@@ -1325,6 +1849,41 @@ mod compatibility_tests {
 
     use super::*;
     use crate::db;
+
+    #[test]
+    fn manifests_without_record_counts_remain_compatible() {
+        let source = tempfile::tempdir().expect("source temp");
+        let destination = tempfile::tempdir().expect("destination temp");
+        let connection = db::open_database(
+            &source.path().join("tracker.sqlite3"),
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        )
+        .expect("database should open");
+        let result = create_backup(&connection, destination.path(), "manual", None)
+            .expect("backup should succeed");
+        let path = destination.path().join(&result.file_name);
+        let manifest_file = manifest_path(&path);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_file).expect("manifest should read"))
+                .expect("manifest should parse");
+        assert!(
+            value
+                .as_object_mut()
+                .expect("manifest should be an object")
+                .remove("recordCounts")
+                .is_some(),
+            "the new manifest should include counts"
+        );
+        fs::write(
+            &manifest_file,
+            serde_json::to_vec_pretty(&value).expect("manifest should encode"),
+        )
+        .expect("legacy manifest should write");
+
+        let verified = verify_backup(&path).expect("legacy manifest should remain valid");
+        assert_eq!(verified.record_counts["study_sessions"], 0);
+        assert_eq!(verified.record_counts["study_resources"], 0);
+    }
 
     #[test]
     fn older_compatible_backup_previews_for_migration_upgrade() {

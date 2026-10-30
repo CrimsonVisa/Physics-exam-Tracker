@@ -1,6 +1,6 @@
-# CSIR-NET Physics Tracker 1.2.0 — Stages 1-2 Notes
+# CSIR-NET Physics Tracker 1.2.0 — Stages 1-3 Notes
 
-Status: **Stages 1-2 implementation — JSON portability and local PDF recovery**
+Status: **Stages 1-3 implementation — JSON portability, local PDF recovery, and backup/restore improvements**
 Release date: pending final v1.2.0 completion
 
 ## Stage 1 scope
@@ -35,6 +35,31 @@ Release date: pending final v1.2.0 completion
 - Inaccessible directories and filesystem errors are handled without deleting metadata.
 - Database schema remains **10**; no migration is required.
 
+## Stage 3 scope — backup and restore improvements
+
+- SQLite backup manifests now include record counts for all 16 core tables and the four resource
+  tables: `study_resources`, `resource_progress`, `resource_local_files`, and
+  `resource_discovery_runs`.
+- Manifest format remains **1**; the new `recordCounts` field is optional, and manifests written
+  before v1.2.0 remain readable. When counts are present, restore rejects a manifest whose counts do
+  not match the database inside the file.
+- Table counting is schema-aware, so older compatible backups without resource tables still preview
+  and restore normally.
+- Restore preview shows resource catalogue, resource study progress, local PDF reference, and
+  discovery-history counts, plus local PDF availability on the current computer.
+- The preview explains that SQLite backups preserve local PDF paths as references, not PDF contents,
+  and warns when saved files are missing or changed.
+- Full restore integration tests create multiple resources, progress and notes, discovery history,
+  and local PDF metadata with temporary PDFs; back up the database; restore it into a separate
+  disposable database; and verify identifiers, relationships, URLs, SHA-256, study data, integrity,
+  and foreign keys.
+- Cross-machine tests remove the original PDF directory before restore and verify that catalogue
+  entries, progress, notes, and history remain, missing PDFs are not shown as **Offline copy**, no
+  PDF is downloaded, no existing file is overwritten, and re-linking works afterwards.
+- Backup files are verified to contain no PDF bytes. PDF files are not included in the application
+  or installer.
+- Database schema remains **10**; no migration is required.
+
 ## Safety
 
 - Import prefers a verified safety backup and a single transaction.
@@ -46,9 +71,11 @@ Release date: pending final v1.2.0 completion
 
 - TypeScript, ESLint with zero warnings, Prettier, Rustfmt, and Clippy with warnings denied passed.
 - **184 frontend tests passed** across 26 files.
-- **166 Rust tests passed**, with 1 ignored synthetic performance test.
+- **170 Rust tests passed**, with 1 ignored synthetic performance test.
 - New tests cover format 1 compatibility, format 2 resource round trips, merge preservation, replace
   ordering, duplicate resource keys, missing local PDFs, checksum mismatches, transactional rollback,
-  moved/deleted files, changed sizes, re-linking, replacement, removal failures, and opening unavailable files.
+  moved/deleted files, changed sizes, re-linking, replacement, removal failures, opening unavailable
+  files, full resource backup/restore, manifest counts, PDF-byte exclusion, cross-machine restore,
+  and legacy manifest compatibility.
 - Database schema remains **10**; no migration was added.
 - The final 1.2.0 installer is not produced in this stage. The current public release remains 1.1.0.

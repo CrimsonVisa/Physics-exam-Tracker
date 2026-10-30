@@ -22,7 +22,7 @@ pub const MIN_JSON_IMPORT_SCHEMA_VERSION: i64 = 8;
 pub const MAX_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
 pub const CSV_BOM: &str = "\u{feff}";
 
-const CORE_TABLES: [&str; 16] = backup::BACKUP_TABLES;
+const CORE_TABLES: [&str; 16] = backup::CORE_BACKUP_TABLES;
 
 const RESOURCE_TABLES: [&str; 4] = [
     "study_resources",

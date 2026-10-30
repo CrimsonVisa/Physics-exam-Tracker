@@ -15,7 +15,7 @@ can store a personal status, priority, confidence rating, and notes. The timer r
 with restart and sleep recovery. Exam-date changes use a review-and-apply confirmation before any future
 exam-anchored task moves. CSV templates are generated locally and saved to the user's Downloads folder.
 
-See [RELEASE_NOTES_1.2.0.md](RELEASE_NOTES_1.2.0.md) for the v1.2.0 Stage 1 notes.
+See [RELEASE_NOTES_1.2.0.md](RELEASE_NOTES_1.2.0.md) for the v1.2.0 Stages 1-3 notes.
 
 ## Release
 
@@ -87,6 +87,10 @@ Only do that after creating and verifying a backup if you may need the data agai
   network paths are rejected.
 - **Restore rejected:** keep the `.sqlite3` and `.sqlite3.manifest.json` files together and unmodified.
   A missing manifest, changed checksum, truncated file, or newer schema is refused.
+- **Restored local PDFs show missing or changed:** this is expected when the PDF folder is not present
+  on the current computer. The resource catalogue and study history are intact; open the resource
+  and use **Re-link moved file** for the original PDF or **Replace with another PDF**. Backup files
+  never contain PDF contents, so restore them separately from your PDF library.
 - **Notifications do not appear:** check Windows notification permission and Focus Assist. Revision
   reminders are optional and off by default.
 - **A screen shows cached data after import:** use the app's reload action. Backup/restore and import
@@ -771,8 +775,15 @@ included rather than copied incorrectly from only the main database file. Each s
 4. Hash-checked with SHA-256.
 5. Renamed into place only after verification.
 6. Accompanied by `<backup>.sqlite3.manifest.json` containing format version, application version,
-   schema version, creation timestamp, database identifier, reason, filename, size, SHA-256 and
-   integrity result.
+   schema version, creation timestamp, database identifier, reason, filename, size, SHA-256,
+   integrity result, and record counts for the core tables and the four resource tables
+   (`study_resources`, `resource_progress`, `resource_local_files`, and
+   `resource_discovery_runs`).
+
+Manifest format version **1** is unchanged. Record counts are optional metadata, so backups and
+manifests written by earlier 1.2.0 builds remain readable; when counts are present, restore rejects a
+manifest whose counts do not match the database inside the file. Resource tables are counted only
+when they exist, which preserves restore compatibility with older schemas.
 
 Restore requires the manifest. A renamed backup, missing manifest, truncated file, changed checksum,
 or schema newer than this app is rejected. Manual filenames identify the reason, schema, and local
@@ -797,12 +808,29 @@ recorded in `backup_settings` and shown in the Backup screen.
 ### Restore workflow
 
 The Restore screen selects a backup, reads and validates its manifest and SQLite content, previews
-metadata and row counts, and requires explicit confirmation. It then creates and verifies a safety
-snapshot of the current database before closing the live connection. The restore candidate is copied
-to a verified temporary file, WAL/SHM sidecars are handled, and the candidate is installed atomically.
-Any failure before installation leaves the original file untouched. Any failure after installation
-recovers the database from the verified safety snapshot and reopens it. Older compatible schemas are
-upgraded through normal migrations; newer schemas are never downgraded.
+metadata and row counts, and requires explicit confirmation. The preview shows totals for the
+resource catalogue, resource study progress, local PDF references, and discovery history when those
+tables are present. It also checks each saved local PDF path on the current computer and reports how
+many copies are available, missing, or changed.
+
+Restore includes the full SQLite database: settings, syllabus and progress, sessions, planner,
+PYQ/mock-test records, revision history, dashboard layout, and, when present, the resource catalogue,
+resource study progress and notes, local PDF paths, and discovery history. Local PDF paths are
+references only. **PDF files are never stored in the backup**, and restore never copies, downloads,
+or overwrites PDF files.
+
+On another computer, or after the PDF folder is moved or deleted, restored resources and all study
+history remain visible. Their PDFs show **Local copy missing** (or **Local copy changed**) rather than
+**Offline copy**. Use **Re-link moved file** to reconnect the original PDF after size and SHA-256
+verification, or **Replace with another PDF** to copy a new authorized file. Both actions keep the
+catalogue entry and study history; old files are never deleted or overwritten by restore.
+
+Restore then creates and verifies a safety snapshot of the current database before closing the live
+connection. The restore candidate is copied to a verified temporary file, WAL/SHM sidecars are
+handled, and the candidate is installed atomically. Any failure before installation leaves the
+original file untouched. Any failure after installation recovers the database from the verified
+safety snapshot and reopens it. Older compatible schemas are upgraded through normal migrations;
+newer schemas are never downgraded.
 
 ### CSV dataset export
 

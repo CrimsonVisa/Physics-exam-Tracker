@@ -46,14 +46,27 @@ const MANIFEST = {
   backupSizeBytes: 270_000,
   sha256: 'a'.repeat(64),
   integrityCheck: 'ok',
+  recordCounts: { settings: 1, syllabus_topics: 182, study_sessions: 4 },
 };
 
 const RESTORE_PREVIEW: RestorePreview = {
   manifest: MANIFEST,
-  recordCounts: { settings: 1, syllabus_topics: 182, study_sessions: 4 },
+  recordCounts: {
+    settings: 1,
+    syllabus_topics: 182,
+    study_sessions: 4,
+    study_resources: 3,
+    resource_progress: 2,
+    resource_local_files: 2,
+    resource_discovery_runs: 1,
+  },
+  localFiles: { registered: 2, available: 0, missing: 2, changed: 0 },
   currentSchemaVersion: 9,
   requiresUpgrade: false,
-  warnings: ['Restoring replaces the current application data.'],
+  warnings: [
+    'Restoring replaces the current application data.',
+    '2 local PDF reference(s) are unavailable on this computer. These PDFs will show as Local copy missing until re-linked or replaced.',
+  ],
 };
 
 const JSON_PREVIEW: JsonImportPreview = {
@@ -233,6 +246,21 @@ describe('backup and data management screen', () => {
     expect(await screen.findByText('Verified backup preview')).toBeInTheDocument();
     expect(screen.getByText('263.7 KiB')).toBeInTheDocument();
     expect(screen.getByText(MANIFEST.sha256)).toBeInTheDocument();
+    expect(screen.getByText('Resource catalogue').parentElement).toHaveTextContent(
+      'Resource catalogue3',
+    );
+    expect(screen.getByText('Resource study progress').parentElement).toHaveTextContent(
+      'Resource study progress2',
+    );
+    expect(screen.getByText('Local PDF references').parentElement).toHaveTextContent(
+      'Local PDF references2',
+    );
+    expect(screen.getByText('Discovery runs').parentElement).toHaveTextContent('Discovery runs1');
+    expect(screen.getByText('Local PDF availability').parentElement).toHaveTextContent(
+      '0 available · 2 missing · 0 changed',
+    );
+    expect(screen.getByText(/PDF files are never stored in the backup/)).toBeInTheDocument();
+    expect(screen.getByText(/2 local PDF reference\(s\) are unavailable/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Restore selected backup' }));
 
     await waitFor(() =>

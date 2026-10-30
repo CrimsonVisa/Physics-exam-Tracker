@@ -11,6 +11,7 @@ export type BackupManifest = {
   backupSizeBytes: number;
   sha256: string;
   integrityCheck: string;
+  recordCounts?: Record<string, number>;
 };
 
 export type BackupSettings = {
@@ -55,9 +56,17 @@ export type AutoBackupOutcome = {
   fileName: string | null;
 };
 
+export type LocalFileRestoreSummary = {
+  registered: number;
+  available: number;
+  missing: number;
+  changed: number;
+};
+
 export type RestorePreview = {
   manifest: BackupManifest;
   recordCounts: Record<string, number>;
+  localFiles: LocalFileRestoreSummary | null;
   currentSchemaVersion: number;
   requiresUpgrade: boolean;
   warnings: string[];

@@ -1180,7 +1180,7 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-fn local_file_status(path: &str, stored_size: i64) -> (bool, bool) {
+pub(crate) fn local_file_status(path: &str, stored_size: i64) -> (bool, bool) {
     let path = Path::new(path);
     match fs::metadata(path) {
         Ok(metadata) if metadata.is_file() => (true, metadata.len() as i64 == stored_size),
