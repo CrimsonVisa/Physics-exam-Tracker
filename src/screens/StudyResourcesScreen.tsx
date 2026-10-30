@@ -5,11 +5,14 @@ import { toCommandError } from '../lib/commandError';
 import {
   createManualResource,
   getResourceCatalogue,
+  getResourceLocalFile,
   getResourceOverview,
   importResourcePdf,
   markResourceOpened,
   refreshResourceCatalogue,
+  relinkResourcePdf,
   removeResourcePdf,
+  replaceResourcePdf,
   updateResourceProgress,
   type DiscoverySummary,
   type LocalResourceFile,
@@ -58,7 +61,8 @@ const STATUS_OPTIONS: { value: ResourceStudyStatus; label: string }[] = [
 
 const AVAILABILITY_OPTIONS = [
   { value: 'all', label: 'All availability' },
-  { value: 'local', label: 'Local copy' },
+  { value: 'local', label: 'Offline copy' },
+  { value: 'local_problem', label: 'Local copy missing/changed' },
   { value: 'online', label: 'Online only' },
   { value: 'removed', label: 'Removed from source' },
   { value: 'unverified', label: 'Manual / unverified' },
@@ -146,8 +150,27 @@ function sourceLabel(resource: Resource): string {
   return 'Other website';
 }
 
+type LocalFileCondition = 'offline' | 'missing' | 'changed';
+
+function localFileCondition(localFile: NonNullable<Resource['localFile']>): LocalFileCondition {
+  if (!localFile.exists) {
+    return 'missing';
+  }
+  if (!localFile.sizeMatches) {
+    return 'changed';
+  }
+  return 'offline';
+}
+
 function availabilityLabel(resource: Resource): string {
   if (resource.localFile) {
+    const condition = localFileCondition(resource.localFile);
+    if (condition === 'missing') {
+      return 'Local copy missing';
+    }
+    if (condition === 'changed') {
+      return 'Local copy changed';
+    }
     return 'Offline copy';
   }
   if (resource.availability === 'online') {
@@ -164,6 +187,13 @@ function availabilityLabel(resource: Resource): string {
 
 function availabilityTone(resource: Resource): string {
   if (resource.localFile) {
+    const condition = localFileCondition(resource.localFile);
+    if (condition === 'missing') {
+      return 'resource-availability-missing';
+    }
+    if (condition === 'changed') {
+      return 'resource-availability-changed';
+    }
     return 'resource-availability-local';
   }
   if (resource.availability === 'online') {
@@ -184,7 +214,10 @@ function resourceMatchesAvailability(resource: Resource, availability: string): 
     return true;
   }
   if (availability === 'local') {
-    return resource.localFile !== null;
+    return resource.localFile !== null && localFileCondition(resource.localFile) === 'offline';
+  }
+  if (availability === 'local_problem') {
+    return resource.localFile !== null && localFileCondition(resource.localFile) !== 'offline';
   }
   if (availability === 'online') {
     return resource.localFile === null && resource.availability === 'online';
@@ -253,6 +286,8 @@ function ResourceCard({
   const [savingNotes, setSavingNotes] = useState(false);
   const [importing, setImporting] = useState(false);
   const [removingLocal, setRemovingLocal] = useState(false);
+  const [relinking, setRelinking] = useState(false);
+  const [replacing, setReplacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -363,8 +398,26 @@ function ResourceCard({
       return;
     }
     setError(null);
+    let checked: LocalResourceFile;
     try {
-      await openPath(resource.localFile.filePath);
+      checked = await getResourceLocalFile(resource.id);
+      onLocalChanged(resource.id, checked);
+    } catch (caught) {
+      setError(toCommandError(caught).message);
+      return;
+    }
+    if (!checked.exists) {
+      setError('The local PDF is missing. Re-link the moved file or replace the local copy.');
+      return;
+    }
+    if (!checked.sizeMatches) {
+      setError(
+        'The local PDF has changed size. Re-link the original file or replace the local copy.',
+      );
+      return;
+    }
+    try {
+      await openPath(checked.filePath);
       try {
         await markResourceOpened(resource.id);
         onOpened(resource.id, new Date().toISOString());
@@ -373,6 +426,93 @@ function ResourceCard({
       }
     } catch {
       setError('The local PDF could not be opened in the default reader.');
+    }
+  }
+
+  async function handleRelinkPdf() {
+    if (!resource.localFile) {
+      return;
+    }
+    setError(null);
+    setFeedback(null);
+    let selected: string | string[] | null;
+    try {
+      selected = await open({
+        multiple: false,
+        directory: false,
+        title: 'Choose the moved PDF',
+        filters: [{ name: 'PDF documents', extensions: ['pdf'] }],
+      });
+    } catch {
+      setError('The file picker could not be opened.');
+      return;
+    }
+    if (typeof selected !== 'string') {
+      return;
+    }
+    setRelinking(true);
+    try {
+      const localFile = await relinkResourcePdf(resource.id, selected);
+      onLocalChanged(resource.id, localFile);
+      setFeedback('The moved PDF was re-linked after SHA-256 verification.');
+    } catch (caught) {
+      setError(toCommandError(caught).message);
+    } finally {
+      setRelinking(false);
+    }
+  }
+
+  async function handleReplacePdf() {
+    if (
+      !resource.localFile ||
+      !window.confirm(
+        'Replace the local PDF reference with another authorized PDF? The old file will not be deleted or overwritten.',
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setFeedback(null);
+    let selected: string | string[] | null;
+    try {
+      selected = await open({
+        multiple: false,
+        directory: false,
+        title: 'Choose a replacement PDF',
+        filters: [{ name: 'PDF documents', extensions: ['pdf'] }],
+      });
+    } catch {
+      setError('The file picker could not be opened.');
+      return;
+    }
+    if (typeof selected !== 'string') {
+      return;
+    }
+    let directory: string | string[] | null;
+    try {
+      directory = await open({
+        multiple: false,
+        directory: true,
+        title: 'Choose the local PDF library folder',
+      });
+    } catch {
+      setError('The folder picker could not be opened.');
+      return;
+    }
+    if (typeof directory !== 'string') {
+      return;
+    }
+    setReplacing(true);
+    try {
+      const localFile = await replaceResourcePdf(resource.id, selected, directory);
+      onLocalChanged(resource.id, localFile);
+      setFeedback(
+        'The replacement PDF was copied and linked. The previous file was left untouched.',
+      );
+    } catch (caught) {
+      setError(toCommandError(caught).message);
+    } finally {
+      setReplacing(false);
     }
   }
 
@@ -397,6 +537,8 @@ function ResourceCard({
       setRemovingLocal(false);
     }
   }
+
+  const localCondition = resource.localFile ? localFileCondition(resource.localFile) : null;
 
   return (
     <article className="resource-card" aria-labelledby={`resource-title-${resource.id}`}>
@@ -432,14 +574,32 @@ function ResourceCard({
       </dl>
 
       {resource.localFile ? (
-        <div className="resource-local-file">
+        <div className={`resource-local-file resource-local-file-${localCondition}`}>
           <p>
-            <strong>Offline PDF:</strong> {resource.localFile.fileName} (
-            {formatBytes(resource.localFile.sizeBytes)})
+            <strong>
+              {localCondition === 'missing'
+                ? 'Local copy missing:'
+                : localCondition === 'changed'
+                  ? 'Local copy changed:'
+                  : 'Offline PDF:'}
+            </strong>{' '}
+            {resource.localFile.fileName} ({formatBytes(resource.localFile.sizeBytes)})
           </p>
           <p className="resource-local-path" title={resource.localFile.filePath}>
             SHA-256 {resource.localFile.sha256}
           </p>
+          {localCondition === 'missing' && (
+            <p className="resource-local-warning">
+              The registered file is not present at its saved path. The catalogue entry and study
+              history are retained.
+            </p>
+          )}
+          {localCondition === 'changed' && (
+            <p className="resource-local-warning">
+              The file at the saved path has a different size. It is not treated as the verified
+              offline copy.
+            </p>
+          )}
           <div className="resource-local-actions">
             <button
               type="button"
@@ -448,6 +608,26 @@ function ResourceCard({
             >
               Open local PDF
             </button>
+            {localCondition === 'missing' && (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void handleRelinkPdf()}
+                disabled={relinking}
+              >
+                {relinking ? 'Checking…' : 'Re-link moved file'}
+              </button>
+            )}
+            {localCondition !== 'offline' && (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void handleReplacePdf()}
+                disabled={replacing}
+              >
+                {replacing ? 'Copying…' : 'Replace with another PDF'}
+              </button>
+            )}
             <button
               type="button"
               className="danger-button"
@@ -457,6 +637,10 @@ function ResourceCard({
               {removingLocal ? 'Removing…' : 'Remove local copy'}
             </button>
           </div>
+          <p className="resource-local-hint">
+            Re-linking verifies the stored SHA-256. Replacing copies a new file without deleting or
+            overwriting the old one.
+          </p>
         </div>
       ) : (
         <p className="resource-online-note">
@@ -493,15 +677,6 @@ function ResourceCard({
           >
             Open original
           </button>
-          {resource.localFile && (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => void handleOpenLocal()}
-            >
-              Open local
-            </button>
-          )}
           {!resource.localFile && (
             <button
               type="button"

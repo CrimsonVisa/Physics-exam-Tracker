@@ -716,10 +716,27 @@ Use **Import authorized PDF** to copy a PDF you already have permission to store
 
 1. Choose the PDF.
 2. Choose a local PDF library folder.
-3. The app validates the `%PDF-` header and the 1-byte–200 MB limit, avoids overwriting files, records
+3. The app validates the `%PDF-` header and the 200 MB limit, avoids overwriting files, records
    the absolute path and SHA-256, and keeps the original catalogue entry.
 4. Open the local copy through the default PDF reader or remove it later. Removing the local copy keeps
    the catalogue entry and study history.
+
+The Resources screen checks the filesystem whenever it lists resources:
+
+- **Offline copy:** the file exists and its size matches the stored size.
+- **Local copy missing:** the file path is unavailable or the file was deleted.
+- **Local copy changed:** a file exists at the path but its size differs from the recorded size.
+- **Online only:** no local-file record exists; internet access is required.
+
+Routine listing checks existence and size only; SHA-256 is not recalculated for every PDF. The stored
+checksum is verified during import and re-link. **Re-link moved file** updates the path only when the
+selected file's size and SHA-256 match the stored copy. **Replace with another PDF** copies a new
+authorized file after validation, without overwriting or deleting the previous file. Missing or
+changed files never delete catalogue metadata, study status, notes, or history.
+
+Opening a local PDF re-checks the path immediately; a missing or changed file produces a useful error
+instead of launching the reader. Inaccessible directories and filesystem permission errors are
+reported safely.
 
 Local PDF bytes are never stored in SQLite. The full SQLite backup includes the resource catalogue,
 study progress, and local-copy records (but not the PDF files themselves), so keep the chosen PDF
@@ -732,8 +749,8 @@ files are reported as unavailable and can be re-linked without losing the resour
 
 Previously discovered resources are always read from SQLite and remain visible without internet.
 Resources without a verified local copy are marked **Online only** and require internet access.
-**Offline copy** is shown only when a local file record exists. Opening a remote link never claims that
-the file is available offline.
+**Offline copy** is shown only when the local file exists and its size matches the stored size.
+Opening a remote link never claims that the file is available offline.
 
 ## Backup, restore, and data portability
 

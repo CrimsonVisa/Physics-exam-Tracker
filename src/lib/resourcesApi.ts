@@ -34,6 +34,8 @@ export type LocalResourceFile = {
   sizeBytes: number;
   sha256: string;
   importedAt: string;
+  exists: boolean;
+  sizeMatches: boolean;
 };
 
 export type Resource = {
@@ -148,4 +150,27 @@ export function importResourcePdf(
 
 export function removeResourcePdf(resourceId: number): Promise<void> {
   return invoke<void>('remove_resource_pdf', { resourceId });
+}
+
+export function getResourceLocalFile(resourceId: number): Promise<LocalResourceFile> {
+  return invoke<LocalResourceFile>('get_resource_local_file', { resourceId });
+}
+
+export function relinkResourcePdf(
+  resourceId: number,
+  sourcePath: string,
+): Promise<LocalResourceFile> {
+  return invoke<LocalResourceFile>('relink_resource_pdf', { resourceId, sourcePath });
+}
+
+export function replaceResourcePdf(
+  resourceId: number,
+  sourcePath: string,
+  destinationDir: string,
+): Promise<LocalResourceFile> {
+  return invoke<LocalResourceFile>('replace_resource_pdf', {
+    resourceId,
+    sourcePath,
+    destinationDir,
+  });
 }

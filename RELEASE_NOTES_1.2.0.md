@@ -1,6 +1,6 @@
-# CSIR-NET Physics Tracker 1.2.0 — Stage 1 Notes
+# CSIR-NET Physics Tracker 1.2.0 — Stages 1-2 Notes
 
-Status: **Stage 1 implementation — JSON data portability**
+Status: **Stages 1-2 implementation — JSON portability and local PDF recovery**
 Release date: pending final v1.2.0 completion
 
 ## Stage 1 scope
@@ -22,6 +22,19 @@ Release date: pending final v1.2.0 completion
 - Format 2 imports require schema 10. Format 1 imports continue to accept schema 8, 9, or 10.
 - Database schema remains **10**; no new migration is required.
 
+## Stage 2 scope — local PDF recovery
+
+- Resource listing checks filesystem existence and stored size without rehashing every PDF.
+- Clear states: **Online only**, **Offline copy**, **Local copy missing**, and **Local copy changed**.
+- Missing or changed files retain the catalogue entry, study status, personal notes, and history.
+- **Re-link moved file** validates the stored size and SHA-256 before updating the path.
+- **Replace with another PDF** copies a new authorized PDF without overwriting or deleting the old
+  file.
+- Opening a local PDF re-checks the file immediately and shows a useful error when unavailable.
+- Removing a local file reference keeps the catalogue entry and study history.
+- Inaccessible directories and filesystem errors are handled without deleting metadata.
+- Database schema remains **10**; no migration is required.
+
 ## Safety
 
 - Import prefers a verified safety backup and a single transaction.
@@ -32,10 +45,10 @@ Release date: pending final v1.2.0 completion
 ## Verification
 
 - TypeScript, ESLint with zero warnings, Prettier, Rustfmt, and Clippy with warnings denied passed.
-- **182 frontend tests passed** across 26 files.
-- **164 Rust tests passed**, with 1 ignored synthetic performance test.
+- **184 frontend tests passed** across 26 files.
+- **166 Rust tests passed**, with 1 ignored synthetic performance test.
 - New tests cover format 1 compatibility, format 2 resource round trips, merge preservation, replace
-  ordering, duplicate resource keys, missing local PDFs, checksum mismatches, and transactional
-  rollback.
+  ordering, duplicate resource keys, missing local PDFs, checksum mismatches, transactional rollback,
+  moved/deleted files, changed sizes, re-linking, replacement, removal failures, and opening unavailable files.
 - Database schema remains **10**; no migration was added.
 - The final 1.2.0 installer is not produced in this stage. The current public release remains 1.1.0.

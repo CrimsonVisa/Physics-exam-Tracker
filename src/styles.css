@@ -7151,6 +7151,13 @@ h1 {
   color: var(--error);
 }
 
+.resource-availability-missing,
+.resource-availability-changed {
+  border: 1px solid #e4cf9e;
+  background: #fbf3df;
+  color: #76551e;
+}
+
 .resource-availability-manual {
   border: 1px solid #d8e2df;
   background: #eef4f1;
@@ -7211,8 +7218,26 @@ h1 {
   color: #245d50;
 }
 
+.resource-local-file-missing,
+.resource-local-file-changed {
+  border-color: #e4cf9e;
+  background: #fbf3df;
+  color: #76551e;
+}
+
 .resource-local-file p {
   margin: 0;
+}
+
+.resource-local-warning {
+  margin-top: 7px !important;
+  font-weight: 600;
+}
+
+.resource-local-hint {
+  margin-top: 7px !important;
+  font-size: 0.67rem;
+  line-height: 1.45;
 }
 
 .resource-local-path {

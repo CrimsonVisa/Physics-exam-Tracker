@@ -291,6 +291,50 @@ async fn remove_resource_pdf(app: AppHandle, resource_id: i64) -> Result<(), App
 }
 
 #[tauri::command]
+fn get_resource_local_file(
+    state: tauri::State<'_, db::AppState>,
+    resource_id: i64,
+) -> Result<resources::LocalResourceFile, AppError> {
+    state.with_connection(|connection| resources::local_pdf_status(connection, resource_id))
+}
+
+#[tauri::command]
+async fn relink_resource_pdf(
+    app: AppHandle,
+    resource_id: i64,
+    source_path: String,
+) -> Result<resources::LocalResourceFile, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            resources::relink_local_pdf(connection, resource_id, Path::new(&source_path))
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn replace_resource_pdf(
+    app: AppHandle,
+    resource_id: i64,
+    source_path: String,
+    destination_dir: String,
+) -> Result<resources::LocalResourceFile, AppError> {
+    run_blocking(app, move |state| {
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        state.with_connection(|connection| {
+            resources::replace_local_pdf(
+                connection,
+                resource_id,
+                Path::new(&source_path),
+                Path::new(&destination_dir),
+                &now,
+            )
+        })
+    })
+    .await
+}
+
+#[tauri::command]
 fn get_settings(state: tauri::State<'_, db::AppState>) -> Result<settings::Settings, AppError> {
     state.with_connection(|connection| settings::load(connection))
 }
@@ -1088,6 +1132,9 @@ pub fn run() {
             mark_resource_opened,
             import_resource_pdf,
             remove_resource_pdf,
+            get_resource_local_file,
+            relink_resource_pdf,
+            replace_resource_pdf,
             get_settings,
             update_settings,
             preview_exam_date_change,

@@ -140,6 +140,8 @@ pub struct LocalResourceFile {
     pub size_bytes: i64,
     pub sha256: String,
     pub imported_at: String,
+    pub exists: bool,
+    pub size_matches: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1178,6 +1180,14 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+fn local_file_status(path: &str, stored_size: i64) -> (bool, bool) {
+    let path = Path::new(path);
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => (true, metadata.len() as i64 == stored_size),
+        _ => (false, false),
+    }
+}
+
 pub fn list_resources(connection: &Connection) -> Result<Vec<Resource>, AppError> {
     let mut statement = connection
         .prepare(
@@ -1198,15 +1208,20 @@ pub fn list_resources(connection: &Connection) -> Result<Vec<Resource>, AppError
         .map_err(|error| AppError::database("Resources could not be prepared", error))?;
     let rows = statement
         .query_map([], |row| {
-            let local_file = row
-                .get::<_, Option<String>>(20)?
-                .map(|file_name| LocalResourceFile {
+            let local_file = row.get::<_, Option<String>>(20)?.map(|file_name| {
+                let file_path = row.get::<_, String>(21).unwrap_or_default();
+                let size_bytes = row.get::<_, i64>(22).unwrap_or(0);
+                let (exists, size_matches) = local_file_status(&file_path, size_bytes);
+                LocalResourceFile {
                     file_name,
-                    file_path: row.get::<_, String>(21).unwrap_or_default(),
-                    size_bytes: row.get::<_, i64>(22).unwrap_or(0),
+                    file_path,
+                    size_bytes,
                     sha256: row.get::<_, String>(23).unwrap_or_default(),
                     imported_at: row.get::<_, String>(24).unwrap_or_default(),
-                });
+                    exists,
+                    size_matches,
+                }
+            });
             Ok(Resource {
                 id: row.get(0)?,
                 resource_key: row.get(1)?,
@@ -1237,29 +1252,42 @@ pub fn list_resources(connection: &Connection) -> Result<Vec<Resource>, AppError
 }
 
 pub fn overview(connection: &Connection) -> Result<ResourceOverview, AppError> {
-    let (total, local_count, online_count, removed_count, studying_count, completed_count) =
-        connection
-            .query_row(
-                "SELECT
-                    (SELECT count(*) FROM study_resources),
-                    (SELECT count(*) FROM resource_local_files),
-                    (SELECT count(*) FROM study_resources WHERE availability = 'online'),
-                    (SELECT count(*) FROM study_resources WHERE availability = 'removed'),
-                    (SELECT count(*) FROM resource_progress WHERE study_status = 'studying'),
-                    (SELECT count(*) FROM resource_progress WHERE study_status = 'completed')",
-                [],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
-                },
-            )
-            .map_err(|error| AppError::database("Resource summary could not be read", error))?;
+    let (total, online_count, removed_count, studying_count, completed_count) = connection
+        .query_row(
+            "SELECT
+                (SELECT count(*) FROM study_resources),
+                (SELECT count(*) FROM study_resources WHERE availability = 'online'),
+                (SELECT count(*) FROM study_resources WHERE availability = 'removed'),
+                (SELECT count(*) FROM resource_progress WHERE study_status = 'studying'),
+                (SELECT count(*) FROM resource_progress WHERE study_status = 'completed')",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .map_err(|error| AppError::database("Resource summary could not be read", error))?;
+    let mut local_statement = connection
+        .prepare("SELECT file_path, size_bytes FROM resource_local_files")
+        .map_err(|error| AppError::database("Local PDF summary could not be read", error))?;
+    let local_rows = local_statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|error| AppError::database("Local PDF summary could not be read", error))?;
+    let mut local_count = 0;
+    for row in local_rows {
+        let (path, size) =
+            row.map_err(|error| AppError::database("Local PDF summary could not be read", error))?;
+        if local_file_status(&path, size) == (true, true) {
+            local_count += 1;
+        }
+    }
     let last_discovery = connection
         .query_row(
             "SELECT status, finished_at, pages_ok, pages_failed, resources_seen,
@@ -1472,15 +1500,51 @@ pub fn import_local_pdf(
     destination_dir: &Path,
     now: &str,
 ) -> Result<LocalResourceFile, AppError> {
+    import_local_pdf_internal(
+        connection,
+        resource_id,
+        source_path,
+        destination_dir,
+        now,
+        false,
+    )
+}
+
+pub fn replace_local_pdf(
+    connection: &mut Connection,
+    resource_id: i64,
+    source_path: &Path,
+    destination_dir: &Path,
+    now: &str,
+) -> Result<LocalResourceFile, AppError> {
+    import_local_pdf_internal(
+        connection,
+        resource_id,
+        source_path,
+        destination_dir,
+        now,
+        true,
+    )
+}
+
+fn import_local_pdf_internal(
+    connection: &mut Connection,
+    resource_id: i64,
+    source_path: &Path,
+    destination_dir: &Path,
+    now: &str,
+    allow_replace: bool,
+) -> Result<LocalResourceFile, AppError> {
     ensure_resource_exists(connection, resource_id)?;
-    let existing: bool = connection
+    let existing: Option<String> = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM resource_local_files WHERE resource_id = ?1)",
+            "SELECT file_path FROM resource_local_files WHERE resource_id = ?1",
             [resource_id],
             |row| row.get(0),
         )
+        .optional()
         .map_err(|error| AppError::database("The local copy could not be checked", error))?;
-    if existing {
+    if existing.is_some() && !allow_replace {
         return Err(AppError::validation(
             "localFile",
             "Remove the existing local copy before importing another PDF.",
@@ -1611,12 +1675,23 @@ pub fn import_local_pdf(
     let transaction = connection
         .transaction()
         .map_err(|error| AppError::database("The local PDF record could not be started", error))?;
-    if let Err(error) = transaction.execute(
-        "INSERT INTO resource_local_files (
-            resource_id, file_name, file_path, sha256, size_bytes, imported_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![resource_id, file_name, file_path, sha256, size_bytes, now],
-    ) {
+    let record_result = if existing.is_some() {
+        transaction.execute(
+            "UPDATE resource_local_files
+             SET file_name = ?2, file_path = ?3, sha256 = ?4,
+                 size_bytes = ?5, imported_at = ?6
+             WHERE resource_id = ?1",
+            params![resource_id, file_name, file_path, sha256, size_bytes, now],
+        )
+    } else {
+        transaction.execute(
+            "INSERT INTO resource_local_files (
+                resource_id, file_name, file_path, sha256, size_bytes, imported_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![resource_id, file_name, file_path, sha256, size_bytes, now],
+        )
+    };
+    if let Err(error) = record_result {
         let _ = fs::remove_file(&candidate);
         return Err(AppError::database(
             "The local PDF could not be recorded",
@@ -1637,6 +1712,154 @@ pub fn import_local_pdf(
         size_bytes,
         sha256,
         imported_at: now.to_owned(),
+        exists: true,
+        size_matches: true,
+    })
+}
+
+pub fn local_pdf_status(
+    connection: &Connection,
+    resource_id: i64,
+) -> Result<LocalResourceFile, AppError> {
+    ensure_resource_exists(connection, resource_id)?;
+    let stored = connection
+        .query_row(
+            "SELECT file_name, file_path, size_bytes, sha256, imported_at
+             FROM resource_local_files WHERE resource_id = ?1",
+            [resource_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| AppError::database("The local PDF reference could not be read", error))?;
+    let Some((file_name, file_path, size_bytes, sha256, imported_at)) = stored else {
+        return Err(AppError::validation(
+            "localFile",
+            "This resource does not have a local PDF reference.",
+        ));
+    };
+    let (exists, size_matches) = local_file_status(&file_path, size_bytes);
+    Ok(LocalResourceFile {
+        file_name,
+        file_path,
+        size_bytes,
+        sha256,
+        imported_at,
+        exists,
+        size_matches,
+    })
+}
+
+pub fn relink_local_pdf(
+    connection: &mut Connection,
+    resource_id: i64,
+    source_path: &Path,
+) -> Result<LocalResourceFile, AppError> {
+    ensure_resource_exists(connection, resource_id)?;
+    let stored = connection
+        .query_row(
+            "SELECT size_bytes, sha256, imported_at
+             FROM resource_local_files WHERE resource_id = ?1",
+            [resource_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| AppError::database("The local PDF reference could not be read", error))?;
+    let Some((stored_size, stored_sha256, imported_at)) = stored else {
+        return Err(AppError::validation(
+            "localFile",
+            "This resource does not have a local PDF reference to re-link.",
+        ));
+    };
+    if !source_path.is_file() {
+        return Err(AppError::validation(
+            "sourcePath",
+            "Choose the moved PDF file.",
+        ));
+    }
+    let metadata = fs::metadata(source_path).map_err(|error| {
+        AppError::file_operation("The selected PDF could not be inspected", error)
+    })?;
+    if metadata.len() == 0 || metadata.len() > MAX_LOCAL_PDF_BYTES {
+        return Err(AppError::validation(
+            "sourcePath",
+            "Choose a PDF between 1 byte and 200 MB.",
+        ));
+    }
+    if metadata.len() as i64 != stored_size {
+        return Err(AppError::validation(
+            "sourcePath",
+            "The selected PDF has a different size from the stored local copy. Use Replace local PDF if the file changed.",
+        ));
+    }
+    let mut source = File::open(source_path)
+        .map_err(|error| AppError::file_operation("The selected PDF could not be opened", error))?;
+    let mut header = [0_u8; 5];
+    source
+        .read_exact(&mut header)
+        .map_err(|_| AppError::validation("sourcePath", "This file is not a PDF."))?;
+    if &header != b"%PDF-" {
+        return Err(AppError::validation(
+            "sourcePath",
+            "This file is not a PDF.",
+        ));
+    }
+    source
+        .rewind()
+        .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = source
+            .read(&mut buffer)
+            .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let actual_sha256 = format!("{:x}", hasher.finalize());
+    if actual_sha256 != stored_sha256 {
+        return Err(AppError::validation(
+            "sourcePath",
+            "The selected PDF does not match the stored SHA-256. Choose the moved original file or use Replace local PDF.",
+        ));
+    }
+    let file_name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("resource.pdf")
+        .to_owned();
+    let file_path = source_path.to_string_lossy().to_string();
+    connection
+        .execute(
+            "UPDATE resource_local_files
+             SET file_name = ?2, file_path = ?3
+             WHERE resource_id = ?1",
+            params![resource_id, file_name, file_path],
+        )
+        .map_err(|error| AppError::database("The local PDF path could not be re-linked", error))?;
+    Ok(LocalResourceFile {
+        file_name,
+        file_path,
+        size_bytes: stored_size,
+        sha256: stored_sha256,
+        imported_at,
+        exists: true,
+        size_matches: true,
     })
 }
 
@@ -1656,10 +1879,15 @@ pub fn remove_local_pdf(
         .map_err(|error| AppError::database("The local PDF could not be read", error))?;
     if let Some(path) = path {
         let file_path = PathBuf::from(&path);
-        if file_path.exists() {
-            fs::remove_file(&file_path).map_err(|error| {
-                AppError::file_operation("The local PDF could not be removed", error)
-            })?;
+        match fs::remove_file(&file_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(AppError::file_operation(
+                    "The local PDF could not be removed",
+                    error,
+                ));
+            }
         }
     }
     connection
@@ -2053,6 +2281,8 @@ mod tests {
         )
         .expect("PDF should import");
         assert!(Path::new(&imported.file_path).is_file());
+        assert!(imported.exists);
+        assert!(imported.size_matches);
         assert_eq!(imported.size_bytes, 26);
         assert_eq!(
             imported.sha256,
@@ -2075,6 +2305,114 @@ mod tests {
         assert!(!Path::new(&imported.file_path).exists());
         let after_remove = get_resource(&connection, resource.id).unwrap().unwrap();
         assert!(after_remove.local_file.is_none());
+    }
+
+    #[test]
+    fn local_pdf_states_relink_replace_and_missing_files_are_safe() {
+        let mut connection = test_database();
+        let resource = manual_resource(&connection, "https://example.com/relink.pdf");
+        let source_dir = tempfile::tempdir().expect("source temp");
+        let destination = tempfile::tempdir().expect("destination temp");
+        let source = source_dir.path().join("original.pdf");
+        fs::write(&source, b"%PDF-1.4\ntest pdf content\n").expect("pdf fixture");
+        let imported = import_local_pdf(
+            &mut connection,
+            resource.id,
+            &source,
+            destination.path(),
+            NOW,
+        )
+        .expect("PDF should import");
+        assert!(imported.exists && imported.size_matches);
+
+        let moved = source_dir.path().join("moved.pdf");
+        fs::rename(&imported.file_path, &moved).expect("PDF should move");
+        let missing = local_pdf_status(&connection, resource.id).expect("status should load");
+        assert!(!missing.exists);
+        assert!(!missing.size_matches);
+        let listed = list_resources(&connection).expect("resources should list");
+        assert!(!listed[0].local_file.as_ref().unwrap().exists);
+        assert_eq!(overview(&connection).expect("overview").local_count, 0);
+
+        let relinked =
+            relink_local_pdf(&mut connection, resource.id, &moved).expect("PDF should relink");
+        assert!(relinked.exists && relinked.size_matches);
+        assert_eq!(relinked.file_path, moved.to_string_lossy());
+        assert_eq!(overview(&connection).expect("overview").local_count, 1);
+
+        let wrong_same_size = source_dir.path().join("wrong.pdf");
+        fs::write(&wrong_same_size, b"%PDF-1.4\nnope pdf content\n").expect("wrong pdf");
+        let wrong = relink_local_pdf(&mut connection, resource.id, &wrong_same_size)
+            .expect_err("different checksum should fail");
+        assert_eq!(wrong.field, Some("sourcePath"));
+
+        fs::write(&moved, b"%PDF-1.4\ntest pdf content changed\n").expect("changed pdf");
+        let changed = local_pdf_status(&connection, resource.id).expect("status should load");
+        assert!(changed.exists);
+        assert!(!changed.size_matches);
+        assert_eq!(overview(&connection).expect("overview").local_count, 0);
+
+        let replacement_source = source_dir.path().join("replacement.pdf");
+        fs::write(&replacement_source, b"%PDF-1.4\nreplacement content\n")
+            .expect("replacement pdf");
+        let replaced = replace_local_pdf(
+            &mut connection,
+            resource.id,
+            &replacement_source,
+            destination.path(),
+            NOW,
+        )
+        .expect("replacement should copy");
+        assert!(replaced.exists && replaced.size_matches);
+        assert!(Path::new(&replaced.file_path).is_file());
+        assert!(Path::new(&moved).is_file());
+        assert_ne!(replaced.file_path, moved.to_string_lossy());
+        assert_eq!(overview(&connection).expect("overview").local_count, 1);
+
+        remove_local_pdf(&mut connection, resource.id, NOW).expect("remove should work");
+        assert_eq!(overview(&connection).expect("overview").local_count, 0);
+        assert!(!Path::new(&replaced.file_path).exists());
+        let kept = get_resource(&connection, resource.id)
+            .expect("resource query")
+            .expect("resource should remain");
+        assert!(kept.local_file.is_none());
+    }
+
+    #[test]
+    fn remove_local_pdf_keeps_reference_when_the_file_cannot_be_removed() {
+        let mut connection = test_database();
+        let resource = manual_resource(&connection, "https://example.com/remove-failure.pdf");
+        let source_dir = tempfile::tempdir().expect("source temp");
+        let destination = tempfile::tempdir().expect("destination temp");
+        let source = source_dir.path().join("source.pdf");
+        fs::write(&source, b"%PDF-1.4\ncannot remove\n").expect("pdf");
+        import_local_pdf(
+            &mut connection,
+            resource.id,
+            &source,
+            destination.path(),
+            NOW,
+        )
+        .expect("PDF should import");
+        connection
+            .execute(
+                "UPDATE resource_local_files SET file_path = ?2 WHERE resource_id = ?1",
+                params![resource.id, destination.path().to_string_lossy()],
+            )
+            .expect("path should update to a directory");
+
+        let error = remove_local_pdf(&mut connection, resource.id, NOW)
+            .expect_err("removing a directory should fail");
+        assert_eq!(error.code, "file_operation_error");
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM resource_local_files WHERE resource_id = ?1",
+                [resource.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert!(get_resource(&connection, resource.id).unwrap().is_some());
     }
 
     #[test]

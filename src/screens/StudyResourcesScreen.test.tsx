@@ -35,6 +35,8 @@ const LOCAL_FILE: LocalResourceFile = {
   sizeBytes: 1_048_576,
   sha256: 'a'.repeat(64),
   importedAt: '2026-10-30T11:00:00.000Z',
+  exists: true,
+  sizeMatches: true,
 };
 
 const RESOURCES: Resource[] = [
@@ -182,6 +184,12 @@ function mockBackend() {
         return Promise.resolve(LOCAL_FILE);
       case 'remove_resource_pdf':
         return Promise.resolve(undefined);
+      case 'get_resource_local_file':
+        return Promise.resolve(LOCAL_FILE);
+      case 'relink_resource_pdf':
+        return Promise.resolve(LOCAL_FILE);
+      case 'replace_resource_pdf':
+        return Promise.resolve(LOCAL_FILE);
       case 'mark_resource_opened':
         return Promise.resolve(undefined);
       default:
@@ -208,7 +216,9 @@ describe('study resources screen', () => {
     expect(await screen.findByText('Quantum Mechanics Short Notes')).toBeInTheDocument();
     expect(screen.getByText('Advanced Engineering Mathematics.pdf')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
-    expect(screen.getByText('Offline copy')).toBeInTheDocument();
+    expect(
+      screen.getByText('Offline copy', { selector: '.resource-availability' }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText('Online only', { selector: '.resource-availability' })).toHaveLength(
       2,
     );
@@ -335,9 +345,6 @@ describe('study resources screen', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Open local PDF' })[0]);
     expect(openPathMock).toHaveBeenCalledWith(LOCAL_FILE.filePath);
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Open local' })[0]);
-    expect(openPathMock).toHaveBeenCalledTimes(2);
-
     await userEvent.click(screen.getAllByRole('button', { name: 'Remove local copy' })[0]);
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith('remove_resource_pdf', { resourceId: 2 }),
@@ -351,5 +358,95 @@ describe('study resources screen', () => {
         destinationDir: 'C:\\Users\\Test\\PDF Library',
       }),
     );
+  });
+
+  it('shows missing local files, rejects opening them, and re-links a moved file', async () => {
+    const missing = {
+      ...RESOURCES[1],
+      localFile: { ...LOCAL_FILE, exists: false, sizeMatches: false },
+    };
+    invokeMock.mockImplementation((command: string) => {
+      switch (command) {
+        case 'get_resource_catalogue':
+          return Promise.resolve([missing]);
+        case 'get_resource_overview':
+          return Promise.resolve({ ...OVERVIEW, total: 1, localCount: 0 });
+        case 'get_resource_local_file':
+          return Promise.resolve(missing.localFile);
+        case 'relink_resource_pdf':
+          return Promise.resolve({ ...LOCAL_FILE, exists: true, sizeMatches: true });
+        case 'mark_resource_opened':
+          return Promise.resolve(undefined);
+        default:
+          return Promise.reject(new Error(`Unexpected command: ${command}`));
+      }
+    });
+    openDialogMock.mockResolvedValue(
+      'C:\\Users\\Test\\Moved\\advanced-engineering-mathematics.pdf',
+    );
+    render(<StudyResourcesScreen />);
+    await screen.findByText('Advanced Engineering Mathematics.pdf');
+
+    expect(screen.getByText('Local copy missing')).toBeInTheDocument();
+    expect(screen.getByText('Re-link moved file')).toBeInTheDocument();
+    expect(screen.getByText('Replace with another PDF')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open local PDF' }));
+    expect(openPathMock).not.toHaveBeenCalled();
+    expect(await screen.findByText(/local PDF is missing/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Re-link moved file' }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('relink_resource_pdf', {
+        resourceId: 2,
+        sourcePath: 'C:\\Users\\Test\\Moved\\advanced-engineering-mathematics.pdf',
+      }),
+    );
+    expect(
+      await screen.findByText('Offline copy', { selector: '.resource-availability' }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows changed local files, rejects opening them, and replaces the reference', async () => {
+    const changed = {
+      ...RESOURCES[1],
+      localFile: { ...LOCAL_FILE, exists: true, sizeMatches: false },
+    };
+    invokeMock.mockImplementation((command: string) => {
+      switch (command) {
+        case 'get_resource_catalogue':
+          return Promise.resolve([changed]);
+        case 'get_resource_overview':
+          return Promise.resolve({ ...OVERVIEW, total: 1, localCount: 0 });
+        case 'get_resource_local_file':
+          return Promise.resolve(changed.localFile);
+        case 'replace_resource_pdf':
+          return Promise.resolve({ ...LOCAL_FILE, exists: true, sizeMatches: true });
+        default:
+          return Promise.reject(new Error(`Unexpected command: ${command}`));
+      }
+    });
+    openDialogMock
+      .mockResolvedValueOnce('C:\\Users\\Test\\Downloads\\replacement.pdf')
+      .mockResolvedValueOnce('C:\\Users\\Test\\PDF Library');
+    render(<StudyResourcesScreen />);
+    await screen.findByText('Advanced Engineering Mathematics.pdf');
+
+    expect(screen.getByText('Local copy changed')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Open local PDF' }));
+    expect(openPathMock).not.toHaveBeenCalled();
+    expect(await screen.findByText(/changed size/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Replace with another PDF' }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('replace_resource_pdf', {
+        resourceId: 2,
+        sourcePath: 'C:\\Users\\Test\\Downloads\\replacement.pdf',
+        destinationDir: 'C:\\Users\\Test\\PDF Library',
+      }),
+    );
+    expect(
+      await screen.findByText('Offline copy', { selector: '.resource-availability' }),
+    ).toBeInTheDocument();
   });
 });
