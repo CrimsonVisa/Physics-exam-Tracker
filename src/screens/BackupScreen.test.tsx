@@ -31,13 +31,13 @@ const OVERVIEW: BackupOverview = {
   },
   defaultDirectory: 'C:\\Users\\Test\\AppData\\backups',
   schemaVersion: 9,
-  applicationVersion: '1.0.0',
+  applicationVersion: '1.1.0',
   databaseId: '0123456789abcdef0123456789abcdef',
 };
 
 const MANIFEST = {
   formatVersion: 1,
-  applicationVersion: '1.0.0',
+  applicationVersion: '1.1.0',
   schemaVersion: 9,
   createdAt: '2026-10-30T10:00:00.000Z',
   databaseId: OVERVIEW.databaseId,
@@ -60,7 +60,7 @@ const JSON_PREVIEW: JsonImportPreview = {
   fileName: 'export.json',
   fileSha256: 'b'.repeat(64),
   formatVersion: 1,
-  applicationVersion: '1.0.0',
+  applicationVersion: '1.1.0',
   schemaVersion: 9,
   exportedAt: '2026-10-30T10:00:00.000Z',
   databaseId: OVERVIEW.databaseId,

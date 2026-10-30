@@ -1,0 +1,48 @@
+{
+  "CLASS ROOM NOTES SET-I": {
+    "": [
+      {
+        "examName": "Mathematical Method of Physics",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/noteMaths123/view?usp=sharing",
+        "ansUrl": ""
+      },
+      {
+        "examName": "Duplicate Mathematical Method",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/noteMaths123/view?usp=sharing",
+        "ansUrl": ""
+      }
+    ]
+  },
+  "Hand Written Short Notes": {
+    "": [
+      {
+        "examName": "Quantum Mechanics Short Notes",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/noteQuantum456/view?usp=sharing",
+        "ansUrl": ""
+      }
+    ]
+  },
+  "Mathematics Formula": {
+    "": [
+      {
+        "examName": "Vector Calculus Formula Sheet",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/formula789/view?usp=sharing",
+        "ansUrl": ""
+      }
+    ]
+  },
+  "ASSIGNMENT": {
+    "": [
+      {
+        "examName": "Classical Mechanics Assignment",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/assignment321/view?usp=sharing",
+        "ansUrl": ""
+      }
+    ]
+  }
+}

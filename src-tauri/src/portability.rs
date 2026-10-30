@@ -2077,8 +2077,8 @@ mod tests {
         let envelope: JsonExportEnvelope =
             serde_json::from_slice(&bytes).expect("JSON should parse");
         assert_eq!(envelope.format_version, 1);
-        assert_eq!(envelope.schema_version, 9);
-        assert_eq!(envelope.application_version, "1.0.0");
+        assert_eq!(envelope.schema_version, 10);
+        assert_eq!(envelope.application_version, "1.1.0");
         assert_eq!(envelope.import_batch_id.as_deref().map(str::len), Some(32));
         assert_eq!(envelope.tables.keys().count(), 16);
         assert_eq!(envelope.record_counts["study_sessions"], 1);

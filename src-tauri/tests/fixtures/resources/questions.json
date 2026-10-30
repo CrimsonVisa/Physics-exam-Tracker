@@ -1,0 +1,42 @@
+{
+  "CSIR-NET PHYSICS UNSOLVED PREVIOUS PAPER": {
+    "": [
+      {
+        "examName": "Dec 2011",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/qpDec2011/view?usp=sharing",
+        "ansUrl": ""
+      }
+    ]
+  },
+  "CSIR-NET PHYSICS SOLVED PREVIOUS PAPER": {
+    "JUNE 2011 TO DEC 2018": [
+      {
+        "examName": "Quantum Mechanics NET",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/solQuantum/view?usp=sharing",
+        "ansUrl": "https://drive.google.com/file/d/ansQuantum/view?usp=sharing"
+      }
+    ]
+  },
+  "SET PAPER I": {
+    "": [
+      {
+        "examName": "SET Paper I December 2019",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/open?id=setPaperOne",
+        "ansUrl": ""
+      }
+    ]
+  },
+  "SET EXAM CUT-OFF": {
+    "": [
+      {
+        "examName": "SET Cut-off 2019",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/file/d/setCutoff/view?usp=sharing",
+        "ansUrl": ""
+      }
+    ]
+  }
+}

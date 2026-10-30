@@ -1,0 +1,22 @@
+{
+  "General aptitude": {
+    "": [
+      {
+        "examName": "General Aptitude Practice.pdf",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/open?id=bookAptitude",
+        "ansUrl": ""
+      }
+    ]
+  },
+  "Mathematical Method of Physics": {
+    "": [
+      {
+        "examName": "Advanced Engineering Mathematics.pdf",
+        "subject": "-",
+        "qpUrl": "https://drive.google.com/open?id=bookMaths",
+        "ansUrl": ""
+      }
+    ]
+  }
+}

@@ -220,6 +220,23 @@ impl AppError {
         }
     }
 
+    pub fn resource_not_found() -> Self {
+        Self {
+            code: "resource_not_found",
+            message: "This study resource is no longer available. Refresh the list and try again."
+                .to_owned(),
+            field: None,
+        }
+    }
+
+    pub fn resource_discovery_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "resource_discovery_failed",
+            message: message.into(),
+            field: None,
+        }
+    }
+
     pub fn timer_active() -> Self {
         Self {
             code: "timer_active",

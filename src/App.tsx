@@ -20,6 +20,7 @@ import MockTestsScreen from './screens/MockTestsScreen';
 import PyqScreen from './screens/PyqScreen';
 import RevisionScreen from './screens/RevisionScreen';
 import SessionsScreen from './screens/SessionsScreen';
+import StudyResourcesScreen from './screens/StudyResourcesScreen';
 import SyllabusScreen from './screens/SyllabusScreen';
 import TimerScreen from './screens/TimerScreen';
 
@@ -34,7 +35,8 @@ type AppView =
   | 'mock-tests'
   | 'analytics'
   | 'backup'
-  | 'syllabus';
+  | 'syllabus'
+  | 'resources';
 
 type FormState = {
   examDate: string;
@@ -254,6 +256,14 @@ function Sidebar({
         >
           Syllabus
         </button>
+        <button
+          type="button"
+          className={`nav-item nav-button${activeView === 'resources' ? ' nav-item-active' : ''}`}
+          aria-current={activeView === 'resources' ? 'page' : undefined}
+          onClick={() => onNavigate('resources')}
+        >
+          Resources
+        </button>
       </nav>
 
       <p className="sidebar-note">
@@ -276,6 +286,7 @@ const KNOWN_VIEWS: AppView[] = [
   'analytics',
   'backup',
   'syllabus',
+  'resources',
 ];
 
 export default function App({ today }: AppProps) {
@@ -514,6 +525,8 @@ export default function App({ today }: AppProps) {
       <main className="main-area" id="main-content" tabIndex={-1}>
         {view === 'syllabus' ? (
           <SyllabusScreen />
+        ) : view === 'resources' ? (
+          <StudyResourcesScreen />
         ) : view === 'timer' ? (
           <TimerScreen />
         ) : view === 'sessions' ? (

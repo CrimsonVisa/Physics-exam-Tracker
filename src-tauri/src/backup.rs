@@ -1033,8 +1033,8 @@ mod tests {
                 .filter_map(Result::ok)
                 .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp"))
         );
-        assert_eq!(result.manifest.schema_version, 9);
-        assert_eq!(result.manifest.application_version, "1.0.0");
+        assert_eq!(result.manifest.schema_version, 10);
+        assert_eq!(result.manifest.application_version, "1.1.0");
         assert_eq!(result.manifest.integrity_check, "ok");
         assert_eq!(
             result.manifest.backup_size_bytes,
@@ -1130,8 +1130,8 @@ mod tests {
 
         let error = preview_restore(&path, 7, None).expect_err("newer schema should fail");
         assert!(error.message.contains("Update the app"));
-        let preview = preview_restore(&path, 9, None).expect("current schema should load");
-        assert_eq!(preview.manifest.schema_version, 9);
+        let preview = preview_restore(&path, 10, None).expect("current schema should load");
+        assert_eq!(preview.manifest.schema_version, 10);
         assert!(!preview.requires_upgrade);
         assert!(
             preview
@@ -1345,7 +1345,7 @@ mod compatibility_tests {
             Some("0123456789abcdef0123456789abcdef"),
         )
         .expect("older backup should succeed");
-        let preview = preview_restore(&destination.path().join(&result.file_name), 9, None)
+        let preview = preview_restore(&destination.path().join(&result.file_name), 10, None)
             .expect("older schema should preview");
         assert!(preview.requires_upgrade);
         assert!(

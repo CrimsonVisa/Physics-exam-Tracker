@@ -12,6 +12,7 @@ mod planner;
 mod portability;
 mod pyq;
 mod reschedule;
+mod resources;
 mod revision;
 mod sessions;
 mod settings;
@@ -193,6 +194,97 @@ async fn apply_json_import(
                 &expected_sha256,
                 &data_dir,
             )
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+fn get_resource_catalogue(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<Vec<resources::Resource>, AppError> {
+    state.with_connection(|connection| resources::list_resources(connection))
+}
+
+#[tauri::command]
+fn get_resource_overview(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<resources::ResourceOverview, AppError> {
+    state.with_connection(|connection| resources::overview(connection))
+}
+
+#[tauri::command]
+async fn refresh_resource_catalogue(
+    app: AppHandle,
+) -> Result<resources::DiscoverySummary, AppError> {
+    run_blocking(app, |state| {
+        let mut fetcher = resources::HttpFetcher::new()?;
+        let fetched = resources::fetch_catalogue(&mut fetcher);
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        state.with_connection(|connection| {
+            resources::apply_fetched_discovery(connection, fetched, &now)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+fn create_manual_resource(
+    state: tauri::State<'_, db::AppState>,
+    resource: resources::ManualResourceInput,
+) -> Result<resources::Resource, AppError> {
+    state.with_connection(|connection| resources::create_manual(connection, resource))
+}
+
+#[tauri::command]
+fn update_resource_progress(
+    state: tauri::State<'_, db::AppState>,
+    resource_id: i64,
+    progress: resources::ResourceProgressInput,
+) -> Result<resources::Resource, AppError> {
+    let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    state.with_connection(|connection| {
+        resources::update_progress(connection, resource_id, progress, &now)
+    })
+}
+
+#[tauri::command]
+fn mark_resource_opened(
+    state: tauri::State<'_, db::AppState>,
+    resource_id: i64,
+) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    state.with_connection(|connection| resources::mark_opened(connection, resource_id, &now))
+}
+
+#[tauri::command]
+async fn import_resource_pdf(
+    app: AppHandle,
+    resource_id: i64,
+    source_path: String,
+    destination_dir: String,
+) -> Result<resources::LocalResourceFile, AppError> {
+    run_blocking(app, move |state| {
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        state.with_connection(|connection| {
+            resources::import_local_pdf(
+                connection,
+                resource_id,
+                Path::new(&source_path),
+                Path::new(&destination_dir),
+                &now,
+            )
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_resource_pdf(app: AppHandle, resource_id: i64) -> Result<(), AppError> {
+    run_blocking(app, move |state| {
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        state.with_connection(|connection| {
+            resources::remove_local_pdf(connection, resource_id, &now)
         })
     })
     .await
@@ -988,6 +1080,14 @@ pub fn run() {
             export_json_data,
             preview_json_import,
             apply_json_import,
+            get_resource_catalogue,
+            get_resource_overview,
+            refresh_resource_catalogue,
+            create_manual_resource,
+            update_resource_progress,
+            mark_resource_opened,
+            import_resource_pdf,
+            remove_resource_pdf,
             get_settings,
             update_settings,
             preview_exam_date_change,

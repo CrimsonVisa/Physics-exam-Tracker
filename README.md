@@ -2,43 +2,45 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Release 1.0.0 status:** the preparation dashboard, persistent planning settings, exam countdown,
+**Release 1.1.0 status:** the preparation dashboard, persistent planning settings, exam countdown,
 official-source Physical Sciences syllabus tracker, persisted study timer, study-session history, dated
 checklist tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank,
 mock-test history, CSV import workflows, outcome analytics, configurable spaced-repetition revision
 scheduler, study trends, topic intelligence, preparation timeline, SQLite-backed dashboard
 customization, verified full-database backup and restore, automatic backup retention, repeat-safe JSON
-imports, per-dataset CSV export, and complete versioned JSON portability are implemented. The syllabus
+imports, per-dataset CSV export, complete versioned JSON portability, and a Study Resources catalogue
+with manual source refresh and an optional local PDF library are implemented. The syllabus
 is seeded with 182 topics across General Aptitude and the nine Physical Sciences units, and each topic
 can store a personal status, priority, confidence rating, and notes. The timer records focus sessions
 with restart and sleep recovery. Exam-date changes use a review-and-apply confirmation before any future
 exam-anchored task moves. CSV templates are generated locally and saved to the user's Downloads folder.
 
-See [RELEASE_NOTES_1.0.0.md](RELEASE_NOTES_1.0.0.md) for the release candidate summary.
+See [RELEASE_NOTES_1.1.0.md](RELEASE_NOTES_1.1.0.md) for the release summary.
 
 ## Release
 
-- Product: **CSIR-NET Physics Tracker 1.0.0**
+- Product: **CSIR-NET Physics Tracker 1.1.0**
 - Platform: Windows 10/11 x64
 - Installer: NSIS, per-current-user by default
 - Data: local SQLite database under `%APPDATA%\com.crimsonvisa.csirnetphysics`
-- Network requirement: none for core functionality
+- Network requirement: none for core study functionality; resource discovery and remote links require
+  internet access
 - Backup encryption: **not implemented**; backup and export files are unencrypted
 
 ### Verified release artifact
 
-- Installer: `src-tauri\target\release\bundle\nsis\CSIR-NET Physics Tracker_1.0.0_x64-setup.exe`
-- Installer size: 3,750,533 bytes (3.58 MiB)
-- Installer SHA-256: `445856791BF7629004762C19CEFF74994EF0901A8CB35E74B3276F5729BF6A30`
-- Standalone executable SHA-256: `21D226FFD949AE6F164C648CCE058C0B6562FF19E041BD31583675C2BB451E05`
+- Installer: `src-tauri\target\release\bundle\nsis\CSIR-NET Physics Tracker_1.1.0_x64-setup.exe`
+- Installer size: 5,901,285 bytes (5.63 MiB)
+- Installer SHA-256: `378839FD7A9D558E8257D955D94964972D85B4B7ECD336151475D8AF0785BD2E`
+- Standalone executable SHA-256: `48942C7C25012F874A81D984B0FF4726B14BA2F0E010449E7E2E7D412B574C0C`
 - Default install location: `%LOCALAPPDATA%\CSIR-NET Physics Tracker`
 - Start Menu shortcut: `CSIR-NET Physics Tracker`
 - Uninstall removes program files and shortcuts. `%APPDATA%\com.crimsonvisa.csirnetphysics` is retained.
 
 On 30 October 2026 the installer was verified with silent install, launch, uninstall, reinstall, and a
-second uninstall. The existing schema-9 database and settings survived every step. First-run
+second uninstall. The existing schema-10 database and settings survived every step. First-run
 initialization was also verified by the release executable against an isolated empty data profile
-(schema 9, default settings, 182 topics, 9 dashboard sections). A separate physical clean Windows VM
+(schema 10, default settings, 182 topics, 9 dashboard sections). A separate physical clean Windows VM
 was not available, so that last check is application-level rather than a second-machine install test.
 
 ## System requirements
@@ -50,7 +52,7 @@ was not available, so that last check is application-level rather than a second-
 
 ## Installation
 
-1. Run `CSIR-NET Physics Tracker_1.0.0_x64-setup.exe`.
+1. Run `CSIR-NET Physics Tracker_1.1.0_x64-setup.exe`.
 2. The default installer mode is per-current-user and does not require Administrator access.
 3. A Start Menu shortcut is created under **CSIR-NET Physics Tracker**.
 4. Launch from the Start Menu.
@@ -166,7 +168,7 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-9), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+10), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
@@ -178,8 +180,11 @@ Upgrading a version-6 database adds the dashboard section-preference table and s
 layout without changing any Phase 1–7 data. Upgrading a version-7 database adds database identity and
 backup configuration tables without changing any study record, and creates the identifier used by
 backup manifests. Upgrading a version-8 database adds import-batch provenance for repeat-safe JSON
-merges without changing any study record. Every upgrade from an existing database first creates a
-verified pre-migration snapshot; if that snapshot fails, the upgrade is aborted.
+merges without changing any study record. Upgrading a version-9 database adds the resource catalogue,
+independent resource-study progress, local PDF records, and discovery-run history without changing
+settings, syllabus progress, sessions, planner records, PYQs, mocks, or revision history. Every upgrade
+from an existing database first creates a verified pre-migration snapshot; if that snapshot fails, the
+upgrade is aborted.
 
 The initial single-row settings record uses:
 
@@ -658,6 +663,73 @@ and a link to the relevant dashboard section. Comparison text is descriptive and
 causation. No readiness score, rank prediction, selection probability, or success percentage is
 generated.
 
+## Study resources
+
+The **Resources** screen catalogues study material linked from
+[csirnetphysics.in](https://www.csirnetphysics.in/). Metadata is stored locally; files are not
+redistributed by this application.
+
+### Discovery sources
+
+Manual **Refresh catalogue** reads these known pages only:
+
+- `https://www.csirnetphysics.in/p/hand-written-notes_28.html`
+- `https://www.csirnetphysics.in/p/previous-questions-paper.html`
+- `https://www.csirnetphysics.in/p/important-topics.html`
+- `https://www.csirnetphysics.in/p/book.html`
+- `https://www.csirnetphysics.in/p/syllabus.html`
+- `https://www.csirnetphysics.in/p/nptel-video-link.html`
+
+The notes, questions, and books pages expose public Google Apps Script catalogues referenced in their
+HTML. The app fetches those page data sources only during a manual refresh, waits at least 1.25 seconds
+between requests, caps responses at 5 MB, and stops immediately on HTTP 429. There is no startup
+scraping, no background polling, no retry storm, and no authentication bypass. If a page fails, its
+existing resources and every user note/status remain in the database. A source page that successfully
+parses and no longer lists a link marks that link `removed` rather than deleting it.
+
+The catalogue currently groups resources into handwritten notes, classroom notes, assignments,
+formula sheets, previous-year papers, important topics, recommended books, NPTEL courses, YouTube
+playlists, and other educational resources. Unit mapping covers General Aptitude and all nine Physical
+Sciences units; resource titles are mapped to a specific syllabus topic code only when the title
+matches a topic conservatively. Full multi-unit papers use **All Units**, and unresolved entries use
+**Unmapped** rather than an invented mapping.
+
+### Manual resources and study tracking
+
+If discovery is blocked, use **Add a resource manually**. The form accepts a title, resource type,
+unit, optional topic code, original URL, optional source page URL, and description. Links must use
+HTTP or HTTPS, duplicates are rejected, and any topic code must exist in the active syllabus.
+
+Each resource has independent study status (Not started, Studying, Completed, Skipped), personal
+notes, and a last-opened timestamp. These values do not change syllabus progress or revision history.
+
+### Google Drive and local PDFs
+
+Original Google Drive file and folder URLs are preserved exactly. The app extracts file/folder IDs
+where possible, opens the original URL in the system browser, and never requests Google credentials.
+It does not enumerate folders, bypass sharing restrictions, or assume a Drive file is downloadable.
+
+Use **Import authorized PDF** to copy a PDF you already have permission to store:
+
+1. Choose the PDF.
+2. Choose a local PDF library folder.
+3. The app validates the `%PDF-` header and the 1-byte–200 MB limit, avoids overwriting files, records
+   the absolute path and SHA-256, and keeps the original catalogue entry.
+4. Open the local copy through the default PDF reader or remove it later. Removing the local copy keeps
+   the catalogue entry and study history.
+
+Local PDF bytes are never stored in SQLite. The full SQLite backup includes the resource catalogue,
+study progress, and local-copy records (but not the PDF files themselves), so keep the chosen PDF
+folder alongside backups if you need the files. JSON export currently covers the core study tables and
+does not include the resource catalogue or machine-specific local PDF paths.
+
+### Offline behavior
+
+Previously discovered resources are always read from SQLite and remain visible without internet.
+Resources without a verified local copy are marked **Online only** and require internet access.
+**Offline copy** is shown only when a local file record exists. Opening a remote link never claims that
+the file is available offline.
+
 ## Backup, restore, and data portability
 
 Migration `0008_backup_and_portability.sql` adds two `STRICT` tables:
@@ -743,7 +815,7 @@ batch identifier and result counts there. Preview detects an export that was alr
 disables merge, preventing duplicate sessions and tasks. Complete replacement remains an explicit
 opt-in and can intentionally reapply a file.
 
-JSON import accepts schema 8 or 9 exports and validates the whole file in a temporary schema-9
+JSON import accepts schema 8, 9, or 10 exports and validates the whole file in a temporary schema-10
 database before taking a safety backup or writing current data. Duplicate
 primary keys, duplicate unique keys, missing fields, unknown fields, malformed JSON, incompatible
 format/schema versions, and relationship violations reject the entire file.
@@ -827,7 +899,7 @@ The executable and bundle are generated from the product identity in `src-tauri/
 
 - Product: CSIR-NET Physics Tracker
 - Identifier: `com.crimsonvisa.csirnetphysics`
-- Version: `1.0.0`
+- Version: `1.1.0`
 
 ## Project structure
 
@@ -855,6 +927,7 @@ src/                     React frontend and tests
   screens/PyqScreen.tsx         PYQ filters, history, CRUD, and CSV workflow
   screens/MockTestsScreen.tsx   mock-test history, scoring, CRUD, and CSV workflow
   screens/AnalyticsScreen.tsx   study trends, performance, topic evidence, and timeline tabs
+  screens/StudyResourcesScreen.tsx source catalogue, filters, manual registration, and local PDFs
   screens/BackupScreen.tsx      verified backups, restore, automatic settings, CSV/JSON portability
   lib/dateOnly.ts               timezone-independent date and calendar utilities
   lib/timeOfDay.ts              strict local HH:MM validation and planned duration
@@ -870,6 +943,7 @@ src/                     React frontend and tests
   lib/analyticsApi.ts           typed filtered PYQ/mock performance command wrappers
   lib/preparationApi.ts         typed dashboard, study analytics, topic, timeline, and layout wrappers
   lib/backupApi.ts              typed backup, restore, CSV, and JSON portability wrappers
+  lib/resourcesApi.ts           typed resource catalogue, discovery, progress, and PDF wrappers
   lib/revisionApi.ts            typed revision scheduler and reminder command wrappers
   lib/revisionScheduling.ts     frontend interval-preview mirror of the Rust algorithm
   lib/csvImportApi.ts           shared import preview/result types
@@ -896,6 +970,7 @@ src-tauri/               Tauri configuration and Rust backend
   src/dashboard.rs       Preparation overview, insights, timeline, and SQLite layout preferences
   src/backup.rs          Online SQLite snapshots, manifests, automatic retention, and restore validation
   src/portability.rs     CSV datasets, complete JSON export, validated merge/replace import
+  src/resources.rs       Source-page discovery, resource metadata, study status, and local PDFs
   src/revision.rs        Spaced-repetition scheduling, history, recommendations, and reminders
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
