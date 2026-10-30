@@ -875,8 +875,10 @@ export default function BackupScreen({
         </div>
         <p className="settings-lede">
           The whole file is validated in a temporary database before a safety backup or write. Merge
-          appends history and remaps topic references by stable code. Replace preserves exported IDs
-          and relationships after clearing current user records.
+          appends core history, matches resources by stable resource key, and preserves existing
+          resource progress, notes, and local PDF references. Replace preserves exported IDs,
+          relationships, and valid local-file references after clearing current records. Legacy
+          format 1 exports contain core records only; format 2 adds resources and local references.
         </p>
         <div className="form-footer">
           <button
@@ -912,6 +914,18 @@ export default function BackupScreen({
                 <dd>{countRows(importPreview.recordCounts)}</dd>
               </div>
               <div>
+                <dt>Resources</dt>
+                <dd>{importPreview.recordCounts.study_resources ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Resource progress</dt>
+                <dd>{importPreview.recordCounts.resource_progress ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Local PDF references</dt>
+                <dd>{importPreview.recordCounts.resource_local_files ?? 0}</dd>
+              </div>
+              <div>
                 <dt>Source application</dt>
                 <dd>{importPreview.applicationVersion}</dd>
               </div>
@@ -930,7 +944,7 @@ export default function BackupScreen({
             )}
             {importPreview.conflicts.length > 0 && (
               <div className="backup-conflict-list">
-                <h4>Merge conflicts detected</h4>
+                <h4>Conflicts and preservation notes</h4>
                 <ul>
                   {importPreview.conflicts.map((conflict) => (
                     <li key={`${conflict.table}-${conflict.reason}`}>
@@ -993,6 +1007,13 @@ export default function BackupScreen({
               {importResult.conflicting} · rejected {importResult.rejected}. Safety backup:{' '}
               {importResult.safetyBackupFile}.
             </p>
+            {importResult.perTable.resource_local_files && (
+              <p className="backup-result-copy">
+                Local PDF references: imported {importResult.perTable.resource_local_files.imported}{' '}
+                · skipped {importResult.perTable.resource_local_files.skipped}. Missing or changed
+                PDF files are never shown as offline copies.
+              </p>
+            )}
             <ul>
               {Object.entries(importResult.perTable).map(([table, result]) => (
                 <li key={table}>

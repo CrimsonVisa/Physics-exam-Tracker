@@ -31,13 +31,13 @@ const OVERVIEW: BackupOverview = {
   },
   defaultDirectory: 'C:\\Users\\Test\\AppData\\backups',
   schemaVersion: 9,
-  applicationVersion: '1.1.0',
+  applicationVersion: '1.2.0',
   databaseId: '0123456789abcdef0123456789abcdef',
 };
 
 const MANIFEST = {
   formatVersion: 1,
-  applicationVersion: '1.1.0',
+  applicationVersion: '1.2.0',
   schemaVersion: 9,
   createdAt: '2026-10-30T10:00:00.000Z',
   databaseId: OVERVIEW.databaseId,
@@ -59,15 +59,22 @@ const RESTORE_PREVIEW: RestorePreview = {
 const JSON_PREVIEW: JsonImportPreview = {
   fileName: 'export.json',
   fileSha256: 'b'.repeat(64),
-  formatVersion: 1,
-  applicationVersion: '1.1.0',
-  schemaVersion: 9,
+  formatVersion: 2,
+  applicationVersion: '1.2.0',
+  schemaVersion: 10,
   exportedAt: '2026-10-30T10:00:00.000Z',
   databaseId: OVERVIEW.databaseId,
   importBatchId: 'c'.repeat(32),
   alreadyImported: null,
-  recordCounts: { settings: 1, study_sessions: 2, pyq_attempts: 3 },
-  existingCounts: { study_sessions: 1 },
+  recordCounts: {
+    settings: 1,
+    study_sessions: 2,
+    pyq_attempts: 3,
+    study_resources: 4,
+    resource_progress: 2,
+    resource_local_files: 1,
+  },
+  existingCounts: { study_sessions: 1, study_resources: 1 },
   conflicts: [
     {
       table: 'pyq_attempts',
@@ -144,6 +151,7 @@ function mockBackend() {
         rejected: 0,
         perTable: {
           study_sessions: { imported: 2, skipped: 0, conflicting: 0, rejected: 0 },
+          resource_local_files: { imported: 0, skipped: 1, conflicting: 0, rejected: 0 },
         },
         safetyBackupFile: 'safety-import.sqlite3',
         batchId: JSON_PREVIEW.importBatchId,
@@ -270,6 +278,9 @@ describe('backup and data management screen', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Choose JSON export to import' }));
     expect(await screen.findByText('Validated import preview')).toBeInTheDocument();
+    expect(screen.getByText('Resources')).toBeInTheDocument();
+    expect(screen.getByText('Resource progress')).toBeInTheDocument();
+    expect(screen.getByText('Local PDF references')).toBeInTheDocument();
     expect(screen.getByText(/Matching import keys are skipped/)).toBeInTheDocument();
     expect(
       screen.getByText('Merge keeps current settings and remaps topics by code.'),
@@ -285,6 +296,7 @@ describe('backup and data management screen', () => {
     );
     expect(await screen.findByText('Import complete')).toBeInTheDocument();
     expect(screen.getByText(/Imported 5/)).toBeInTheDocument();
+    expect(screen.getByText(/Local PDF references: imported 0 · skipped 1/)).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole('button', { name: 'Reload application with imported data' }),
     );

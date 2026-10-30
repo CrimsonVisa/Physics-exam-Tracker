@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -16,14 +16,45 @@ use uuid::Uuid;
 
 use crate::{backup, db, error::AppError};
 
-pub const JSON_EXPORT_FORMAT_VERSION: u32 = 1;
+pub const JSON_EXPORT_FORMAT_VERSION: u32 = 2;
+pub const MIN_JSON_IMPORT_FORMAT_VERSION: u32 = 1;
 pub const MIN_JSON_IMPORT_SCHEMA_VERSION: i64 = 8;
 pub const MAX_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
 pub const CSV_BOM: &str = "\u{feff}";
 
-const USER_TABLES: [&str; 16] = backup::BACKUP_TABLES;
+const CORE_TABLES: [&str; 16] = backup::BACKUP_TABLES;
 
-const REPLACE_DELETE_ORDER: [&str; 16] = [
+const RESOURCE_TABLES: [&str; 4] = [
+    "study_resources",
+    "resource_progress",
+    "resource_local_files",
+    "resource_discovery_runs",
+];
+
+const V2_TABLES: [&str; 20] = [
+    "settings",
+    "syllabus_sources",
+    "syllabus_sections",
+    "syllabus_topics",
+    "syllabus_progress",
+    "timer_settings",
+    "timer_state",
+    "study_sessions",
+    "checklist_tasks",
+    "planned_study_blocks",
+    "pyq_attempts",
+    "mock_tests",
+    "revision_settings",
+    "revision_schedules",
+    "revision_history",
+    "dashboard_sections",
+    "study_resources",
+    "resource_progress",
+    "resource_local_files",
+    "resource_discovery_runs",
+];
+
+const CORE_DELETE_ORDER: [&str; 16] = [
     "dashboard_sections",
     "revision_history",
     "revision_schedules",
@@ -41,6 +72,49 @@ const REPLACE_DELETE_ORDER: [&str; 16] = [
     "syllabus_sources",
     "settings",
 ];
+
+const V2_DELETE_ORDER: [&str; 20] = [
+    "resource_local_files",
+    "resource_progress",
+    "resource_discovery_runs",
+    "study_resources",
+    "dashboard_sections",
+    "revision_history",
+    "revision_schedules",
+    "revision_settings",
+    "mock_tests",
+    "pyq_attempts",
+    "planned_study_blocks",
+    "checklist_tasks",
+    "study_sessions",
+    "timer_state",
+    "timer_settings",
+    "syllabus_progress",
+    "syllabus_topics",
+    "syllabus_sections",
+    "syllabus_sources",
+    "settings",
+];
+
+fn tables_for_format(format_version: u32) -> &'static [&'static str] {
+    if format_version >= 2 {
+        &V2_TABLES
+    } else {
+        &CORE_TABLES
+    }
+}
+
+fn delete_order_for_format(format_version: u32) -> &'static [&'static str] {
+    if format_version >= 2 {
+        &V2_DELETE_ORDER
+    } else {
+        &CORE_DELETE_ORDER
+    }
+}
+
+fn format_includes_resources(format_version: u32) -> bool {
+    format_version >= 2
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -549,7 +623,7 @@ pub fn export_json(
     let database_id = backup::ensure_database_identifier(connection, None)?;
     let mut tables = BTreeMap::new();
     let mut record_counts = BTreeMap::new();
-    for table in USER_TABLES {
+    for table in V2_TABLES {
         let rows = table_to_json(connection, table)?;
         record_counts.insert(table.to_owned(), rows.len() as i64);
         tables.insert(table.to_owned(), rows);
@@ -620,12 +694,12 @@ fn validate_export_shape(parsed: &Value, envelope: &JsonExportEnvelope) -> Resul
         .get("tables")
         .and_then(Value::as_object)
         .ok_or_else(|| AppError::export_failed("The JSON export tables are missing."))?;
-    for table in USER_TABLES {
+    for table in tables_for_format(envelope.format_version) {
         let rows = tables
-            .get(table)
+            .get(*table)
             .and_then(Value::as_array)
             .ok_or_else(|| AppError::export_failed("A JSON export table is missing."))?;
-        if rows.len() as i64 != envelope.record_counts.get(table).copied().unwrap_or(-1) {
+        if rows.len() as i64 != envelope.record_counts.get(*table).copied().unwrap_or(-1) {
             return Err(AppError::export_failed(
                 "The JSON export table counts did not validate.",
             ));
@@ -760,13 +834,33 @@ pub fn preview_json_import(
     validate_envelope_with_temporary_database(&envelope)?;
     let import_batch_id = effective_import_batch_id(&envelope, &sha256)?;
     let already_imported = lookup_import_batch(connection, &import_batch_id)?;
-    let existing_counts = backup::table_counts(connection)?;
+    let existing_counts = existing_table_counts(connection)?;
     let conflicts = detect_merge_conflicts(connection, &envelope)?;
     let mut warnings = vec![
         "Every record is validated in a temporary database before any application data is changed."
             .to_owned(),
         "A verified safety backup of the current database is created before import.".to_owned(),
     ];
+    if format_includes_resources(envelope.format_version) {
+        let invalid_local = invalid_local_file_rows(&envelope.tables["resource_local_files"]);
+        if invalid_local > 0 {
+            warnings.push(format!(
+                "{invalid_local} local PDF reference(s) are missing, have a different size, or fail SHA-256 verification. They will be skipped; the resource catalogue and study progress remain."
+            ));
+        }
+        if existing_counts.get("study_resources").copied().unwrap_or(0) > 0
+            || existing_counts
+                .get("resource_local_files")
+                .copied()
+                .unwrap_or(0)
+                > 0
+        {
+            warnings.push(
+                "Complete replacement, if selected, removes current resource records, study progress, and local-file references. PDF files on disk are not deleted."
+                    .to_owned(),
+            );
+        }
+    }
     if let Some(previous) = &already_imported {
         warnings.push(format!(
             "This exact export was already imported with the {} strategy on {}. Merge is disabled to prevent duplicate sessions and tasks.",
@@ -812,8 +906,16 @@ pub fn preview_json_import(
         warnings,
         merge_supported,
         replacement_supported: true,
-        merge_description: "Merge appends study history under new local IDs, matches syllabus topics by stable code, skips conflicting progress/schedules/import-key rows, and keeps the current settings, timer state, revision rules, and dashboard layout.".to_owned(),
-        replacement_description: "Replace removes all current user records and inserts the complete validated export, preserving the exported IDs and relationships. Current backup settings and the local database identifier are kept.".to_owned(),
+        merge_description: if format_includes_resources(envelope.format_version) {
+            "Merge appends study history under new local IDs, matches syllabus topics by stable code, matches resources by resource key, preserves existing resource progress/notes/local PDF references, and keeps current settings, timer state, revision rules, and dashboard layout.".to_owned()
+        } else {
+            "Merge appends study history under new local IDs, matches syllabus topics by stable code, skips conflicting progress/schedules/import-key rows, and keeps the current settings, timer state, revision rules, and dashboard layout. This format version has no resource tables.".to_owned()
+        },
+        replacement_description: if format_includes_resources(envelope.format_version) {
+            "Replace removes current core records, resources, study progress, and local-file references, then inserts the validated export in foreign-key order. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
+        } else {
+            "Replace removes all current core user records and inserts the validated core export, preserving exported IDs and relationships. Resource metadata is not touched by this legacy format. Current backup settings and the local database identifier are kept.".to_owned()
+        },
     })
 }
 
@@ -837,12 +939,23 @@ fn read_import_file(path: &Path) -> Result<(Vec<u8>, String), AppError> {
 fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
     let envelope: JsonExportEnvelope = serde_json::from_slice(bytes)
         .map_err(|_| AppError::import_failed("The selected JSON export is not valid JSON."))?;
-    if envelope.format_version != JSON_EXPORT_FORMAT_VERSION {
+    if !(MIN_JSON_IMPORT_FORMAT_VERSION..=JSON_EXPORT_FORMAT_VERSION)
+        .contains(&envelope.format_version)
+    {
         return Err(AppError::import_failed(
             "This JSON export format version is not supported.",
         ));
     }
-    if !(MIN_JSON_IMPORT_SCHEMA_VERSION..=db::LATEST_SCHEMA_VERSION)
+    if format_includes_resources(envelope.format_version) {
+        if envelope.schema_version != db::LATEST_SCHEMA_VERSION {
+            return Err(AppError::import_failed(format!(
+                "JSON format version {} requires schema version {}; this export uses schema {}.",
+                envelope.format_version,
+                db::LATEST_SCHEMA_VERSION,
+                envelope.schema_version
+            )));
+        }
+    } else if !(MIN_JSON_IMPORT_SCHEMA_VERSION..=db::LATEST_SCHEMA_VERSION)
         .contains(&envelope.schema_version)
     {
         return Err(AppError::import_failed(format!(
@@ -864,12 +977,13 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
             "The JSON export import-batch identifier is invalid.",
         ));
     }
-    for table in USER_TABLES {
+    let expected_tables = tables_for_format(envelope.format_version);
+    for table in expected_tables {
         let rows = envelope
             .tables
-            .get(table)
+            .get(*table)
             .ok_or_else(|| AppError::import_failed("A required JSON export table is missing."))?;
-        if rows.len() as i64 != envelope.record_counts.get(table).copied().unwrap_or(-1) {
+        if rows.len() as i64 != envelope.record_counts.get(*table).copied().unwrap_or(-1) {
             return Err(AppError::import_failed(
                 "The JSON export record counts do not match its tables.",
             ));
@@ -878,11 +992,14 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
     if envelope
         .tables
         .keys()
-        .any(|table| !USER_TABLES.contains(&table.as_str()))
+        .any(|table| !expected_tables.contains(&table.as_str()))
     {
         return Err(AppError::import_failed(
             "The JSON export contains an unknown table.",
         ));
+    }
+    if format_includes_resources(envelope.format_version) {
+        validate_resource_identities(&envelope.tables)?;
     }
     for singleton in [
         "settings",
@@ -914,21 +1031,95 @@ fn validate_envelope_with_temporary_database(
             error,
         )
     })?;
-    for table in USER_TABLES {
-        validate_table_rows(&transaction, table, &envelope.tables[table])?;
+    let tables = tables_for_format(envelope.format_version);
+    for table in tables {
+        validate_table_rows(&transaction, table, &envelope.tables[*table])?;
     }
-    for table in REPLACE_DELETE_ORDER {
+    for table in delete_order_for_format(envelope.format_version) {
         transaction
             .execute(&format!("DELETE FROM {table}"), [])
             .map_err(|error| {
                 AppError::database("Validation defaults could not be cleared", error)
             })?;
     }
-    insert_all_tables(&transaction, &envelope.tables)?;
+    insert_all_tables(&transaction, &envelope.tables, tables)?;
     verify_foreign_keys(&transaction)?;
     transaction.rollback().map_err(|error| {
         AppError::database("The JSON validation transaction could not close", error)
     })
+}
+
+fn validate_resource_identities(tables: &BTreeMap<String, Vec<Value>>) -> Result<(), AppError> {
+    let resources = &tables["study_resources"];
+    let mut resource_ids = HashSet::new();
+    let mut resource_keys = HashSet::new();
+    for row in resources {
+        let id = row
+            .get("id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("A resource id is invalid."))?;
+        let key = row
+            .get("resource_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::import_failed("A resource key is invalid."))?;
+        if !resource_ids.insert(id) {
+            return Err(AppError::import_failed(
+                "The JSON export contains duplicate resource ids.",
+            ));
+        }
+        if !resource_keys.insert(key.to_owned()) {
+            return Err(AppError::import_failed(
+                "The JSON export contains duplicate resource keys.",
+            ));
+        }
+    }
+
+    let mut progress_ids = HashSet::new();
+    for row in &tables["resource_progress"] {
+        let resource_id = row
+            .get("resource_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("A resource progress id is invalid."))?;
+        if !resource_ids.contains(&resource_id) {
+            return Err(AppError::import_failed(
+                "A resource progress row refers to a missing resource.",
+            ));
+        }
+        if !progress_ids.insert(resource_id) {
+            return Err(AppError::import_failed(
+                "The JSON export contains duplicate resource progress rows.",
+            ));
+        }
+    }
+
+    let mut local_ids = HashSet::new();
+    let mut local_paths = HashSet::new();
+    for row in &tables["resource_local_files"] {
+        let resource_id = row
+            .get("resource_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("A local file resource id is invalid."))?;
+        let file_path = row
+            .get("file_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::import_failed("A local file path is invalid."))?;
+        if !resource_ids.contains(&resource_id) {
+            return Err(AppError::import_failed(
+                "A local PDF reference refers to a missing resource.",
+            ));
+        }
+        if !local_ids.insert(resource_id) {
+            return Err(AppError::import_failed(
+                "The JSON export contains duplicate local PDF references.",
+            ));
+        }
+        if !local_paths.insert(file_path.to_owned()) {
+            return Err(AppError::import_failed(
+                "The JSON export contains duplicate local PDF paths.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_table_rows(
@@ -983,9 +1174,10 @@ fn json_to_sql(value: &Value, table: &str, column: &str) -> Result<SqlValue, App
 fn insert_all_tables(
     transaction: &Transaction<'_>,
     tables: &BTreeMap<String, Vec<Value>>,
+    table_order: &[&str],
 ) -> Result<(), AppError> {
-    for table in USER_TABLES {
-        insert_rows(transaction, table, &tables[table], false)?;
+    for table in table_order {
+        insert_rows(transaction, table, &tables[*table], false)?;
     }
     Ok(())
 }
@@ -1057,6 +1249,62 @@ fn verify_foreign_keys(connection: &Connection) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+fn existing_table_counts(connection: &Connection) -> Result<BTreeMap<String, i64>, AppError> {
+    let mut counts = backup::table_counts(connection)?;
+    for table in RESOURCE_TABLES {
+        let count: i64 = connection
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .map_err(|error| AppError::database("Resource counts could not be read", error))?;
+        counts.insert(table.to_owned(), count);
+    }
+    Ok(counts)
+}
+
+fn invalid_local_file_rows(rows: &[Value]) -> i64 {
+    rows.iter()
+        .filter(|row| !local_file_import_is_valid(row))
+        .count() as i64
+}
+
+fn local_file_import_is_valid(row: &Value) -> bool {
+    let Some(path) = row.get("file_path").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(expected_size) = row.get("size_bytes").and_then(Value::as_i64) else {
+        return false;
+    };
+    let Some(expected_sha) = row.get("sha256").and_then(Value::as_str) else {
+        return false;
+    };
+    let path = Path::new(path);
+    if !path.is_absolute() || !path.is_file() {
+        return false;
+    }
+    if !path
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() as i64 == expected_size)
+    {
+        return false;
+    }
+    sha256_file(path).is_some_and(|actual| actual == expected_sha)
+}
+
+fn sha256_file(path: &Path) -> Option<String> {
+    let mut file = fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Some(format!("{:x}", hasher.finalize()))
 }
 
 fn detect_merge_conflicts(
@@ -1169,6 +1417,78 @@ fn detect_merge_conflicts(
             reason: "Topics that already have a revision schedule keep the current schedule."
                 .to_owned(),
         });
+    }
+
+    if format_includes_resources(envelope.format_version) {
+        let existing_keys = existing_values(connection, "study_resources", "resource_key")?;
+        let matching_resources = rows_with_existing_key(
+            &envelope.tables["study_resources"],
+            "resource_key",
+            &existing_keys,
+        );
+        if matching_resources > 0 {
+            conflicts.push(ImportTableConflict {
+                table: "study_resources".to_owned(),
+                rows: matching_resources,
+                reason: "Matching resource keys are kept unchanged so existing study progress and local PDF references are not overwritten."
+                    .to_owned(),
+            });
+        }
+
+        let imported_keys = envelope.tables["study_resources"]
+            .iter()
+            .filter_map(|row| {
+                Some((
+                    row.get("id")?.as_i64()?,
+                    row.get("resource_key")?.as_str()?.to_owned(),
+                ))
+            })
+            .collect::<HashMap<_, _>>();
+        let imported_progress = envelope.tables["resource_progress"]
+            .iter()
+            .filter(|row| {
+                row.get("resource_id")
+                    .and_then(Value::as_i64)
+                    .and_then(|id| imported_keys.get(&id))
+                    .is_some_and(|key| existing_keys.contains(key))
+            })
+            .count() as i64;
+        if imported_progress > 0 {
+            conflicts.push(ImportTableConflict {
+                table: "resource_progress".to_owned(),
+                rows: imported_progress,
+                reason: "Resources that already exist keep their current study status and personal notes."
+                    .to_owned(),
+            });
+        }
+
+        let imported_local = envelope.tables["resource_local_files"]
+            .iter()
+            .filter(|row| {
+                row.get("resource_id")
+                    .and_then(Value::as_i64)
+                    .and_then(|id| imported_keys.get(&id))
+                    .is_some_and(|key| existing_keys.contains(key))
+            })
+            .count() as i64;
+        if imported_local > 0 {
+            conflicts.push(ImportTableConflict {
+                table: "resource_local_files".to_owned(),
+                rows: imported_local,
+                reason: "Resources that already exist keep their current local PDF reference."
+                    .to_owned(),
+            });
+        }
+
+        let invalid_local = invalid_local_file_rows(&envelope.tables["resource_local_files"]);
+        if invalid_local > 0 {
+            conflicts.push(ImportTableConflict {
+                table: "resource_local_files".to_owned(),
+                rows: invalid_local,
+                reason: "Missing, size-mismatched, or checksum-mismatched local PDF references will be skipped."
+                    .to_owned(),
+            });
+        }
     }
 
     Ok(conflicts)
@@ -1375,7 +1695,7 @@ pub fn apply_json_import(
     let safety = backup::create_safety_backup(connection, data_dir, reason, None)?;
     let _ = backup::record_success(connection, &safety.manifest);
 
-    let mut per_table = empty_import_counts();
+    let mut per_table = empty_import_counts(envelope.format_version);
     let merge_warnings = match strategy {
         JsonImportStrategy::Replace => {
             replace_from_json(connection, &envelope, &sha256, &batch_id, &mut per_table)?;
@@ -1398,6 +1718,14 @@ pub fn apply_json_import(
     }
 
     let mut warnings = merge_warnings;
+    let skipped_local = per_table
+        .get("resource_local_files")
+        .map_or(0, |result| result.skipped);
+    if skipped_local > 0 {
+        warnings.push(format!(
+            "{skipped_local} local PDF reference(s) were skipped because the file was missing, changed, or already belonged to another resource. The resource catalogue and study progress remain available."
+        ));
+    }
     warnings.push("The import ran in one transaction and was verified with SQLite foreign-key checks before commit.".to_owned());
     warnings.push(
         "Reload the application after import so every screen reads the restored data.".to_owned(),
@@ -1419,12 +1747,12 @@ pub fn apply_json_import(
     })
 }
 
-fn empty_import_counts() -> BTreeMap<String, ImportTableResult> {
-    USER_TABLES
-        .into_iter()
+fn empty_import_counts(format_version: u32) -> BTreeMap<String, ImportTableResult> {
+    tables_for_format(format_version)
+        .iter()
         .map(|table| {
             (
-                table.to_owned(),
+                (*table).to_owned(),
                 ImportTableResult {
                     imported: 0,
                     skipped: 0,
@@ -1457,23 +1785,33 @@ fn replace_from_json(
         .map_err(|error| {
             AppError::database("Revision-history protection could not be prepared", error)
         })?;
-    for table in REPLACE_DELETE_ORDER {
+    for table in delete_order_for_format(envelope.format_version) {
         transaction
             .execute(&format!("DELETE FROM {table}"), [])
             .map_err(|error| AppError::database("Existing records could not be cleared", error))?;
     }
 
-    for table in USER_TABLES {
-        let imported = insert_rows(&transaction, table, &envelope.tables[table], false)? as i64;
-        if imported != envelope.tables[table].len() as i64 {
+    for table in tables_for_format(envelope.format_version) {
+        let rows = if *table == "resource_local_files" {
+            envelope.tables[*table]
+                .iter()
+                .filter(|row| local_file_import_is_valid(row))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            envelope.tables[*table].clone()
+        };
+        let imported = insert_rows(&transaction, table, &rows, false)? as i64;
+        if imported != rows.len() as i64 {
             return Err(AppError::import_failed(
                 "The replacement did not insert every expected record.",
             ));
         }
-        per_table
-            .get_mut(table)
-            .expect("table result exists")
-            .imported = imported;
+        let result = per_table.get_mut(*table).expect("table result exists");
+        result.imported = imported;
+        if *table == "resource_local_files" {
+            result.skipped = envelope.tables[*table].len() as i64 - imported;
+        }
     }
 
     transaction
@@ -1501,7 +1839,7 @@ fn replace_from_json(
         per_table,
     )?;
     verify_foreign_keys(&transaction)?;
-    verify_imported_counts(&transaction, envelope)?;
+    verify_imported_counts(&transaction, envelope, per_table)?;
     transaction
         .commit()
         .map_err(|error| AppError::database("The JSON replacement could not be committed", error))
@@ -1510,8 +1848,9 @@ fn replace_from_json(
 fn verify_imported_counts(
     transaction: &Transaction<'_>,
     envelope: &JsonExportEnvelope,
+    per_table: &BTreeMap<String, ImportTableResult>,
 ) -> Result<(), AppError> {
-    for table in USER_TABLES {
+    for table in tables_for_format(envelope.format_version) {
         let count: i64 = transaction
             .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
                 row.get(0)
@@ -1519,7 +1858,12 @@ fn verify_imported_counts(
             .map_err(|error| {
                 AppError::database("An imported record count could not be verified", error)
             })?;
-        if count != envelope.tables[table].len() as i64 {
+        let expected = if *table == "resource_local_files" {
+            per_table.get(*table).map_or(0, |result| result.imported)
+        } else {
+            envelope.tables[*table].len() as i64
+        };
+        if count != expected {
             return Err(AppError::import_failed(
                 "An imported table count did not match the validated export.",
             ));
@@ -1779,6 +2123,10 @@ fn merge_from_json(
             .imported += 1;
     }
 
+    if format_includes_resources(envelope.format_version) {
+        merge_resources(&transaction, envelope, per_table, &mut warnings)?;
+    }
+
     record_import_batch(
         &transaction,
         batch_id,
@@ -1792,6 +2140,241 @@ fn merge_from_json(
         .commit()
         .map_err(|error| AppError::database("The JSON merge could not be committed", error))?;
     Ok(warnings)
+}
+
+fn merge_resources(
+    transaction: &Transaction<'_>,
+    envelope: &JsonExportEnvelope,
+    per_table: &mut BTreeMap<String, ImportTableResult>,
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    let mut existing_keys = HashMap::new();
+    {
+        let mut statement = transaction
+            .prepare("SELECT resource_key, id FROM study_resources")
+            .map_err(|error| AppError::database("Existing resources could not be read", error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| AppError::database("Existing resources could not be read", error))?;
+        for row in rows {
+            let (key, id) = row.map_err(|error| {
+                AppError::database("Existing resources could not be read", error)
+            })?;
+            existing_keys.insert(key, id);
+        }
+    }
+    let existing_progress = integer_column_set(transaction, "resource_progress", "resource_id")?;
+    let existing_local = integer_column_set(transaction, "resource_local_files", "resource_id")?;
+    let mut existing_paths = string_column_set(transaction, "resource_local_files", "file_path")?;
+    let mut existing_runs = discovery_run_keys(transaction)?;
+    let mut imported_ids = HashMap::new();
+
+    for row in &envelope.tables["study_resources"] {
+        let old_id = row
+            .get("id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("A resource id is invalid."))?;
+        let key = row
+            .get("resource_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::import_failed("A resource key is invalid."))?;
+        if let Some(current_id) = existing_keys.get(key) {
+            imported_ids.insert(old_id, *current_id);
+            per_table
+                .get_mut("study_resources")
+                .expect("table result exists")
+                .skipped += 1;
+            continue;
+        }
+        let new_id =
+            insert_merge_row(transaction, "study_resources", row, &["id"], HashMap::new())?;
+        imported_ids.insert(old_id, new_id);
+        per_table
+            .get_mut("study_resources")
+            .expect("table result exists")
+            .imported += 1;
+    }
+
+    for row in &envelope.tables["resource_progress"] {
+        let old_id = row
+            .get("resource_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("A resource progress id is invalid."))?;
+        let Some(new_id) = imported_ids.get(&old_id).copied() else {
+            per_table
+                .get_mut("resource_progress")
+                .expect("table result exists")
+                .rejected += 1;
+            continue;
+        };
+        if existing_progress.contains(&new_id) {
+            per_table
+                .get_mut("resource_progress")
+                .expect("table result exists")
+                .skipped += 1;
+            continue;
+        }
+        insert_merge_row(
+            transaction,
+            "resource_progress",
+            row,
+            &[],
+            HashMap::from([("resource_id", SqlValue::Integer(new_id))]),
+        )?;
+        per_table
+            .get_mut("resource_progress")
+            .expect("table result exists")
+            .imported += 1;
+    }
+
+    for row in &envelope.tables["resource_local_files"] {
+        let old_id = row
+            .get("resource_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("A local file resource id is invalid."))?;
+        let Some(new_id) = imported_ids.get(&old_id).copied() else {
+            per_table
+                .get_mut("resource_local_files")
+                .expect("table result exists")
+                .rejected += 1;
+            continue;
+        };
+        if existing_local.contains(&new_id) {
+            per_table
+                .get_mut("resource_local_files")
+                .expect("table result exists")
+                .skipped += 1;
+            continue;
+        }
+        if !local_file_import_is_valid(row) {
+            warnings.push(
+                "A local PDF reference was skipped because the file is missing, has a different size, or fails SHA-256 verification."
+                    .to_owned(),
+            );
+            per_table
+                .get_mut("resource_local_files")
+                .expect("table result exists")
+                .skipped += 1;
+            continue;
+        }
+        if row
+            .get("file_path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| existing_paths.contains(path))
+        {
+            warnings.push(
+                "A local PDF reference was skipped because that file path is already linked to another resource."
+                    .to_owned(),
+            );
+            per_table
+                .get_mut("resource_local_files")
+                .expect("table result exists")
+                .skipped += 1;
+            continue;
+        }
+        insert_merge_row(
+            transaction,
+            "resource_local_files",
+            row,
+            &["resource_id"],
+            HashMap::from([("resource_id", SqlValue::Integer(new_id))]),
+        )?;
+        if let Some(path) = row.get("file_path").and_then(Value::as_str) {
+            existing_paths.insert(path.to_owned());
+        }
+        per_table
+            .get_mut("resource_local_files")
+            .expect("table result exists")
+            .imported += 1;
+    }
+
+    for row in &envelope.tables["resource_discovery_runs"] {
+        let started_at = row.get("started_at").and_then(Value::as_str).unwrap_or("");
+        let finished_at = row.get("finished_at").and_then(Value::as_str);
+        let key = format!("{started_at}|{}", finished_at.unwrap_or(""));
+        if existing_runs.contains(&key) {
+            per_table
+                .get_mut("resource_discovery_runs")
+                .expect("table result exists")
+                .skipped += 1;
+            continue;
+        }
+        insert_merge_row(
+            transaction,
+            "resource_discovery_runs",
+            row,
+            &["id"],
+            HashMap::new(),
+        )?;
+        existing_runs.insert(key);
+        per_table
+            .get_mut("resource_discovery_runs")
+            .expect("table result exists")
+            .imported += 1;
+    }
+
+    Ok(())
+}
+
+fn integer_column_set(
+    transaction: &Transaction<'_>,
+    table: &str,
+    column: &str,
+) -> Result<HashSet<i64>, AppError> {
+    let mut statement = transaction
+        .prepare(&format!("SELECT {column} FROM {table}"))
+        .map_err(|error| {
+            AppError::database("Existing resource references could not be read", error)
+        })?;
+    statement
+        .query_map([], |row| row.get::<_, i64>(0))
+        .map_err(|error| {
+            AppError::database("Existing resource references could not be read", error)
+        })?
+        .collect::<rusqlite::Result<HashSet<_>>>()
+        .map_err(|error| {
+            AppError::database("Existing resource references could not be read", error)
+        })
+}
+
+fn string_column_set(
+    transaction: &Transaction<'_>,
+    table: &str,
+    column: &str,
+) -> Result<HashSet<String>, AppError> {
+    let mut statement = transaction
+        .prepare(&format!("SELECT {column} FROM {table}"))
+        .map_err(|error| {
+            AppError::database("Existing resource references could not be read", error)
+        })?;
+    statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| {
+            AppError::database("Existing resource references could not be read", error)
+        })?
+        .collect::<rusqlite::Result<HashSet<_>>>()
+        .map_err(|error| {
+            AppError::database("Existing resource references could not be read", error)
+        })
+}
+
+fn discovery_run_keys(transaction: &Transaction<'_>) -> Result<HashSet<String>, AppError> {
+    let mut statement = transaction
+        .prepare("SELECT started_at, finished_at FROM resource_discovery_runs")
+        .map_err(|error| AppError::database("Discovery runs could not be read", error))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(format!(
+                "{}|{}",
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?.unwrap_or_default()
+            ))
+        })
+        .map_err(|error| AppError::database("Discovery runs could not be read", error))?;
+    rows.collect::<rusqlite::Result<HashSet<_>>>()
+        .map_err(|error| AppError::database("Discovery runs could not be read", error))
 }
 
 fn insert_merge_row(
@@ -1884,7 +2467,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{mock_tests, planner, pyq, revision, sessions, settings, syllabus};
+    use crate::{mock_tests, planner, pyq, resources, revision, sessions, settings, syllabus};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).expect("test date should be valid")
@@ -1988,6 +2571,64 @@ mod tests {
         }
     }
 
+    fn add_resource(connection: &Connection, local_path: Option<&Path>) -> resources::Resource {
+        let resource = resources::create_manual(
+            connection,
+            resources::ManualResourceInput {
+                title: "Portable resource".to_owned(),
+                description: Some("Portable resource description".to_owned()),
+                category: "other".to_owned(),
+                unit: "Quantum Mechanics".to_owned(),
+                topic_code: Some("QM-C01".to_owned()),
+                original_url: "https://drive.google.com/file/d/sourceResource/view?usp=sharing"
+                    .to_owned(),
+                source_page_url: Some(
+                    "https://www.csirnetphysics.in/p/hand-written-notes_28.html".to_owned(),
+                ),
+            },
+        )
+        .expect("resource should save");
+        resources::update_progress(
+            connection,
+            resource.id,
+            resources::ResourceProgressInput {
+                status: "studying".to_owned(),
+                notes: "Portable resource notes".to_owned(),
+            },
+            "2026-10-30T12:00:00.000Z",
+        )
+        .expect("resource progress should save");
+        if let Some(path) = local_path {
+            attach_local_file(connection, resource.id, path);
+        }
+        resource
+    }
+
+    fn attach_local_file(connection: &Connection, resource_id: i64, path: &Path) {
+        let metadata = fs::metadata(path).expect("local PDF should exist");
+        let sha256 = sha256_file(path).expect("local PDF should hash");
+        connection
+            .execute(
+                "INSERT INTO resource_local_files (
+                    resource_id, file_name, file_path, sha256, size_bytes, imported_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params_from_iter([
+                    SqlValue::Integer(resource_id),
+                    SqlValue::Text(
+                        path.file_name()
+                            .expect("file name")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                    SqlValue::Text(path.to_string_lossy().into_owned()),
+                    SqlValue::Text(sha256),
+                    SqlValue::Integer(metadata.len() as i64),
+                    SqlValue::Text("2026-10-30T12:00:00.000Z".to_owned()),
+                ]),
+            )
+            .expect("local file should save");
+    }
+
     fn populate_source(connection: &mut Connection) {
         let topic = topic_id(connection, "MMP-C01");
         syllabus::update_progress(
@@ -2061,6 +2702,7 @@ mod tests {
                 [],
             )
             .expect("layout should update");
+        add_resource(connection, None);
     }
 
     #[test]
@@ -2076,13 +2718,17 @@ mod tests {
         let bytes = fs::read(&path).expect("JSON export should be readable");
         let envelope: JsonExportEnvelope =
             serde_json::from_slice(&bytes).expect("JSON should parse");
-        assert_eq!(envelope.format_version, 1);
+        assert_eq!(envelope.format_version, 2);
         assert_eq!(envelope.schema_version, 10);
-        assert_eq!(envelope.application_version, "1.1.0");
+        assert_eq!(envelope.application_version, "1.2.0");
         assert_eq!(envelope.import_batch_id.as_deref().map(str::len), Some(32));
-        assert_eq!(envelope.tables.keys().count(), 16);
+        assert_eq!(envelope.tables.keys().count(), 20);
         assert_eq!(envelope.record_counts["study_sessions"], 1);
         assert_eq!(envelope.record_counts["revision_history"], 1);
+        assert_eq!(envelope.record_counts["study_resources"], 1);
+        assert_eq!(envelope.record_counts["resource_progress"], 1);
+        assert_eq!(envelope.tables["study_resources"].len(), 1);
+        assert_eq!(envelope.tables["resource_progress"].len(), 1);
         assert_eq!(envelope.tables["settings"].len(), 1);
         assert_eq!(envelope.tables["dashboard_sections"].len(), 9);
         assert!(!envelope.backup_preferences.automatic_enabled);
@@ -2329,7 +2975,7 @@ mod tests {
             envelope.record_counts.values().sum::<i64>()
         );
         assert_eq!(
-            backup::table_counts(&target_db).expect("counts should load"),
+            existing_table_counts(&target_db).expect("counts should load"),
             envelope.record_counts
         );
         let target_only: i64 = target_db
@@ -2348,6 +2994,338 @@ mod tests {
             )
             .unwrap();
         assert_eq!(history_trigger, 1);
+    }
+
+    #[test]
+    fn v2_resource_round_trip_preserves_metadata_progress_and_discovery_history() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let pdf = source.path().join("portable.pdf");
+        fs::write(&pdf, b"%PDF-1.4\nportable\n").expect("pdf should write");
+        let source_db = database(&source, "source.sqlite3");
+        let resource = add_resource(&source_db, Some(&pdf));
+        source_db
+            .execute(
+                "INSERT INTO resource_discovery_runs (
+                    started_at, finished_at, status, pages_ok, pages_failed,
+                    resources_seen, resources_added, resources_updated,
+                    resources_removed, message
+                 ) VALUES (
+                    '2026-10-30T11:00:00.000Z', '2026-10-30T11:00:02.000Z',
+                    'success', 6, 0, 1, 1, 0, 0, 'fixture discovery'
+                 )",
+                [],
+            )
+            .expect("discovery run should save");
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+        let envelope: JsonExportEnvelope =
+            serde_json::from_slice(&fs::read(&export_path).unwrap()).expect("export should parse");
+        assert_eq!(envelope.format_version, 2);
+        assert_eq!(envelope.record_counts["resource_discovery_runs"], 1);
+        assert_eq!(
+            envelope.tables["study_resources"][0]["original_url"],
+            Value::String(
+                "https://drive.google.com/file/d/sourceResource/view?usp=sharing".to_owned()
+            )
+        );
+        assert_eq!(
+            envelope.tables["study_resources"][0]["source_page_url"],
+            Value::String("https://www.csirnetphysics.in/p/hand-written-notes_28.html".to_owned())
+        );
+
+        let mut target_db = database(&target, "target.sqlite3");
+        let preview = preview_json_import(&target_db, &export_path).expect("preview should load");
+        let result = apply_json_import(
+            &mut target_db,
+            &export_path,
+            JsonImportStrategy::Replace,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("replace should succeed");
+        assert_eq!(result.per_table["study_resources"].imported, 1);
+        assert_eq!(result.per_table["resource_progress"].imported, 1);
+        assert_eq!(result.per_table["resource_local_files"].imported, 1);
+        assert_eq!(result.per_table["resource_discovery_runs"].imported, 1);
+
+        let imported = resources::list_resources(&target_db)
+            .expect("resources should list")
+            .into_iter()
+            .find(|item| item.resource_key == resource.resource_key)
+            .expect("resource should import");
+        assert_eq!(imported.study_status, "studying");
+        assert_eq!(imported.personal_notes, "Portable resource notes");
+        assert_eq!(imported.source_page_url, resource.source_page_url);
+        assert_eq!(imported.original_url, resource.original_url);
+        assert_eq!(imported.external_id.as_deref(), Some("sourceResource"));
+        assert!(imported.local_file.is_some());
+        assert_eq!(
+            imported.local_file.as_ref().unwrap().file_path,
+            pdf.to_string_lossy()
+        );
+        assert_eq!(
+            target_db
+                .query_row("SELECT count(*) FROM resource_discovery_runs", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn v2_merge_preserves_existing_resource_progress_notes_and_local_files() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let source_db = {
+            let mut connection = database(&source, "source.sqlite3");
+            populate_source(&mut connection);
+            connection
+        };
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let target_pdf = target.path().join("target.pdf");
+        fs::write(&target_pdf, b"%PDF-1.4\ntarget copy\n").expect("pdf should write");
+        let mut target_db = database(&target, "target.sqlite3");
+        let target_resource = add_resource(&target_db, Some(&target_pdf));
+        resources::update_progress(
+            &target_db,
+            target_resource.id,
+            resources::ResourceProgressInput {
+                status: "completed".to_owned(),
+                notes: "Keep target notes".to_owned(),
+            },
+            "2026-10-30T12:00:00.000Z",
+        )
+        .expect("target progress should save");
+
+        let preview = preview_json_import(&target_db, &export_path).expect("preview should load");
+        assert!(
+            preview
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.table == "study_resources")
+        );
+        assert!(
+            preview
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.table == "resource_progress")
+        );
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| { warning.contains("Complete replacement, if selected") })
+        );
+
+        let result = apply_json_import(
+            &mut target_db,
+            &export_path,
+            JsonImportStrategy::Merge,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("merge should succeed");
+        assert_eq!(result.per_table["study_resources"].skipped, 1);
+        assert_eq!(result.per_table["resource_progress"].skipped, 1);
+        let kept = resources::list_resources(&target_db)
+            .expect("resources should list")
+            .into_iter()
+            .find(|item| item.id == target_resource.id)
+            .expect("target resource should remain");
+        assert_eq!(kept.study_status, "completed");
+        assert_eq!(kept.personal_notes, "Keep target notes");
+        assert_eq!(
+            kept.local_file.as_ref().map(|file| file.file_path.as_str()),
+            Some(target_pdf.to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
+    fn v2_missing_local_pdf_is_skipped_without_losing_resource_progress() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let pdf = source.path().join("portable.pdf");
+        fs::write(&pdf, b"%PDF-1.4\nportable\n").expect("pdf should write");
+        let source_db = database(&source, "source.sqlite3");
+        let resource = add_resource(&source_db, Some(&pdf));
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let mut missing: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        missing["tables"]["resource_local_files"][0]["file_path"] = Value::String(
+            source
+                .path()
+                .join("missing.pdf")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let missing_path = export_dir.path().join("missing-local.json");
+        fs::write(&missing_path, serde_json::to_vec_pretty(&missing).unwrap()).unwrap();
+
+        let mut target_db = database(&target, "target.sqlite3");
+        let preview = preview_json_import(&target_db, &missing_path).expect("preview should load");
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("local PDF reference"))
+        );
+        let result = apply_json_import(
+            &mut target_db,
+            &missing_path,
+            JsonImportStrategy::Replace,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("replace should succeed");
+        assert_eq!(result.per_table["resource_local_files"].imported, 0);
+        assert_eq!(result.per_table["resource_local_files"].skipped, 1);
+        let imported = resources::list_resources(&target_db)
+            .expect("resources should list")
+            .into_iter()
+            .find(|item| item.resource_key == resource.resource_key)
+            .expect("resource should remain");
+        assert!(imported.local_file.is_none());
+        assert_eq!(imported.study_status, "studying");
+        assert_eq!(imported.personal_notes, "Portable resource notes");
+    }
+
+    #[test]
+    fn v2_checksum_mismatch_local_pdf_is_skipped() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let pdf = source.path().join("portable.pdf");
+        fs::write(&pdf, b"%PDF-1.4\nportable checksum\n").expect("pdf should write");
+        let source_db = database(&source, "source.sqlite3");
+        add_resource(&source_db, Some(&pdf));
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let mut changed: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        changed["tables"]["resource_local_files"][0]["sha256"] = Value::String("a".repeat(64));
+        let changed_path = export_dir.path().join("checksum-mismatch.json");
+        fs::write(&changed_path, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
+
+        let mut target_db = database(&target, "target.sqlite3");
+        let preview = preview_json_import(&target_db, &changed_path).expect("preview should load");
+        assert!(
+            preview
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.table == "resource_local_files")
+        );
+        let result = apply_json_import(
+            &mut target_db,
+            &changed_path,
+            JsonImportStrategy::Merge,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("merge should succeed");
+        assert_eq!(result.per_table["resource_local_files"].imported, 0);
+        assert_eq!(result.per_table["resource_local_files"].skipped, 1);
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("local PDF reference"))
+        );
+        let imported = resources::list_resources(&target_db)
+            .expect("resources should list")
+            .into_iter()
+            .next()
+            .expect("resource should import");
+        assert!(imported.local_file.is_none());
+    }
+
+    #[test]
+    fn v2_duplicate_resource_keys_are_rejected() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let source_db = database(&source, "source.sqlite3");
+        add_resource(&source_db, None);
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let mut duplicate: Value =
+            serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        let mut duplicated = duplicate["tables"]["study_resources"][0].clone();
+        duplicated["id"] = Value::from(999);
+        duplicate["tables"]["study_resources"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicated);
+        duplicate["recordCounts"]["study_resources"] = Value::from(2);
+        let duplicate_path = export_dir.path().join("duplicate-resources.json");
+        fs::write(
+            &duplicate_path,
+            serde_json::to_vec_pretty(&duplicate).unwrap(),
+        )
+        .unwrap();
+
+        let target_db = database(&target, "target.sqlite3");
+        let error =
+            preview_json_import(&target_db, &duplicate_path).expect_err("duplicate should fail");
+        assert!(error.message.contains("duplicate resource keys"));
+    }
+
+    #[test]
+    fn v1_import_does_not_replace_resource_tables() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let mut source_db = database(&source, "source.sqlite3");
+        populate_source(&mut source_db);
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let mut legacy: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        legacy["formatVersion"] = Value::from(1);
+        for table in RESOURCE_TABLES {
+            legacy["tables"].as_object_mut().unwrap().remove(table);
+            legacy["recordCounts"]
+                .as_object_mut()
+                .unwrap()
+                .remove(table);
+        }
+        let legacy_path = export_dir.path().join("legacy-v1.json");
+        fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let target_pdf = target.path().join("target.pdf");
+        fs::write(&target_pdf, b"%PDF-1.4\ntarget\n").expect("pdf should write");
+        let mut target_db = database(&target, "target.sqlite3");
+        let target_resource = add_resource(&target_db, Some(&target_pdf));
+        let preview =
+            preview_json_import(&target_db, &legacy_path).expect("v1 preview should load");
+        assert_eq!(preview.format_version, 1);
+        assert!(!preview.record_counts.contains_key("study_resources"));
+
+        apply_json_import(
+            &mut target_db,
+            &legacy_path,
+            JsonImportStrategy::Replace,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("v1 replace should succeed");
+        let kept = resources::list_resources(&target_db)
+            .expect("resources should list")
+            .into_iter()
+            .find(|item| item.id == target_resource.id)
+            .expect("v1 import must leave resources untouched");
+        assert_eq!(
+            kept.local_file.as_ref().map(|file| file.file_path.clone()),
+            Some(target_pdf.to_string_lossy().into_owned())
+        );
     }
 
     #[test]
@@ -2371,13 +3349,19 @@ mod tests {
         let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
         let export_path = export_dir.path().join(&exported.file_name);
         let mut older: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        older["formatVersion"] = Value::from(1);
         older["schemaVersion"] = Value::from(8);
         older.as_object_mut().unwrap().remove("importBatchId");
+        for table in RESOURCE_TABLES {
+            older["tables"].as_object_mut().unwrap().remove(table);
+            older["recordCounts"].as_object_mut().unwrap().remove(table);
+        }
         let older_path = export_dir.path().join("older.json");
         fs::write(&older_path, serde_json::to_vec_pretty(&older).unwrap()).unwrap();
         let older_preview =
             preview_json_import(&target_db, &older_path).expect("schema 8 JSON should be accepted");
         assert_eq!(older_preview.schema_version, 8);
+        assert_eq!(older_preview.format_version, 1);
         assert_eq!(older_preview.import_batch_id.len(), 32);
 
         let mut newer: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
@@ -2388,7 +3372,7 @@ mod tests {
             preview_json_import(&target_db, &newer_path)
                 .expect_err("newer schema should fail")
                 .message
-                .contains("schema version 99")
+                .contains("schema 99")
         );
 
         let mut duplicate: Value =
@@ -2419,7 +3403,7 @@ mod rollback_tests {
     use chrono::NaiveDate;
 
     use super::*;
-    use crate::{backup, db, mock_tests, sessions, syllabus};
+    use crate::{backup, db, mock_tests, resources, sessions, syllabus};
 
     #[test]
     fn replacement_failure_rolls_back_data_and_restores_append_only_triggers() {
@@ -2495,6 +3479,29 @@ mod rollback_tests {
             },
         )
         .expect("target session saves");
+        let target_resource = resources::create_manual(
+            &target_db,
+            resources::ManualResourceInput {
+                title: "Rollback resource".to_owned(),
+                description: None,
+                category: "other".to_owned(),
+                unit: "Unmapped".to_owned(),
+                topic_code: None,
+                original_url: "https://example.com/rollback-resource.pdf".to_owned(),
+                source_page_url: None,
+            },
+        )
+        .expect("target resource saves");
+        resources::update_progress(
+            &target_db,
+            target_resource.id,
+            resources::ResourceProgressInput {
+                status: "studying".to_owned(),
+                notes: "Keep rollback resource".to_owned(),
+            },
+            "2026-10-30T12:00:00.000Z",
+        )
+        .expect("target resource progress saves");
         let before = backup::table_counts(&target_db).expect("counts load");
         target_db
             .execute_batch(
@@ -2523,6 +3530,13 @@ mod rollback_tests {
             .query_row("SELECT notes FROM study_sessions", [], |row| row.get(0))
             .unwrap();
         assert_eq!(notes, "keep on rollback");
+        let kept_resource = resources::list_resources(&target_db)
+            .expect("resources load")
+            .into_iter()
+            .find(|resource| resource.id == target_resource.id)
+            .expect("resource should survive rollback");
+        assert_eq!(kept_resource.study_status, "studying");
+        assert_eq!(kept_resource.personal_notes, "Keep rollback resource");
         let revision_trigger: i64 = target_db
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'revision_history_no_delete'",

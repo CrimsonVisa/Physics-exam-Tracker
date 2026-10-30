@@ -2,7 +2,7 @@
 
 An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Sciences.
 
-**Release 1.1.0 status:** the preparation dashboard, persistent planning settings, exam countdown,
+**Release 1.2.0 development status:** the preparation dashboard, persistent planning settings, exam countdown,
 official-source Physical Sciences syllabus tracker, persisted study timer, study-session history, dated
 checklist tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank,
 mock-test history, CSV import workflows, outcome analytics, configurable spaced-repetition revision
@@ -15,11 +15,11 @@ can store a personal status, priority, confidence rating, and notes. The timer r
 with restart and sleep recovery. Exam-date changes use a review-and-apply confirmation before any future
 exam-anchored task moves. CSV templates are generated locally and saved to the user's Downloads folder.
 
-See [RELEASE_NOTES_1.1.0.md](RELEASE_NOTES_1.1.0.md) for the release summary.
+See [RELEASE_NOTES_1.2.0.md](RELEASE_NOTES_1.2.0.md) for the v1.2.0 Stage 1 notes.
 
 ## Release
 
-- Product: **CSIR-NET Physics Tracker 1.1.0**
+- Product: **CSIR-NET Physics Tracker 1.2.0**
 - Platform: Windows 10/11 x64
 - Installer: NSIS, per-current-user by default
 - Data: local SQLite database under `%APPDATA%\com.crimsonvisa.csirnetphysics`
@@ -27,7 +27,10 @@ See [RELEASE_NOTES_1.1.0.md](RELEASE_NOTES_1.1.0.md) for the release summary.
   internet access
 - Backup encryption: **not implemented**; backup and export files are unencrypted
 
-### Verified release artifact
+**v1.2.0 is in development.** The verified installer below is the current public 1.1.0 release; a
+1.2.0 installer will be produced after the remaining v1.2.0 stages and final verification.
+
+### Verified public 1.1.0 artifact
 
 - Installer: `src-tauri\target\release\bundle\nsis\CSIR-NET Physics Tracker_1.1.0_x64-setup.exe`
 - Installer size: 5,901,285 bytes (5.63 MiB)
@@ -720,8 +723,10 @@ Use **Import authorized PDF** to copy a PDF you already have permission to store
 
 Local PDF bytes are never stored in SQLite. The full SQLite backup includes the resource catalogue,
 study progress, and local-copy records (but not the PDF files themselves), so keep the chosen PDF
-folder alongside backups if you need the files. JSON export currently covers the core study tables and
-does not include the resource catalogue or machine-specific local PDF paths.
+folder alongside backups if you need the files. JSON format 2 includes the resource catalogue,
+resource study progress/notes, local-file metadata, and discovery history. Local PDF paths are
+references, not file contents; after importing or restoring on another computer, missing or changed
+files are reported as unavailable and can be re-linked without losing the resource or progress.
 
 ### Offline behavior
 
@@ -803,33 +808,45 @@ according to CSV rules. Export queries are read-only.
 
 ### Complete JSON export and validated import
 
-The complete JSON format is versioned (`formatVersion: 1`) and records application version, schema
-version, export timestamp, database identifier, a unique `importBatchId`, per-table record counts, and
-all user tables: settings, syllabus sources/sections/topics/progress, timer settings/state, sessions,
-tasks, blocks, PYQs, mocks, revision settings/schedules/history, and dashboard sections. Safe backup
-preferences are included without machine-specific destination paths. The serialized file is parsed and
-inserted into a temporary migrated database before success is reported.
+The complete JSON format is versioned. **Format 2** records application version, schema version, export
+timestamp, database identifier, a unique `importBatchId`, per-table record counts, and all 20 user
+tables: settings, syllabus sources/sections/topics/progress, timer settings/state, sessions, tasks,
+blocks, PYQs, mocks, revision settings/schedules/history, dashboard sections, study resources,
+resource study progress, local-file metadata, and discovery history. Safe backup preferences are
+included without machine-specific destination paths. The serialized file is parsed and inserted into a
+temporary migrated database before success is reported.
+
+Format 1 exports from versions 1.0.0 and 1.1.0 remain importable; they contain the original 16 core
+tables and do not modify the resource catalogue. Format 2 requires schema 10.
 
 Migration `0009_json_import_batches.sql` adds `json_import_batches`. Successful imports record the
 batch identifier and result counts there. Preview detects an export that was already merged and
 disables merge, preventing duplicate sessions and tasks. Complete replacement remains an explicit
 opt-in and can intentionally reapply a file.
 
-JSON import accepts schema 8, 9, or 10 exports and validates the whole file in a temporary schema-10
-database before taking a safety backup or writing current data. Duplicate
-primary keys, duplicate unique keys, missing fields, unknown fields, malformed JSON, incompatible
-format/schema versions, and relationship violations reject the entire file.
+Format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10. The whole file is validated in
+a temporary schema-10 database before taking a safety backup or writing current data. Duplicate
+primary keys, duplicate resource keys, orphaned progress/local-file references, missing fields,
+unknown fields, malformed JSON, incompatible format/schema versions, and relationship violations
+reject the entire file.
 
 Two explicit strategies are available:
 
 - **Merge:** appends sessions, tasks, blocks, PYQs without conflicting import keys, mocks, and revision
-  history under new local IDs; maps syllabus topics by stable code; maps linked blocks to imported
-  sessions; skips existing progress, revision schedules, settings, timer state, revision rules, and
-  dashboard layout conflicts; rejects rows whose required topic code is unavailable.
-- **Replace:** after the safety backup, removes current user records in a transaction, inserts the
-  complete validated export with its exported IDs and relationships, restores append-only history
-  triggers, verifies foreign keys and exact counts, then commits. Current backup settings and database
-  identity remain installation-local.
+  history under new local IDs; maps syllabus topics by stable code; matches resources by stable
+  `resource_key`; preserves existing resource study status, personal notes, and local PDF references;
+  skips matching progress/schedules/settings/timer state/revision rules/dashboard layout; rejects rows
+  whose required topic or resource is unavailable.
+- **Replace:** after the safety backup, removes current core records and, for format 2, resource
+  records in foreign-key-safe order; inserts the complete validated export with exported IDs and
+  relationships; restores append-only history triggers; verifies foreign keys and exact counts; then
+  commits. Local PDF references are imported only when the path exists and its size and SHA-256 match.
+  Missing or changed PDFs are skipped, while resource metadata and progress remain. PDF files on disk
+  are never deleted. Current backup settings and database identity remain installation-local.
+
+Local PDF references are verified on import. A missing file, wrong size, or checksum mismatch is
+reported and skipped rather than imported as a misleading **Offline copy**. The same reference is never
+overwritten during merge.
 
 Imports report imported, skipped, conflicting, and rejected counts per table. Any failure rolls back
 the entire transaction. The app must be reloaded after import to refresh every screen.
@@ -846,13 +863,15 @@ Backup and export files are personal study data. They are written only to user-s
 removable-drive folders, never sent over the network; explicit UNC network paths are rejected.
 Generated filenames prevent traversal; selected paths must be absolute.
 User-facing errors describe the folder or operation without dumping internal absolute paths. No
-credentials or unrelated machine information are placed in manifests or JSON exports.
+credentials or unrelated machine information are placed in manifests or JSON exports. Format 2 includes
+the local PDF paths you chose for imported files so they can be re-validated; those paths may reveal
+folder names, so treat exports as private data.
 
 Backups and exports are **not encrypted**. Anyone with file access can read them. Keep them in a
 private folder or encrypted removable drive. Restore requires the adjacent manifest, so move or copy
 both files together. Automatic backups run only while the app is running; they are not a background
-Windows service. JSON import supports schema 8 and 9; use the SQLite backup restore workflow for older
-database schemas.
+Windows service. JSON format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10. Use the
+SQLite backup restore workflow for older database schemas.
 
 ## Typography note
 
@@ -899,7 +918,7 @@ The executable and bundle are generated from the product identity in `src-tauri/
 
 - Product: CSIR-NET Physics Tracker
 - Identifier: `com.crimsonvisa.csirnetphysics`
-- Version: `1.1.0`
+- Version: `1.2.0`
 
 ## Project structure
 
