@@ -62,18 +62,20 @@ Release date: pending final v1.2.0 completion
 
 ## Stage 4 scope — typography and dark colour refinement
 
-- Bundled Latin Modern Roman, Sans, Mono, and Math locally; no runtime font download.
-- Headings and reading content use Latin Modern Roman; interface text and navigation use Latin
-  Modern Sans; codes and identifiers use Latin Modern Mono.
-- Latin Modern Math is the fallback for Greek letters, mathematical symbols, subscripts, and
-  superscripts.
+- Bundled the actual **Computer Modern Unicode (CMU) 0.7.0** family locally; no runtime font
+  download and no generic serif substitute.
+- Headings and reading content use **CMU Serif**; navigation and UI controls use **CMU Sans Serif**;
+  code and technical text use **CMU Typewriter Text**.
+- CMU Serif is the primary math face. Cambria Math and Segoe UI Symbol provide local fallback glyphs
+  for mathematical operators that CMU does not contain, including integrals, summations, and
+  partial derivatives. Subscripts and superscripts use real `<sub>`/`<sup>` markup.
 - Applied the premium dark palette consistently: `#0B0E14` canvas, `#151B26` cards, `#202A39`
   elevated surfaces, `#63C7D9` primary accent, `#D6B779` secondary accent, `#E7EAF0` main text,
   `#9BAAC0` muted text, and restrained blue-grey borders.
 - Existing page layouts, navigation dimensions, card structure, spacing, tables, components, and
   workflows are unchanged. This stage changes typography and colour only.
-- Fonts are licensed under the GUST Font License; the license is included at
-  `src/assets/fonts/GUST-FONT-LICENSE.txt`.
+- Fonts are licensed under the SIL Open Font License, Version 1.1; the license is included at
+  `src/assets/fonts/OFL-1.1.txt` and shipped under `public/fonts/OFL-1.1.txt`.
 - Database schema remains **10**; no data or functional changes were made.
 
 ## Safety
@@ -94,6 +96,6 @@ Release date: pending final v1.2.0 completion
   files, full resource backup/restore, manifest counts, PDF-byte exclusion, cross-machine restore,
   and legacy manifest compatibility.
 - Stage 4 is visual-only; the existing test suites pass unchanged, and the production build emits
-  the bundled Latin Modern font assets locally.
+  the bundled CMU font assets locally.
 - Database schema remains **10**; no migration was added.
 - The final 1.2.0 installer is not produced in this stage. The current public release remains 1.1.0.

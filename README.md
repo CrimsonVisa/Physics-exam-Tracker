@@ -102,7 +102,8 @@ Only do that after creating and verifying a backup if you may need the data agai
 
 Core functionality has no required external API or remote asset. The Content Security Policy blocks
 remote scripts/styles/network connections except the Tauri IPC endpoint and local assets. Fonts are
-bundled Latin Modern files; no web font is downloaded. The app supports keyboard navigation,
+bundled Computer Modern Unicode files; no web font is downloaded. The app supports keyboard
+navigation,
 visible focus rings, a skip-to-content link, labelled forms, semantic tables, status announcements, and
 native dialogs. Charts provide textual supporting values and empty states. Official-source links open
 in the external browser only when the user selects them.
@@ -920,17 +921,18 @@ SQLite backup restore workflow for older database schemas.
 
 ## Typography and colour
 
-The interface bundles **Latin Modern** locally (no runtime font download):
+The interface bundles **Computer Modern Unicode (CMU)** locally (no runtime font download):
 
-- Latin Modern Roman for headings and reading content.
-- Latin Modern Sans for interface text and navigation.
-- Latin Modern Mono for codes, IDs, and code samples.
-- Latin Modern Math as the glyph fallback for Greek letters, mathematical symbols, subscripts, and
-  superscripts.
+- **CMU Serif** for headings and reading content.
+- **CMU Sans Serif** for navigation and UI controls.
+- **CMU Typewriter Text** for code, IDs, and technical text.
+- CMU Serif is also the primary math face. Cambria Math and Segoe UI Symbol provide local fallback
+  glyphs for mathematical operators that CMU does not contain.
 
-The fonts and the GUST Font License are in [`src/assets/fonts`](src/assets/fonts). Latin Modern is
-released under the GUST Font License (GFL), which permits embedding and redistribution when the
-license notice is preserved. See [`GUST-FONT-LICENSE.txt`](src/assets/fonts/GUST-FONT-LICENSE.txt).
+The fonts and the SIL Open Font License are in [`src/assets/fonts`](src/assets/fonts). CMU 0.7.0 is
+released under the SIL Open Font License, Version 1.1, which permits embedding and redistribution
+when the copyright and license notices are preserved. See
+[`OFL-1.1.txt`](src/assets/fonts/OFL-1.1.txt).
 
 The visual theme is a premium dark palette: `#0B0E14` canvas, `#151B26` cards, `#202A39` elevated
 surfaces, `#63C7D9` primary accent, `#D6B779` secondary accent, `#E7EAF0` main text, `#9BAAC0`

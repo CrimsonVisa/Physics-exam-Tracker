@@ -1,100 +1,98 @@
 @font-face {
-  font-family: 'Latin Modern Roman';
-  src: url('./assets/fonts/latin-modern-roman-regular.otf') format('opentype');
+  font-family: 'CMU Serif';
+  src: url('./assets/fonts/cmu-serif-roman.otf') format('opentype');
   font-style: normal;
   font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Roman';
-  src: url('./assets/fonts/latin-modern-roman-italic.otf') format('opentype');
+  font-family: 'CMU Serif';
+  src: url('./assets/fonts/cmu-serif-italic.otf') format('opentype');
   font-style: italic;
   font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Roman';
-  src: url('./assets/fonts/latin-modern-roman-bold.otf') format('opentype');
+  font-family: 'CMU Serif';
+  src: url('./assets/fonts/cmu-serif-bold.otf') format('opentype');
   font-style: normal;
   font-weight: 700;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Roman';
-  src: url('./assets/fonts/latin-modern-roman-bold-italic.otf') format('opentype');
+  font-family: 'CMU Serif';
+  src: url('./assets/fonts/cmu-serif-bold-italic.otf') format('opentype');
   font-style: italic;
   font-weight: 700;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Sans';
-  src: url('./assets/fonts/latin-modern-sans-regular.otf') format('opentype');
+  font-family: 'CMU Sans Serif';
+  src: url('./assets/fonts/cmu-sans-serif-regular.otf') format('opentype');
   font-style: normal;
   font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Sans';
-  src: url('./assets/fonts/latin-modern-sans-oblique.otf') format('opentype');
+  font-family: 'CMU Sans Serif';
+  src: url('./assets/fonts/cmu-sans-serif-oblique.otf') format('opentype');
   font-style: italic;
   font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Sans';
-  src: url('./assets/fonts/latin-modern-sans-bold.otf') format('opentype');
+  font-family: 'CMU Sans Serif';
+  src: url('./assets/fonts/cmu-sans-serif-bold.otf') format('opentype');
   font-style: normal;
   font-weight: 700;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Sans';
-  src: url('./assets/fonts/latin-modern-sans-bold-oblique.otf') format('opentype');
+  font-family: 'CMU Sans Serif';
+  src: url('./assets/fonts/cmu-sans-serif-bold-oblique.otf') format('opentype');
   font-style: italic;
   font-weight: 700;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Mono';
-  src: url('./assets/fonts/latin-modern-mono-regular.otf') format('opentype');
+  font-family: 'CMU Typewriter Text';
+  src: url('./assets/fonts/cmu-typewriter-regular.otf') format('opentype');
   font-style: normal;
   font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Latin Modern Mono';
-  src: url('./assets/fonts/latin-modern-mono-italic.otf') format('opentype');
+  font-family: 'CMU Typewriter Text';
+  src: url('./assets/fonts/cmu-typewriter-bold.otf') format('opentype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CMU Typewriter Text';
+  src: url('./assets/fonts/cmu-typewriter-bold-italic.otf') format('opentype');
   font-style: italic;
-  font-weight: 400;
+  font-weight: 700;
   font-display: swap;
 }
-
-@font-face {
-  font-family: 'Latin Modern Math';
-  src: url('./assets/fonts/latin-modern-math.otf') format('opentype');
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-}
-
 :root {
   color-scheme: dark;
   --font-sans:
-    'Latin Modern Sans', 'Latin Modern Math', 'Segoe UI', system-ui, -apple-system,
+    'CMU Sans Serif', 'CMU Serif', 'Cambria Math', 'Segoe UI', system-ui, -apple-system,
     'Segoe UI Symbol', sans-serif;
-  --font-serif: 'Latin Modern Roman', 'Latin Modern Math', Georgia, serif;
-  --font-math: 'Latin Modern Math', 'Latin Modern Roman', 'Cambria Math', 'Segoe UI Symbol', serif;
-  --font-mono:
-    'Latin Modern Mono', 'Latin Modern Math', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  --font-serif: 'CMU Serif', 'Cambria Math', 'Segoe UI Symbol', Georgia, serif;
+  --font-math: 'CMU Serif', 'Cambria Math', 'Segoe UI Symbol', serif;
+  --font-mono: 'CMU Typewriter Text', 'Cascadia Mono', Consolas, 'Courier New', monospace;
   --ink: #e7eaf0;
   --muted: #9baac0;
   --paper: #151b26;

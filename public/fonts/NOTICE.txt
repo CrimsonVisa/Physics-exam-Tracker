@@ -1,9 +1,15 @@
-﻿Latin Modern fonts
-==================
+﻿Computer Modern Unicode fonts
+=============================
 
-The application bundles Latin Modern Roman, Sans, Mono, and Math locally.
+The application bundles Computer Modern Unicode (CMU) 0.7.0 locally:
 
-Source: GUST Latin Modern 2.004 and CTAN lm-math
-License: GUST Font License (GFL), see GUST-FONT-LICENSE.txt
+- CMU Serif
+- CMU Sans Serif
+- CMU Typewriter Text
 
-No font is downloaded at runtime.
+Source: https://cm-unicode.sourceforge.io/ (distributed via CTAN)
+License: SIL Open Font License, Version 1.1
+See OFL-1.1.txt for the required copyright and license notice.
+
+No font is downloaded at runtime. Cambria Math and Segoe UI Symbol may be used as local fallback
+glyphs for mathematical operators that CMU does not contain.
