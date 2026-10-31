@@ -530,7 +530,9 @@ export default function BackupScreen({
           <strong>
             Schema {overview.schemaVersion} · App {overview.applicationVersion}
           </strong>
-          <small>Database {overview.databaseId}</small>
+          <small className="backup-identifier" title={overview.databaseId}>
+            Database {overview.databaseId}
+          </small>
         </div>
       </section>
 
@@ -546,9 +548,9 @@ export default function BackupScreen({
           integrity and foreign-key checks, then saved with a JSON manifest containing its schema,
           checksum, timestamp, app version, and database identifier.
         </p>
-        <div className="backup-path-row">
-          <div className="form-field">
-            <label htmlFor="manual-backup-directory">Backup folder</label>
+        <div className="form-field backup-path-field">
+          <label htmlFor="manual-backup-directory">Backup folder</label>
+          <div className="backup-path-inline">
             <input
               id="manual-backup-directory"
               type="text"
@@ -557,16 +559,16 @@ export default function BackupScreen({
               readOnly
               disabled={isBusy}
             />
-            <p className="field-hint">Choose a local or removable-drive folder.</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleManualDestination()}
+              disabled={isBusy}
+            >
+              Choose backup folder
+            </button>
           </div>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => void handleManualDestination()}
-            disabled={isBusy}
-          >
-            Choose backup folder
-          </button>
+          <p className="field-hint">Choose a local or removable-drive folder.</p>
         </div>
         <div className="form-footer">
           <button
@@ -803,9 +805,9 @@ export default function BackupScreen({
           RFC-style escaping for commas, quotes, and newlines. Exporting never changes saved
           records.
         </p>
-        <div className="backup-path-row">
-          <div className="form-field">
-            <label htmlFor="csv-export-directory">Export folder</label>
+        <div className="form-field backup-path-field">
+          <label htmlFor="csv-export-directory">Export folder</label>
+          <div className="backup-path-inline">
             <input
               id="csv-export-directory"
               type="text"
@@ -813,15 +815,15 @@ export default function BackupScreen({
               readOnly
               disabled={isBusy}
             />
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleCsvDestination()}
+              disabled={isBusy}
+            >
+              Choose CSV folder
+            </button>
           </div>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => void handleCsvDestination()}
-            disabled={isBusy}
-          >
-            Choose CSV folder
-          </button>
         </div>
         <div className="form-footer">
           <button
@@ -864,9 +866,9 @@ export default function BackupScreen({
           revision history, export format version, schema version, timestamp, application version,
           and database identifier. The written JSON is parsed again before success is reported.
         </p>
-        <div className="backup-path-row">
-          <div className="form-field">
-            <label htmlFor="json-export-directory">Export folder</label>
+        <div className="form-field backup-path-field">
+          <label htmlFor="json-export-directory">Export folder</label>
+          <div className="backup-path-inline">
             <input
               id="json-export-directory"
               type="text"
@@ -874,15 +876,15 @@ export default function BackupScreen({
               readOnly
               disabled={isBusy}
             />
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleJsonDestination()}
+              disabled={isBusy}
+            >
+              Choose JSON folder
+            </button>
           </div>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => void handleJsonDestination()}
-            disabled={isBusy}
-          >
-            Choose JSON folder
-          </button>
         </div>
         <div className="form-footer">
           <button

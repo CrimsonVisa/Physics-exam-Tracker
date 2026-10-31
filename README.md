@@ -934,10 +934,17 @@ released under the SIL Open Font License, Version 1.1, which permits embedding a
 when the copyright and license notices are preserved. See
 [`OFL-1.1.txt`](src/assets/fonts/OFL-1.1.txt).
 
-The visual theme is a premium dark palette: `#0B0E14` canvas, `#151B26` cards, `#202A39` elevated
-surfaces, `#63C7D9` primary accent, `#D6B779` secondary accent, `#E7EAF0` main text, `#9BAAC0`
-muted text, and restrained blue-grey borders. Layout, spacing, navigation, card geometry, and
-workflows are unchanged.
+The interface supports two complete themes built from one token set. Refreshed Dark is the default:
+`#18252B` canvas, `#22343A` cards, `#2A3F45` raised surfaces, `#75C9B0` primary mint,
+`#F0C987` amber highlights, `#F0F4F1` main text, and `#B4C4BE` muted text. Refreshed Light uses
+`#F3F7F4` canvas, `#FFFFFF` cards, `#22745D` primary mint, `#8A5A13` amber, `#20312B` main text,
+and `#52665E` muted text. Mint communicates positive progress, amber milestones and attention,
+blue informational content, and restrained red genuine errors and destructive actions.
+
+The selected theme is stored locally under `csir-net-tracker.ui.theme.v1`; missing or invalid values
+fall back to Dark. The sidebar supports expanded, collapsed, and hidden modes stored under
+`csir-net-tracker.ui.sidebar-mode.v1`. Layout, typography, card geometry, and workflows are
+otherwise unchanged.
 
 ## Checks
 

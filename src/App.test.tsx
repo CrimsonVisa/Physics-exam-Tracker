@@ -11,6 +11,7 @@ import type {
 import type { Settings } from './lib/settingsApi';
 import type { StudyTotals } from './lib/sessionsApi';
 import type { TimerSnapshot } from './lib/timerApi';
+import { SIDEBAR_MODE_STORAGE_KEY, THEME_STORAGE_KEY } from './lib/uiPreferences';
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -424,6 +425,9 @@ function callsFor(command: string) {
 describe('settings dashboard', () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.style.colorScheme = '';
   });
 
   it('loads persisted settings and shows the countdown, dates, target, provisional warning, and study total', async () => {
@@ -930,5 +934,97 @@ describe('settings dashboard', () => {
 
     expect(await screen.findByText('days remaining')).toBeInTheDocument();
     expect(callsFor('get_settings')).toHaveLength(2);
+  });
+
+  it('defaults to the dark theme and persists an explicit light-theme choice', async () => {
+    mockBackend();
+    const firstRender = renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    expect(screen.getByRole('button', { name: 'Dark theme' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Light theme' }));
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
+    expect(screen.getByRole('button', { name: 'Light theme' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    firstRender.unmount();
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    expect(screen.getByRole('button', { name: 'Light theme' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('collapses, hides, and restores the sidebar while keeping controls reachable', async () => {
+    mockBackend();
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Primary navigation' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Expand sidebar' })).toHaveFocus(),
+    );
+    expect(screen.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('button', { name: 'Light theme' })).toBeInTheDocument();
+    expect(window.localStorage.getItem(SIDEBAR_MODE_STORAGE_KEY)).toBe('collapsed');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Show navigation' })).toHaveFocus(),
+    );
+    expect(
+      screen.queryByRole('navigation', { name: 'Primary navigation' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Light theme' })).toBeInTheDocument();
+    expect(window.localStorage.getItem(SIDEBAR_MODE_STORAGE_KEY)).toBe('hidden');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show navigation' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toHaveFocus(),
+    );
+    expect(screen.getByRole('navigation', { name: 'Primary navigation' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('restores a stored hidden sidebar mode without leaving navigation focusable', async () => {
+    window.localStorage.setItem(SIDEBAR_MODE_STORAGE_KEY, 'hidden');
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    mockBackend();
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show navigation' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('navigation', { name: 'Primary navigation' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Light theme' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 });
