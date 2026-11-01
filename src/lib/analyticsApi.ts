@@ -11,7 +11,13 @@ export type PyqTopicPerformance = {
   incorrect: number;
   skipped: number;
   attempts: number;
+  totalAttempts: number;
+  distinctQuestions: number;
+  evidenceQuestions: number;
   accuracy: number | null;
+  evidenceAccuracy: number | null;
+  lastScoredAttemptDate: string | null;
+  skippedOnly: boolean;
   sufficientData: boolean;
 };
 
@@ -59,7 +65,8 @@ export type PyqAnalytics = {
   outcomeUnknown: number;
   attempts: number;
   accuracy: number | null;
-  minimumWeakAttempts: number;
+  minimumEvidenceQuestions: number;
+  evidenceWindowDays: number;
   weakAccuracyThreshold: number;
   byTopic: PyqTopicPerformance[];
   byUnit: PyqUnitPerformance[];
@@ -76,6 +83,7 @@ export type MockTrendPoint = {
   maxMarks: number;
   computedMarks: number;
   computedPercentage: number;
+  configurationValid: boolean;
   reportedMarks: number | null;
 };
 

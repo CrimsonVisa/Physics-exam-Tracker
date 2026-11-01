@@ -104,6 +104,8 @@ export type TaskDateChange = {
   proposedScheduledDate: string;
   offsetDays: number;
   outsideWindow: boolean;
+  deadlineDate: string | null;
+  deadlineConflict: boolean;
 };
 
 export type OutsideWindowItem = {

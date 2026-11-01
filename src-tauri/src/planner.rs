@@ -490,6 +490,16 @@ pub fn reschedule_task(
         return Err(AppError::task_completed());
     }
 
+    let scheduled_text = date_only::format_date_only(scheduled);
+    if let Some(deadline) = &existing.deadline_date
+        && &scheduled_text > deadline
+    {
+        return Err(AppError::validation(
+            "scheduledDate",
+            format!("The task deadline is {deadline}; choose a date on or before it."),
+        ));
+    }
+
     transaction
         .execute(
             "UPDATE checklist_tasks
@@ -498,7 +508,7 @@ pub fn reschedule_task(
                  schedule_offset_days = NULL,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?2",
-            params![date_only::format_date_only(scheduled), task_id],
+            params![scheduled_text, task_id],
         )
         .map_err(|error| {
             AppError::database("The checklist task could not be rescheduled", error)
@@ -1059,6 +1069,15 @@ fn validate_task_input(
         .map(|value| validate_required_date(&value, "deadlineDate"))
         .transpose()?
         .map(date_only::format_date_only);
+
+    if let Some(deadline) = &deadline_date
+        && deadline < &scheduled_date
+    {
+        return Err(AppError::validation(
+            "deadlineDate",
+            "The deadline cannot be earlier than the scheduled date.",
+        ));
+    }
 
     if let Some(topic_id) = input.topic_id {
         validate_id(topic_id, "topicId")?;
@@ -1629,6 +1648,13 @@ mod tests {
             ),
             (
                 TaskInput {
+                    deadline_date: Some("2026-11-01".to_owned()),
+                    ..task_input("Deadline before schedule", "2026-11-02")
+                },
+                "deadlineDate",
+            ),
+            (
+                TaskInput {
                     priority: "Urgent".to_owned(),
                     ..task_input("Bad priority", "2026-11-01")
                 },
@@ -1709,6 +1735,31 @@ mod tests {
                 .expect("task should reload")
                 .scheduled_date,
             "2026-11-20"
+        );
+    }
+
+    #[test]
+    fn reschedule_rejects_a_date_after_the_task_deadline() {
+        let mut connection = connection();
+        let today = date(2026, 10, 30);
+        let task = create_task(
+            &mut connection,
+            TaskInput {
+                deadline_date: Some("2026-11-15".to_owned()),
+                ..task_input("Deadline task", "2026-11-01")
+            },
+            today,
+        )
+        .expect("task should be created");
+
+        let error = reschedule_task(&mut connection, task.id, "2026-11-16", today)
+            .expect_err("rescheduling past the deadline should fail");
+        assert_eq!(error.field, Some("scheduledDate"));
+        assert_eq!(
+            load_task(&connection, task.id, today)
+                .expect("task should reload")
+                .scheduled_date,
+            "2026-11-01"
         );
     }
 

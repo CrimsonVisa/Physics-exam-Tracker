@@ -87,6 +87,36 @@ describe('task editor', () => {
     expect(onSaved).toHaveBeenCalledWith(SAVED_TASK, false);
   });
 
+  it('rejects a deadline earlier than the scheduled date', async () => {
+    render(
+      <TaskEditor
+        task={null}
+        topics={[]}
+        defaultDate={TODAY}
+        examDate={EXAM_DATE}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Task title'), {
+      target: { value: 'Deadline ordering' },
+    });
+    fireEvent.change(screen.getByLabelText('Scheduled date'), {
+      target: { value: '2026-11-10' },
+    });
+    fireEvent.change(screen.getByLabelText('Deadline date (optional)'), {
+      target: { value: '2026-11-09' },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }));
+
+    expect(
+      screen.getByText('The deadline cannot be earlier than the scheduled date.'),
+    ).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it('blocks a missing title before invoking the backend and shows field errors', async () => {
     invokeMock.mockRejectedValue({
       code: 'validation_error',

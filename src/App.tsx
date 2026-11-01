@@ -365,6 +365,9 @@ export default function App({ today }: AppProps) {
 
   const formMinutes = form ? parseDailyMinutes(form.dailyMinutes) : null;
   const dirty = Boolean(form && settings && isDirty(form, settings));
+  const examDeadlineConflicts =
+    examPreview?.changes.filter((change) => change.deadlineConflict) ?? [];
+  const hasExamDeadlineConflict = examDeadlineConflicts.length > 0;
   const activeExamDate = settings?.examDate ?? form?.examDate ?? currentToday;
   const dashboardDataKey = settings
     ? `${settings.examDate}|${settings.preparationStartDate}|${settings.dailyStudyTargetMinutes}`
@@ -690,11 +693,30 @@ export default function App({ today }: AppProps) {
                                         Moves outside the new preparation window
                                       </span>
                                     )}
+                                    {change.deadlineConflict && (
+                                      <span className="exam-preview-warning">
+                                        {' '}
+                                        Moves past its deadline
+                                        {change.deadlineDate
+                                          ? ` (${formatDateLong(change.deadlineDate) ?? change.deadlineDate})`
+                                          : ''}
+                                      </span>
+                                    )}
                                   </span>
                                 </li>
                               ))}
                             </ul>
                           </div>
+                        )}
+
+                        {hasExamDeadlineConflict && (
+                          <p className="save-feedback save-feedback-error" role="alert">
+                            {examDeadlineConflicts.length === 1
+                              ? 'One exam-anchored task would move past its deadline.'
+                              : `${examDeadlineConflicts.length} exam-anchored tasks would move past their deadlines.`}{' '}
+                            Cancel this preview and correct the deadline before changing the exam
+                            date.
+                          </p>
                         )}
 
                         {examPreview.outsideWindow.length > 0 && (
@@ -729,7 +751,7 @@ export default function App({ today }: AppProps) {
                             type="button"
                             className="primary-button"
                             onClick={() => void handleApplyExamPreview()}
-                            disabled={isSaving}
+                            disabled={isSaving || hasExamDeadlineConflict}
                           >
                             {isSaving ? 'Applying…' : 'Apply exam-date change'}
                           </button>

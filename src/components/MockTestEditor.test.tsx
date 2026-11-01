@@ -53,6 +53,7 @@ const SAVED: MockTest = {
   totalUnanswered: 1,
   computedMarks: 10.5,
   computedPercentage: 10.5,
+  configurationValid: true,
   notes: '',
   reviewObservations: '',
   createdAt: '2026-10-30T10:00:00.000Z',
@@ -144,6 +145,24 @@ describe('mock-test editor', () => {
     expect(onSaved).toHaveBeenCalledWith(SAVED, false);
   });
 
+  it('warns about a legacy invalid configuration when editing an existing record', () => {
+    render(
+      <MockTestEditor
+        test={{
+          ...SAVED,
+          configurationValid: false,
+          partA: { ...SAVED.partA, incorrectMarks: 1 },
+        }}
+        today={TODAY}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Saved marking configuration needs review/)).toBeInTheDocument();
+    expect(screen.getByText('Part A has positive incorrect-answer marks.')).toBeInTheDocument();
+  });
+
   it('rejects a reported score above the maximum', async () => {
     render(<MockTestEditor test={null} today={TODAY} onSaved={vi.fn()} onCancel={vi.fn()} />);
 
@@ -169,6 +188,126 @@ describe('mock-test editor', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Add mock test' }));
 
     expect(screen.getByText('Reported marks cannot exceed maximum marks.')).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects positive incorrect-answer marks', async () => {
+    render(<MockTestEditor test={null} today={TODAY} onSaved={vi.fn()} onCancel={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Test name'), {
+      target: { value: 'Invalid penalty mock' },
+    });
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), {
+      target: { value: '180' },
+    });
+    fireEvent.change(screen.getByLabelText('Maximum marks'), {
+      target: { value: '4' },
+    });
+    const partA = screen.getByRole('group', { name: 'Part A' });
+    fireEvent.change(within(partA).getByLabelText('Questions'), { target: { value: '2' } });
+    fireEvent.change(within(partA).getByLabelText('Correct'), { target: { value: '1' } });
+    fireEvent.change(within(partA).getByLabelText('Incorrect'), { target: { value: '1' } });
+    fireEvent.change(within(partA).getByLabelText('Correct marks'), {
+      target: { value: '2' },
+    });
+    fireEvent.change(within(partA).getByLabelText('Incorrect marks'), {
+      target: { value: '1' },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add mock test' }));
+
+    expect(
+      screen.getByText('Incorrect-answer marks must be zero or negative. Use 0 for no penalty.'),
+    ).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects maximum marks below the configured maximum score', async () => {
+    render(<MockTestEditor test={null} today={TODAY} onSaved={vi.fn()} onCancel={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Test name'), {
+      target: { value: 'Impossible percentage mock' },
+    });
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), {
+      target: { value: '180' },
+    });
+    fireEvent.change(screen.getByLabelText('Maximum marks'), {
+      target: { value: '10' },
+    });
+    const partA = screen.getByRole('group', { name: 'Part A' });
+    fireEvent.change(within(partA).getByLabelText('Questions'), { target: { value: '10' } });
+    fireEvent.change(within(partA).getByLabelText('Correct'), { target: { value: '10' } });
+    fireEvent.change(within(partA).getByLabelText('Correct marks'), {
+      target: { value: '2' },
+    });
+
+    expect(screen.getByLabelText('Calculated mock score')).toHaveTextContent('200.00%');
+    await userEvent.click(screen.getByRole('button', { name: 'Add mock test' }));
+
+    expect(
+      screen.getByText(
+        'Maximum marks must be at least the highest possible score from this marking configuration (20).',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/calculated score is above maximum marks/i)).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a maximum within the former rounding margin of the possible score', async () => {
+    render(<MockTestEditor test={null} today={TODAY} onSaved={vi.fn()} onCancel={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Test name'), {
+      target: { value: 'Tight maximum mock' },
+    });
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), {
+      target: { value: '180' },
+    });
+    fireEvent.change(screen.getByLabelText('Maximum marks'), {
+      target: { value: '99.995' },
+    });
+    const partA = screen.getByRole('group', { name: 'Part A' });
+    fireEvent.change(within(partA).getByLabelText('Questions'), { target: { value: '1' } });
+    fireEvent.change(within(partA).getByLabelText('Correct'), { target: { value: '1' } });
+    fireEvent.change(within(partA).getByLabelText('Correct marks'), {
+      target: { value: '100' },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add mock test' }));
+
+    expect(
+      screen.getByText(
+        'Maximum marks must be at least the highest possible score from this marking configuration (100).',
+      ),
+    ).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a tiny maximum that would still produce an impossible percentage', async () => {
+    render(<MockTestEditor test={null} today={TODAY} onSaved={vi.fn()} onCancel={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Test name'), {
+      target: { value: 'Tiny maximum mock' },
+    });
+    fireEvent.change(screen.getByLabelText('Duration (minutes)'), {
+      target: { value: '180' },
+    });
+    fireEvent.change(screen.getByLabelText('Maximum marks'), {
+      target: { value: '0.001' },
+    });
+    const partA = screen.getByRole('group', { name: 'Part A' });
+    fireEvent.change(within(partA).getByLabelText('Questions'), { target: { value: '1' } });
+    fireEvent.change(within(partA).getByLabelText('Correct'), { target: { value: '1' } });
+    fireEvent.change(within(partA).getByLabelText('Correct marks'), {
+      target: { value: '0.001000001' },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add mock test' }));
+
+    expect(
+      screen.getByText(
+        'The calculated score cannot exceed maximum marks. Review maximum marks or the marking configuration.',
+      ),
+    ).toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

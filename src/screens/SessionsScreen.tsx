@@ -746,7 +746,7 @@ export default function SessionsScreen({ today }: { today: string }) {
                 {editingId === null
                   ? 'Use manual entry for study that happened away from the timer. Only focus time belongs here.'
                   : editingSource === 'timer'
-                    ? 'Timer start and end timestamps are kept. Changing the date or duration recalculates study totals.'
+                    ? 'Timer session date and duration are fixed by their recorded timestamps. Edit only the topic or notes.'
                     : 'Editing the date or duration recalculates the affected daily and weekly totals.'}
               </p>
 
@@ -757,9 +757,13 @@ export default function SessionsScreen({ today }: { today: string }) {
                     label="Session date"
                     value={form.sessionDate}
                     onChange={(value) => handleFormField('sessionDate', value)}
-                    hint="The local calendar date this focus time belongs to."
+                    hint={
+                      editingSource === 'timer'
+                        ? 'Fixed to the local date when the focus timer started.'
+                        : 'The local calendar date this focus time belongs to.'
+                    }
                     error={formErrors.sessionDate}
-                    disabled={isSaving}
+                    disabled={isSaving || editingSource === 'timer'}
                   />
 
                   <div className="form-field">
@@ -807,7 +811,7 @@ export default function SessionsScreen({ today }: { today: string }) {
                             ? 'session-duration-hint session-duration-error'
                             : 'session-duration-hint'
                         }
-                        disabled={isSaving}
+                        disabled={isSaving || editingSource === 'timer'}
                       />
                     </div>
                     <div className="form-field">
@@ -826,12 +830,14 @@ export default function SessionsScreen({ today }: { today: string }) {
                             ? 'session-duration-hint session-duration-error'
                             : 'session-duration-hint'
                         }
-                        disabled={isSaving}
+                        disabled={isSaving || editingSource === 'timer'}
                       />
                     </div>
                   </div>
                   <p className="field-hint" id="session-duration-hint">
-                    1 second to 24 hours. Breaks should not be entered as study sessions.
+                    {editingSource === 'timer'
+                      ? 'Fixed by the recorded timer. Breaks and paused time are already excluded.'
+                      : '1 second to 24 hours. Breaks should not be entered as study sessions.'}
                   </p>
                   {formErrors.durationSeconds && (
                     <p className="field-error" id="session-duration-error" role="alert">

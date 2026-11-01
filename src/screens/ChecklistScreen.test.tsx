@@ -346,6 +346,44 @@ describe('checklist screen', () => {
     expect(await screen.findByText('New probability drill')).toBeInTheDocument();
   });
 
+  it('applies and clears the scheduled-date range filter', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_planner_topics') {
+        return Promise.resolve([]);
+      }
+      if (command === 'get_checklist_tasks') {
+        return Promise.resolve([makeTask()]);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    render(<ChecklistScreen today={TODAY} examDate={EXAM_DATE} />);
+    await screen.findByText('Revise probability');
+
+    fireEvent.change(screen.getByLabelText('Scheduled from (optional)'), {
+      target: { value: '2026-10-01' },
+    });
+    fireEvent.change(screen.getByLabelText('Scheduled to (optional)'), {
+      target: { value: '2026-10-31' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Apply dates' }));
+
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.filter(([name]) => name === 'get_checklist_tasks');
+      expect(filterFromArgs(calls.at(-1)?.[1])).toEqual({
+        status: 'open',
+        fromDate: '2026-10-01',
+        toDate: '2026-10-31',
+      });
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear dates' }));
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.filter(([name]) => name === 'get_checklist_tasks');
+      expect(filterFromArgs(calls.at(-1)?.[1])).toEqual({ status: 'open' });
+    });
+  });
+
   it('shows a load error and retries with a fresh task fetch', async () => {
     let attempts = 0;
     invokeMock.mockImplementation((command: string) => {

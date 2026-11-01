@@ -25,6 +25,39 @@ type Feedback = {
   message: string;
 } | null;
 
+const STALE_BACKUP_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type BackupAge = {
+  days: number;
+  elapsedMs: number;
+};
+
+function backupAge(lastSuccessAt: string | null): BackupAge | null {
+  if (!lastSuccessAt) {
+    return null;
+  }
+  const timestamp = Date.parse(lastSuccessAt);
+  if (Number.isNaN(timestamp) || timestamp > Date.now()) {
+    return null;
+  }
+  const elapsedMs = Date.now() - timestamp;
+  return {
+    days: Math.max(0, Math.floor(elapsedMs / DAY_MS)),
+    elapsedMs,
+  };
+}
+
+function backupAgeLabel(age: BackupAge | null): string {
+  if (age === null) {
+    return 'Backup age unavailable.';
+  }
+  if (age.days === 0) {
+    return 'Last success today.';
+  }
+  return `Last success ${age.days} day${age.days === 1 ? '' : 's'} ago.`;
+}
+
 type AutoBackupForm = {
   automaticEnabled: boolean;
   frequency: 'daily' | 'weekly' | 'before_important_operations';
@@ -445,6 +478,12 @@ export default function BackupScreen({
     }
   }
 
+  const backupAgeValue = backupAge(overview?.settings.lastSuccessAt ?? null);
+  const backupAgeDays = backupAgeValue?.days ?? null;
+  const backupIsStale = overview?.settings.lastSuccessAt
+    ? backupAgeValue === null || backupAgeValue.elapsedMs > STALE_BACKUP_DAYS * DAY_MS
+    : true;
+
   if (isLoading) {
     return (
       <div className="page-container">
@@ -516,7 +555,12 @@ export default function BackupScreen({
         <div className="backup-status-card">
           <span>Last successful backup</span>
           <strong>{timestampLabel(overview.settings.lastSuccessAt)}</strong>
-          <small>{overview.settings.lastSuccessFile ?? 'No successful backup recorded yet.'}</small>
+          <small>
+            {overview.settings.lastSuccessFile ?? 'No successful backup recorded yet.'}
+            {overview.settings.lastSuccessAt && (
+              <span className="backup-age-label">{backupAgeLabel(backupAgeValue)}</span>
+            )}
+          </small>
         </div>
         <div
           className={`backup-status-card${overview.settings.lastFailureAt ? ' backup-status-error' : ''}`}
@@ -535,6 +579,16 @@ export default function BackupScreen({
           </small>
         </div>
       </section>
+
+      {backupIsStale && (
+        <p className="backup-age-warning" role="status">
+          {!overview.settings.lastSuccessAt
+            ? 'No verified backup has been recorded yet. Create one before making major data changes.'
+            : backupAgeDays === null
+              ? 'The last backup timestamp could not be read. Verify or create a new backup before making major data changes.'
+              : `The last verified backup was ${backupAgeDays} day${backupAgeDays === 1 ? '' : 's'} ago. Consider creating a new backup before continuing.`}
+        </p>
+      )}
 
       <section className="backup-card" aria-labelledby="manual-backup-heading">
         <div className="card-heading">

@@ -5,7 +5,10 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::{
-    analytics::{self, MINIMUM_WEAK_ATTEMPTS, STRONG_ACCURACY_THRESHOLD, WEAK_ACCURACY_THRESHOLD},
+    analytics::{
+        self, EVIDENCE_WINDOW_DAYS, MINIMUM_EVIDENCE_QUESTIONS, STRONG_ACCURACY_THRESHOLD,
+        WEAK_ACCURACY_THRESHOLD,
+    },
     error::AppError,
     revision, syllabus,
 };
@@ -16,7 +19,8 @@ pub const LOW_CONFIDENCE_MAX: i64 = 2;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopicIntelligenceThresholds {
-    pub minimum_scored_attempts: i64,
+    pub minimum_scored_questions: i64,
+    pub evidence_window_days: i64,
     pub weak_accuracy_threshold: f64,
     pub strong_accuracy_threshold: f64,
     pub high_confidence_minimum: i64,
@@ -45,7 +49,13 @@ pub struct TopicEvidence {
     pub pyq_incorrect: i64,
     pub pyq_skipped: i64,
     pub pyq_attempts: i64,
+    pub pyq_total_attempts: i64,
+    pub pyq_total_questions: i64,
+    pub pyq_questions: i64,
     pub pyq_accuracy: Option<f64>,
+    pub pyq_evidence_accuracy: Option<f64>,
+    pub pyq_last_attempt_date: Option<String>,
+    pub skipped_only: bool,
     pub sufficient_data: bool,
     pub reasons: Vec<String>,
 }
@@ -57,6 +67,7 @@ pub struct TopicIntelligence {
     pub total_topics: i64,
     pub scored_topics: i64,
     pub no_data_topics: i64,
+    pub skipped_only_topics: i64,
     pub strong: Vec<TopicEvidence>,
     pub weak: Vec<TopicEvidence>,
     pub needs_revision: Vec<TopicEvidence>,
@@ -71,7 +82,7 @@ pub fn topic_intelligence(
     connection: &Connection,
     today: NaiveDate,
 ) -> Result<TopicIntelligence, AppError> {
-    let pyq = analytics::pyq(connection)?;
+    let pyq = analytics::pyq(connection, today)?;
     let revision_dashboard = revision::dashboard(connection, today)?;
     let syllabus_topics = syllabus::search_topics(connection, syllabus::SyllabusFilter::default())?;
 
@@ -95,15 +106,24 @@ pub fn topic_intelligence(
     let mut low_confidence_strong_pyq = Vec::new();
     let mut scored_topics = 0_i64;
     let mut no_data_topics = 0_i64;
+    let mut skipped_only_topics = 0_i64;
 
     for topic in &syllabus_topics {
         let stats = pyq_by_topic.get(&topic.id);
         let state = revision_by_topic.get(&topic.id);
         let attempts = stats.map_or(0, |entry| entry.attempts);
+        let total_attempts = stats.map_or(0, |entry| entry.total_attempts);
+        let total_questions = stats.map_or(0, |entry| entry.distinct_questions);
+        let questions = stats.map_or(0, |entry| entry.evidence_questions);
+        let evidence_accuracy = stats.and_then(|entry| entry.evidence_accuracy);
+        let skipped_only = stats.is_some_and(|entry| entry.skipped_only);
         if attempts == 0 {
             no_data_topics += 1;
         } else {
             scored_topics += 1;
+        }
+        if skipped_only {
+            skipped_only_topics += 1;
         }
 
         let base = TopicEvidence {
@@ -151,28 +171,36 @@ pub fn topic_intelligence(
             pyq_incorrect: stats.map_or(0, |entry| entry.incorrect),
             pyq_skipped: stats.map_or(0, |entry| entry.skipped),
             pyq_attempts: attempts,
+            pyq_total_attempts: total_attempts,
+            pyq_total_questions: total_questions,
+            pyq_questions: questions,
             pyq_accuracy: stats.and_then(|entry| entry.accuracy),
-            sufficient_data: attempts >= MINIMUM_WEAK_ATTEMPTS,
+            pyq_evidence_accuracy: evidence_accuracy,
+            pyq_last_attempt_date: stats
+                .and_then(|entry| entry.last_scored_attempt_date.as_deref().map(str::to_owned)),
+            skipped_only,
+            sufficient_data: questions >= MINIMUM_EVIDENCE_QUESTIONS,
             reasons: Vec::new(),
         };
 
-        let strong_evidence = attempts >= MINIMUM_WEAK_ATTEMPTS
+        let strong_evidence = questions >= MINIMUM_EVIDENCE_QUESTIONS
             && base
-                .pyq_accuracy
+                .pyq_evidence_accuracy
                 .is_some_and(|accuracy| accuracy >= STRONG_ACCURACY_THRESHOLD);
-        let weak_evidence = attempts >= MINIMUM_WEAK_ATTEMPTS
+        let weak_evidence = questions >= MINIMUM_EVIDENCE_QUESTIONS
             && base
-                .pyq_accuracy
+                .pyq_evidence_accuracy
                 .is_some_and(|accuracy| accuracy < WEAK_ACCURACY_THRESHOLD);
 
         if strong_evidence {
             let mut item = base.clone();
             item.reasons.push(format!(
-                "PYQ accuracy {:.1}% across {} scored attempts (strong threshold: {:.0}% with at least {} attempts).",
-                base.pyq_accuracy.unwrap_or(0.0),
-                attempts,
+                "PYQ accuracy {:.1}% across {} distinct questions in the last {} days using each question's latest scored outcome (strong threshold: {:.0}% with at least {} questions).",
+                base.pyq_evidence_accuracy.unwrap_or(0.0),
+                questions,
+                EVIDENCE_WINDOW_DAYS,
                 STRONG_ACCURACY_THRESHOLD,
-                MINIMUM_WEAK_ATTEMPTS
+                MINIMUM_EVIDENCE_QUESTIONS
             ));
             strong.push(item);
         }
@@ -180,32 +208,46 @@ pub fn topic_intelligence(
         if weak_evidence {
             let mut item = base.clone();
             item.reasons.push(format!(
-                "PYQ accuracy {:.1}% across {} scored attempts (weak threshold: below {:.0}% with at least {} attempts).",
-                base.pyq_accuracy.unwrap_or(0.0),
-                attempts,
+                "PYQ accuracy {:.1}% across {} distinct questions in the last {} days using each question's latest scored outcome (weak threshold: below {:.0}% with at least {} questions).",
+                base.pyq_evidence_accuracy.unwrap_or(0.0),
+                questions,
+                EVIDENCE_WINDOW_DAYS,
                 WEAK_ACCURACY_THRESHOLD,
-                MINIMUM_WEAK_ATTEMPTS
+                MINIMUM_EVIDENCE_QUESTIONS
             ));
             weak.push(item);
         }
 
-        if attempts > 0 && attempts < MINIMUM_WEAK_ATTEMPTS {
+        if total_attempts > 0 && questions < MINIMUM_EVIDENCE_QUESTIONS {
             let mut item = base.clone();
-            item.reasons.push(format!(
-                "Only {} scored PYQ attempt{}; at least {} are required before a weak or strong claim.",
-                attempts,
-                if attempts == 1 { "" } else { "s" },
-                MINIMUM_WEAK_ATTEMPTS
-            ));
+            item.reasons.push(if skipped_only {
+                "Only skipped PYQ attempts are recorded for this topic; no scored outcome is available yet.".to_owned()
+            } else if questions == 0 && total_questions > 0 {
+                format!(
+                    "Scored PYQ outcomes exist, but none are within the last {} days. Older outcomes remain in history but do not support a current weak or strong claim.",
+                    EVIDENCE_WINDOW_DAYS
+                )
+            } else if questions == 0 {
+                "PYQ attempts are recorded without a scored correct or incorrect outcome; no accuracy claim is available yet.".to_owned()
+            } else {
+                format!(
+                    "Only {} distinct question{} with a scored outcome in the last {} days; at least {} are required before a weak or strong claim.",
+                    questions,
+                    if questions == 1 { "" } else { "s" },
+                    EVIDENCE_WINDOW_DAYS,
+                    MINIMUM_EVIDENCE_QUESTIONS
+                )
+            });
             insufficient.push(item);
         }
 
         let mut revision_reasons = revision_reasons(&base);
         if weak_evidence {
             revision_reasons.push(format!(
-                "Sufficient PYQ evidence is below the weak-topic threshold ({:.1}% across {} scored attempts).",
-                base.pyq_accuracy.unwrap_or(0.0),
-                attempts
+                "Sufficient PYQ evidence is below the weak-topic threshold ({:.1}% across {} distinct questions in the last {} days, latest outcome per question).",
+                base.pyq_evidence_accuracy.unwrap_or(0.0),
+                questions,
+                EVIDENCE_WINDOW_DAYS
             ));
         }
         if !revision_reasons.is_empty() {
@@ -227,10 +269,10 @@ pub fn topic_intelligence(
         if base.confidence >= HIGH_CONFIDENCE_MIN && weak_evidence {
             let mut item = base.clone();
             item.reasons.push(format!(
-                "Confidence is {}/5 but PYQ accuracy is {:.1}% across {} scored attempts. The confidence rating and saved outcomes disagree.",
+                "Confidence is {}/5 but PYQ evidence accuracy is {:.1}% across {} distinct questions. The confidence rating and saved outcomes disagree.",
                 base.confidence,
-                base.pyq_accuracy.unwrap_or(0.0),
-                attempts
+                base.pyq_evidence_accuracy.unwrap_or(0.0),
+                questions
             ));
             high_confidence_poor_pyq.push(item);
         }
@@ -238,10 +280,10 @@ pub fn topic_intelligence(
         if base.confidence <= LOW_CONFIDENCE_MAX && strong_evidence {
             let mut item = base.clone();
             item.reasons.push(format!(
-                "Confidence is {}/5 but PYQ accuracy is {:.1}% across {} scored attempts. Saved outcomes are stronger than the confidence rating.",
+                "Confidence is {}/5 but PYQ evidence accuracy is {:.1}% across {} distinct questions. Saved outcomes are stronger than the confidence rating.",
                 base.confidence,
-                base.pyq_accuracy.unwrap_or(0.0),
-                attempts
+                base.pyq_evidence_accuracy.unwrap_or(0.0),
+                questions
             ));
             low_confidence_strong_pyq.push(item);
         }
@@ -263,27 +305,29 @@ pub fn topic_intelligence(
     });
     insufficient.sort_by(|left, right| {
         right
-            .pyq_attempts
-            .cmp(&left.pyq_attempts)
+            .pyq_questions
+            .cmp(&left.pyq_questions)
+            .then_with(|| right.pyq_total_attempts.cmp(&left.pyq_total_attempts))
             .then_with(|| left.code.cmp(&right.code))
     });
     high_confidence_poor_pyq.sort_by(|left, right| {
         right.confidence.cmp(&left.confidence).then_with(|| {
-            left.pyq_accuracy
-                .partial_cmp(&right.pyq_accuracy)
+            left.pyq_evidence_accuracy
+                .partial_cmp(&right.pyq_evidence_accuracy)
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
     });
     low_confidence_strong_pyq.sort_by(|left, right| {
         right
-            .pyq_accuracy
-            .partial_cmp(&left.pyq_accuracy)
+            .pyq_evidence_accuracy
+            .partial_cmp(&left.pyq_evidence_accuracy)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     Ok(TopicIntelligence {
         thresholds: TopicIntelligenceThresholds {
-            minimum_scored_attempts: MINIMUM_WEAK_ATTEMPTS,
+            minimum_scored_questions: MINIMUM_EVIDENCE_QUESTIONS,
+            evidence_window_days: EVIDENCE_WINDOW_DAYS,
             weak_accuracy_threshold: WEAK_ACCURACY_THRESHOLD,
             strong_accuracy_threshold: STRONG_ACCURACY_THRESHOLD,
             high_confidence_minimum: HIGH_CONFIDENCE_MIN,
@@ -292,6 +336,7 @@ pub fn topic_intelligence(
         total_topics: syllabus_topics.len() as i64,
         scored_topics,
         no_data_topics,
+        skipped_only_topics,
         strong,
         weak,
         needs_revision,
@@ -300,8 +345,11 @@ pub fn topic_intelligence(
         high_confidence_poor_pyq,
         low_confidence_strong_pyq,
         notes: vec![
-            "Topic intelligence uses saved scored PYQ attempts and revision records only. Syllabus status and confidence are shown as user-entered context, not proof of mastery.".to_owned(),
-            "A topic has sufficient performance evidence at five scored attempts (correct or incorrect). Skipped and outcome-unknown attempts are shown but are not counted as scored accuracy attempts.".to_owned(),
+            "Topic intelligence uses saved PYQ evidence and revision records only. Syllabus status and confidence are shown as user-entered context, not proof of mastery.".to_owned(),
+            format!(
+                "A topic needs scored outcomes for at least five distinct question references within the last {} days before a weak or strong claim. Each question's latest scored outcome in that window is used, so repeated attempts cannot inflate the evidence count. Older outcomes remain in history and skipped-only topics are reported separately.",
+                EVIDENCE_WINDOW_DAYS
+            ),
         ],
     })
 }
@@ -350,20 +398,20 @@ fn revision_urgency(evidence: &TopicEvidence) -> i64 {
 fn sort_by_accuracy_desc(items: &mut [TopicEvidence]) {
     items.sort_by(|left, right| {
         right
-            .pyq_accuracy
-            .partial_cmp(&left.pyq_accuracy)
+            .pyq_evidence_accuracy
+            .partial_cmp(&left.pyq_evidence_accuracy)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| right.pyq_attempts.cmp(&left.pyq_attempts))
+            .then_with(|| right.pyq_questions.cmp(&left.pyq_questions))
             .then_with(|| left.code.cmp(&right.code))
     });
 }
 
 fn sort_by_accuracy_asc(items: &mut [TopicEvidence]) {
     items.sort_by(|left, right| {
-        left.pyq_accuracy
-            .partial_cmp(&right.pyq_accuracy)
+        left.pyq_evidence_accuracy
+            .partial_cmp(&right.pyq_evidence_accuracy)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| right.pyq_attempts.cmp(&left.pyq_attempts))
+            .then_with(|| right.pyq_questions.cmp(&left.pyq_questions))
             .then_with(|| left.code.cmp(&right.code))
     });
 }
@@ -411,6 +459,16 @@ mod tests {
     }
 
     fn pyq_attempt(connection: &mut Connection, topic_id: i64, status: &str, reference: &str) {
+        pyq_attempt_on(connection, topic_id, status, reference, "2026-10-30");
+    }
+
+    fn pyq_attempt_on(
+        connection: &mut Connection,
+        topic_id: i64,
+        status: &str,
+        reference: &str,
+        attempt_date: &str,
+    ) {
         pyq::create(
             connection,
             pyq::PyqInput {
@@ -419,7 +477,7 @@ mod tests {
                 part: "B".to_owned(),
                 topic_id,
                 question_reference: reference.to_owned(),
-                attempt_date: "2026-10-30".to_owned(),
+                attempt_date: attempt_date.to_owned(),
                 status: status.to_owned(),
                 marks_obtained: None,
                 max_marks: None,
@@ -437,18 +495,37 @@ mod tests {
         let weak = topic_id(&connection, "MMP-C01");
         let strong = topic_id(&connection, "GA-01");
         let insufficient = topic_id(&connection, "CM-C01");
+        let skipped_only = topic_id(&connection, "MMP-C02");
         let overdue = topic_id(&connection, "EMT-C01");
 
         progress(&mut connection, weak, "Confident", 5);
         progress(&mut connection, strong, "Learning", 2);
-        for _ in 0..6 {
-            pyq_attempt(&mut connection, weak, "incorrect", "WEAK");
+        for index in 0..6 {
+            pyq_attempt(&mut connection, weak, "incorrect", &format!("WEAK-{index}"));
         }
-        for _ in 0..5 {
-            pyq_attempt(&mut connection, strong, "correct", "STRONG");
+        for index in 0..5 {
+            pyq_attempt(
+                &mut connection,
+                strong,
+                "correct",
+                &format!("STRONG-{index}"),
+            );
         }
-        for _ in 0..2 {
-            pyq_attempt(&mut connection, insufficient, "incorrect", "LOW");
+        for index in 0..2 {
+            pyq_attempt(
+                &mut connection,
+                insufficient,
+                "incorrect",
+                &format!("LOW-{index}"),
+            );
+        }
+        for index in 0..2 {
+            pyq_attempt(
+                &mut connection,
+                skipped_only,
+                "skipped",
+                &format!("SKIPPED-{index}"),
+            );
         }
         revision::schedule_topic(&mut connection, overdue, "2026-10-27", date(2026, 10, 30))
             .expect("schedule should save");
@@ -456,7 +533,7 @@ mod tests {
         let intelligence =
             topic_intelligence(&connection, date(2026, 10, 30)).expect("intelligence should load");
         assert_eq!(intelligence.total_topics, 182);
-        assert_eq!(intelligence.thresholds.minimum_scored_attempts, 5);
+        assert_eq!(intelligence.thresholds.minimum_scored_questions, 5);
         assert_eq!(
             intelligence.thresholds.weak_accuracy_threshold,
             WEAK_ACCURACY_THRESHOLD
@@ -472,7 +549,9 @@ mod tests {
             .find(|item| item.code == "MMP-C01")
             .expect("weak topic should be present");
         assert_eq!(weak_item.pyq_attempts, 6);
+        assert_eq!(weak_item.pyq_questions, 6);
         assert_eq!(weak_item.pyq_accuracy, Some(0.0));
+        assert_eq!(weak_item.pyq_evidence_accuracy, Some(0.0));
         assert!(
             weak_item
                 .reasons
@@ -490,6 +569,7 @@ mod tests {
             .find(|item| item.code == "GA-01")
             .expect("strong topic should be present");
         assert_eq!(strong_item.pyq_accuracy, Some(100.0));
+        assert_eq!(strong_item.pyq_questions, 5);
 
         let insufficient_item = intelligence
             .insufficient
@@ -500,9 +580,25 @@ mod tests {
             insufficient_item
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("Only 2 scored PYQ attempts"))
+                .any(|reason| reason.contains("Only 2 distinct questions"))
         );
         assert!(!intelligence.weak.iter().any(|item| item.code == "CM-C01"));
+
+        let skipped_item = intelligence
+            .insufficient
+            .iter()
+            .find(|item| item.code == "MMP-C02")
+            .expect("skipped-only topic should be reported");
+        assert!(skipped_item.skipped_only);
+        assert_eq!(skipped_item.pyq_questions, 0);
+        assert_eq!(skipped_item.pyq_total_attempts, 2);
+        assert!(
+            skipped_item
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("Only skipped PYQ attempts"))
+        );
+        assert_eq!(intelligence.skipped_only_topics, 1);
 
         assert!(
             intelligence
@@ -534,6 +630,45 @@ mod tests {
                 .notes
                 .iter()
                 .any(|note| note.contains("not proof of mastery"))
+        );
+    }
+
+    #[test]
+    fn stale_pyq_evidence_does_not_qualify_for_weak_or_strong_claims() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C01");
+        for index in 0..6 {
+            pyq_attempt_on(
+                &mut connection,
+                topic,
+                "incorrect",
+                &format!("STALE-{index}"),
+                "2019-06-01",
+            );
+        }
+
+        let intelligence =
+            topic_intelligence(&connection, date(2026, 10, 30)).expect("intelligence should load");
+        let evidence = intelligence
+            .insufficient
+            .iter()
+            .find(|item| item.code == "MMP-C01")
+            .expect("stale topic should be reported as insufficient");
+        assert_eq!(evidence.pyq_questions, 0);
+        assert_eq!(evidence.pyq_total_questions, 6);
+        assert!(!evidence.sufficient_data);
+        assert!(
+            evidence
+                .reasons
+                .iter()
+                .any(|reason| { reason.contains("none are within the last 365 days") })
+        );
+        assert!(!intelligence.weak.iter().any(|item| item.code == "MMP-C01"));
+        assert!(
+            !intelligence
+                .strong
+                .iter()
+                .any(|item| item.code == "MMP-C01")
         );
     }
 }

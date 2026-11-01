@@ -5,7 +5,7 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    analytics::{self, MINIMUM_WEAK_ATTEMPTS, WEAK_ACCURACY_THRESHOLD},
+    analytics::{self, EVIDENCE_WINDOW_DAYS, MINIMUM_EVIDENCE_QUESTIONS, WEAK_ACCURACY_THRESHOLD},
     date_only,
     error::AppError,
     mock_tests, planner, pyq, revision, sessions, settings, syllabus,
@@ -669,7 +669,7 @@ fn actionable_insights(
     revision_stats: &revision::RevisionStats,
 ) -> Result<Vec<ActionableInsight>, AppError> {
     let mut insights = Vec::new();
-    let pyq = analytics::pyq(connection)?;
+    let pyq = analytics::pyq(connection, today)?;
 
     if let Some(topic) = pyq.weak_topics.first() {
         insights.push(ActionableInsight {
@@ -677,20 +677,21 @@ fn actionable_insights(
             severity: "warning".to_owned(),
             title: format!("{} has low PYQ accuracy", topic.code),
             reason: format!(
-                "This topic has {} scored attempts and {:.1}% accuracy. The weak-topic screen requires at least {} scored attempts and accuracy below {:.0}%.",
-                topic.attempts,
-                topic.accuracy.unwrap_or(0.0),
-                MINIMUM_WEAK_ATTEMPTS,
+                "This topic has evidence from {} distinct questions in the last {} days at {:.1}% accuracy. The weak-topic screen requires at least {} distinct questions and latest-outcome accuracy below {:.0}%.",
+                topic.evidence_questions,
+                EVIDENCE_WINDOW_DAYS,
+                topic.evidence_accuracy.unwrap_or(0.0),
+                MINIMUM_EVIDENCE_QUESTIONS,
                 WEAK_ACCURACY_THRESHOLD
             ),
             metrics: vec![
                 InsightMetric {
-                    label: "Accuracy".to_owned(),
-                    value: format_percentage(topic.accuracy.unwrap_or(0.0)),
+                    label: "Evidence accuracy".to_owned(),
+                    value: format_percentage(topic.evidence_accuracy.unwrap_or(0.0)),
                 },
                 InsightMetric {
-                    label: "Scored attempts".to_owned(),
-                    value: topic.attempts.to_string(),
+                    label: "Evidence questions".to_owned(),
+                    value: topic.evidence_questions.to_string(),
                 },
             ],
             target_view: "analytics:topics".to_owned(),
@@ -701,9 +702,12 @@ fn actionable_insights(
     if revision_stats.overdue_count > 0 {
         let oldest = connection
             .query_row(
-                "SELECT MIN(next_revision_date)
-                 FROM revision_schedules
-                 WHERE status = 'active' AND next_revision_date < ?1",
+                "SELECT MIN(r.next_revision_date)
+                 FROM revision_schedules r
+                 JOIN syllabus_topics t ON t.id = r.topic_id
+                 WHERE r.status = 'active'
+                   AND t.is_archived = 0
+                   AND r.next_revision_date < ?1",
                 [date_only::format_date_only(today)],
                 |row| row.get::<_, Option<String>>(0),
             )
@@ -1177,6 +1181,18 @@ mod tests {
         }
         revision::schedule_topic(&mut connection, topic, "2026-10-29", today)
             .expect("overdue revision should save");
+        let archived_topic = topic_id(&connection, "GA-01");
+        revision::schedule_topic(&mut connection, archived_topic, "2020-01-01", today)
+            .expect("archived overdue revision should save");
+        connection
+            .execute(
+                "UPDATE syllabus_topics
+                 SET is_archived = 1,
+                     archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = ?1",
+                [archived_topic],
+            )
+            .expect("revision topic should archive");
         planner::create_task(
             &mut connection,
             planner::TaskInput {
@@ -1211,7 +1227,7 @@ mod tests {
         assert_eq!(dashboard.preparation_day_number, 30);
         assert_eq!(dashboard.preparation_elapsed_days, 29);
         assert_eq!(dashboard.days_until_exam, Some(50));
-        assert_eq!(dashboard.syllabus.total_topics, 182);
+        assert_eq!(dashboard.syllabus.total_topics, 181);
         assert_eq!(dashboard.total_study_seconds, 5_400);
         assert_eq!(dashboard.today_study_seconds, 3_600);
         assert_eq!(dashboard.today_session_count, 1);
@@ -1242,6 +1258,12 @@ mod tests {
             .find(|insight| insight.id == "overdue-revisions")
             .expect("overdue revision insight should exist");
         assert_eq!(revision_insight.target_view, "revision");
+        assert!(
+            revision_insight
+                .reason
+                .contains("The oldest overdue revision is scheduled for 2026-10-29.")
+        );
+        assert!(!revision_insight.reason.contains("2020-01-01"));
         assert_eq!(dashboard.layout.sections.len(), 9);
         assert_eq!(dashboard.today, "2026-10-30");
     }

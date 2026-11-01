@@ -48,6 +48,7 @@ function completedLabel(value: string): string {
 function emptyMessage(
   filter: StatusFilter,
   query: string,
+  hasDateRange: boolean,
 ): {
   title: string;
   copy: string;
@@ -56,6 +57,13 @@ function emptyMessage(
     return {
       title: 'No tasks match this search',
       copy: 'Try a shorter title or description search, or clear the search to see every task.',
+    };
+  }
+
+  if (hasDateRange) {
+    return {
+      title: 'No tasks match this date range',
+      copy: 'Choose a wider scheduled-date range or clear the dates to see the full checklist.',
     };
   }
 
@@ -256,6 +264,9 @@ export default function ChecklistScreen({ today, examDate }: { today: string; ex
   const [queryInput, setQueryInput] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [queryError, setQueryError] = useState<string | null>(null);
+  const [dateForm, setDateForm] = useState({ fromDate: '', toDate: '' });
+  const [appliedDates, setAppliedDates] = useState<{ fromDate?: string; toDate?: string }>({});
+  const [dateError, setDateError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<ChecklistTask[]>([]);
   const [topics, setTopics] = useState<PlannerTopic[]>([]);
   const [topicsError, setTopicsError] = useState<string | null>(null);
@@ -277,6 +288,8 @@ export default function ChecklistScreen({ today, examDate }: { today: string; ex
     getChecklistTasks({
       status: statusFilter,
       ...(appliedQuery ? { query: appliedQuery } : {}),
+      ...(appliedDates.fromDate ? { fromDate: appliedDates.fromDate } : {}),
+      ...(appliedDates.toDate ? { toDate: appliedDates.toDate } : {}),
     })
       .then((loaded) => {
         if (!cancelled) {
@@ -298,7 +311,7 @@ export default function ChecklistScreen({ today, examDate }: { today: string; ex
     return () => {
       cancelled = true;
     };
-  }, [statusFilter, appliedQuery, reloadKey]);
+  }, [statusFilter, appliedQuery, appliedDates, reloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -351,6 +364,45 @@ export default function ChecklistScreen({ today, examDate }: { today: string; ex
       setIsLoading(true);
       setLoadError(null);
       setAppliedQuery('');
+    }
+  }
+
+  function handleDateFilter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const fromDate = dateForm.fromDate;
+    const toDate = dateForm.toDate;
+
+    if (fromDate && !parseDateOnly(fromDate)) {
+      setDateError('Choose a real scheduled start date or leave it blank.');
+      return;
+    }
+    if (toDate && !parseDateOnly(toDate)) {
+      setDateError('Choose a real scheduled end date or leave it blank.');
+      return;
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      setDateError('The scheduled start date cannot be after the end date.');
+      return;
+    }
+
+    setDateError(null);
+    setFeedback(null);
+    setIsLoading(true);
+    setLoadError(null);
+    setAppliedDates({
+      ...(fromDate ? { fromDate } : {}),
+      ...(toDate ? { toDate } : {}),
+    });
+  }
+
+  function clearDateFilter() {
+    setDateForm({ fromDate: '', toDate: '' });
+    setDateError(null);
+    if (appliedDates.fromDate || appliedDates.toDate) {
+      setFeedback(null);
+      setIsLoading(true);
+      setLoadError(null);
+      setAppliedDates({});
     }
   }
 
@@ -436,6 +488,13 @@ export default function ChecklistScreen({ today, examDate }: { today: string; ex
       return;
     }
 
+    if (task.deadlineDate && rescheduleDate > task.deadlineDate) {
+      setRescheduleError(
+        `The task deadline is ${dateLabel(task.deadlineDate)}; choose a date on or before it.`,
+      );
+      return;
+    }
+
     setRescheduleError(null);
     setPendingAction({ taskId: task.id, kind: 'reschedule' });
     setFeedback(null);
@@ -463,7 +522,8 @@ export default function ChecklistScreen({ today, examDate }: { today: string; ex
     setFeedback(null);
   }
 
-  const empty = emptyMessage(statusFilter, appliedQuery);
+  const hasDateRange = Boolean(appliedDates.fromDate || appliedDates.toDate);
+  const empty = emptyMessage(statusFilter, appliedQuery, hasDateRange);
 
   return (
     <div className="page-container checklist-page">
@@ -534,6 +594,44 @@ export default function ChecklistScreen({ today, examDate }: { today: string; ex
             </div>
           </form>
         </div>
+
+        <form className="history-date-filter" onSubmit={handleDateFilter} noValidate>
+          <DateField
+            id="checklist-date-from"
+            label="Scheduled from (optional)"
+            value={dateForm.fromDate}
+            onChange={(value) => {
+              setDateForm((current) => ({ ...current, fromDate: value }));
+              setDateError(null);
+            }}
+            max={dateForm.toDate || undefined}
+          />
+          <DateField
+            id="checklist-date-to"
+            label="Scheduled to (optional)"
+            value={dateForm.toDate}
+            onChange={(value) => {
+              setDateForm((current) => ({ ...current, toDate: value }));
+              setDateError(null);
+            }}
+            min={dateForm.fromDate || undefined}
+          />
+          <div className="history-date-actions">
+            <button type="submit" className="secondary-button">
+              Apply dates
+            </button>
+            {(appliedDates.fromDate || appliedDates.toDate) && (
+              <button type="button" className="link-button" onClick={clearDateFilter}>
+                Clear dates
+              </button>
+            )}
+          </div>
+          {dateError && (
+            <p className="field-error history-date-error" role="alert">
+              {dateError}
+            </p>
+          )}
+        </form>
       </section>
 
       {feedback && (

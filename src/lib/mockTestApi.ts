@@ -30,6 +30,7 @@ export type MockTest = {
   totalUnanswered: number;
   computedMarks: number;
   computedPercentage: number;
+  configurationValid: boolean;
   notes: string;
   reviewObservations: string;
   createdAt: string;

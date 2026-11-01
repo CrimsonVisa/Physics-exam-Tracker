@@ -120,6 +120,8 @@ pub struct PyqFilter {
     pub topic_id: Option<i64>,
     pub status: Option<String>,
     pub query: Option<String>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -264,6 +266,17 @@ pub fn list(connection: &Connection, filter: PyqFilter) -> Result<Vec<PyqAttempt
         ));
     }
 
+    let from_date = validate_optional_date(filter.from_date.as_deref(), "fromDate")?;
+    let to_date = validate_optional_date(filter.to_date.as_deref(), "toDate")?;
+    if let (Some(from), Some(to)) = (&from_date, &to_date)
+        && from > to
+    {
+        return Err(AppError::validation(
+            "fromDate",
+            "The start date cannot be after the end date.",
+        ));
+    }
+
     let pattern = query.map(|value| format!("%{}%", escape_like(&value)));
     let sql = format!(
         "{SELECT_PYQ}
@@ -278,13 +291,24 @@ pub fn list(connection: &Connection, filter: PyqFilter) -> Result<Vec<PyqAttempt
                 OR p.exam_session LIKE ?6 ESCAPE '!'
                 OR p.notes LIKE ?6 ESCAPE '!'
            )
+           AND (?7 IS NULL OR p.attempt_date >= ?7)
+           AND (?8 IS NULL OR p.attempt_date <= ?8)
          ORDER BY p.attempt_date DESC, p.id DESC"
     );
 
     query_attempts(
         connection,
         &sql,
-        params![year, part, section_code, topic_id, status, pattern],
+        params![
+            year,
+            part,
+            section_code,
+            topic_id,
+            status,
+            pattern,
+            from_date,
+            to_date
+        ],
     )
 }
 
@@ -1138,6 +1162,21 @@ fn parse_optional_f64(value: &str, field: &str, errors: &mut Vec<ImportFieldErro
     }
 }
 
+fn validate_optional_date(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<Option<String>, AppError> {
+    value
+        .map(|value| {
+            date_only::parse_date_only(value)
+                .map(date_only::format_date_only)
+                .ok_or_else(|| {
+                    AppError::validation(field, "Enter a real calendar date in YYYY-MM-DD format.")
+                })
+        })
+        .transpose()
+}
+
 fn validate_id(value: i64, field: &'static str) -> Result<(), AppError> {
     if value <= 0 {
         Err(AppError::validation(
@@ -1248,10 +1287,33 @@ mod tests {
                 topic_id: Some(topic),
                 status: Some("INCORRECT".to_owned()),
                 query: Some("sign".to_owned()),
+                from_date: Some("2026-10-30".to_owned()),
+                to_date: Some("2026-10-30".to_owned()),
             },
         )
         .expect("filters should work");
         assert_eq!(filtered.len(), 1);
+
+        let outside_date = list(
+            &connection,
+            PyqFilter {
+                from_date: Some("2026-10-31".to_owned()),
+                ..PyqFilter::default()
+            },
+        )
+        .expect("date filter should work");
+        assert!(outside_date.is_empty());
+
+        let reversed_date = list(
+            &connection,
+            PyqFilter {
+                from_date: Some("2026-11-01".to_owned()),
+                to_date: Some("2026-10-01".to_owned()),
+                ..PyqFilter::default()
+            },
+        )
+        .expect_err("reversed dates should fail");
+        assert_eq!(reversed_date.field, Some("fromDate"));
 
         let none = list(
             &connection,

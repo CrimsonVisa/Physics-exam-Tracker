@@ -32,7 +32,13 @@ const PYQ_TOPIC = {
   incorrect: 4,
   skipped: 0,
   attempts: 6,
+  totalAttempts: 6,
+  distinctQuestions: 6,
+  evidenceQuestions: 6,
   accuracy: 33.33333333333333,
+  evidenceAccuracy: 33.33333333333333,
+  lastScoredAttemptDate: '2026-10-30',
+  skippedOnly: false,
   sufficientData: true,
 };
 
@@ -44,7 +50,8 @@ const PYQ_ANALYTICS: PyqAnalytics = {
   outcomeUnknown: 0,
   attempts: 8,
   accuracy: 50,
-  minimumWeakAttempts: 5,
+  minimumEvidenceQuestions: 5,
+  evidenceWindowDays: 365,
   weakAccuracyThreshold: 50,
   byTopic: [
     PYQ_TOPIC,
@@ -59,7 +66,13 @@ const PYQ_ANALYTICS: PyqAnalytics = {
       incorrect: 1,
       skipped: 1,
       attempts: 2,
+      totalAttempts: 3,
+      distinctQuestions: 2,
+      evidenceQuestions: 2,
       accuracy: 50,
+      evidenceAccuracy: 50,
+      lastScoredAttemptDate: '2026-10-29',
+      skippedOnly: false,
       sufficientData: false,
     },
   ],
@@ -136,6 +149,7 @@ const MOCK_ANALYTICS: MockAnalytics = {
       maxMarks: 100,
       computedMarks: 50,
       computedPercentage: 50,
+      configurationValid: true,
       reportedMarks: null,
     },
     {
@@ -145,6 +159,7 @@ const MOCK_ANALYTICS: MockAnalytics = {
       maxMarks: 100,
       computedMarks: 70,
       computedPercentage: 70,
+      configurationValid: true,
       reportedMarks: 71,
     },
   ],
@@ -378,17 +393,24 @@ const EVIDENCE_BASE: TopicEvidence = {
   pyqIncorrect: 4,
   pyqSkipped: 0,
   pyqAttempts: 6,
+  pyqTotalAttempts: 6,
+  pyqTotalQuestions: 6,
+  pyqQuestions: 6,
   pyqAccuracy: 33.3,
+  pyqEvidenceAccuracy: 33.3,
+  pyqLastAttemptDate: '2026-10-30',
+  skippedOnly: false,
   sufficientData: true,
   reasons: [
-    'PYQ accuracy 33.3% across 6 scored attempts (weak threshold: below 50% with at least 5 attempts).',
+    'PYQ accuracy 33.3% across 6 distinct questions (weak threshold: below 50% with at least 5 questions).',
     'Revision is 2 days overdue.',
   ],
 };
 
 const TOPICS: TopicIntelligence = {
   thresholds: {
-    minimumScoredAttempts: 5,
+    minimumScoredQuestions: 5,
+    evidenceWindowDays: 365,
     weakAccuracyThreshold: 50,
     strongAccuracyThreshold: 75,
     highConfidenceMinimum: 4,
@@ -397,6 +419,7 @@ const TOPICS: TopicIntelligence = {
   totalTopics: 182,
   scoredTopics: 4,
   noDataTopics: 178,
+  skippedOnlyTopics: 0,
   strong: [
     {
       ...EVIDENCE_BASE,
@@ -414,8 +437,12 @@ const TOPICS: TopicIntelligence = {
       pyqCorrect: 5,
       pyqIncorrect: 0,
       pyqAttempts: 5,
+      pyqTotalAttempts: 5,
+      pyqTotalQuestions: 5,
+      pyqQuestions: 5,
       pyqAccuracy: 100,
-      reasons: ['PYQ accuracy 100.0% across 5 scored attempts.'],
+      pyqEvidenceAccuracy: 100,
+      reasons: ['PYQ accuracy 100.0% across 5 distinct questions.'],
     },
   ],
   weak: [EVIDENCE_BASE],
@@ -435,10 +462,14 @@ const TOPICS: TopicIntelligence = {
       pyqCorrect: 0,
       pyqIncorrect: 3,
       pyqAttempts: 3,
+      pyqTotalAttempts: 3,
+      pyqTotalQuestions: 3,
+      pyqQuestions: 3,
       pyqAccuracy: 0,
+      pyqEvidenceAccuracy: 0,
       sufficientData: false,
       reasons: [
-        'Only 3 scored PYQ attempts; at least 5 are required before a weak or strong claim.',
+        'Only 3 distinct questions with a scored outcome; at least 5 are required before a weak or strong claim.',
       ],
     },
   ],
@@ -451,7 +482,10 @@ const TOPICS: TopicIntelligence = {
       code: 'GA-01',
       confidence: 1,
       pyqAccuracy: 100,
-      reasons: ['Confidence is 1/5 but PYQ accuracy is 100.0% across 5 scored attempts.'],
+      pyqEvidenceAccuracy: 100,
+      reasons: [
+        'Confidence is 1/5 but PYQ evidence accuracy is 100.0% across 5 distinct questions.',
+      ],
     },
   ],
   notes: [
@@ -517,13 +551,13 @@ const TIMELINE: PreparationTimeline = {
   notes: ['Timeline entries are read-only projections of saved records.'],
 };
 
-function mockBackend() {
+function mockBackend(performance: PerformanceAnalytics = PERFORMANCE) {
   invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
     if (command === 'get_performance_analytics') {
       return Promise.resolve({
-        ...PERFORMANCE,
-        fromDate: String(args?.fromDate ?? PERFORMANCE.fromDate),
-        toDate: String(args?.toDate ?? PERFORMANCE.toDate),
+        ...performance,
+        fromDate: String(args?.fromDate ?? performance.fromDate),
+        toDate: String(args?.toDate ?? performance.toDate),
       });
     }
     if (command === 'get_study_analytics') {
@@ -598,6 +632,12 @@ describe('analytics screen', () => {
     expect(await screen.findByText('PYQ records')).toBeInTheDocument();
     expect(screen.getByText(/No combined score is produced/)).toBeInTheDocument();
     expect(screen.getByText('PYQ accuracy by topic')).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', { name: 'Distinct questions in range' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('columnheader', { name: 'All distinct questions' }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText('Performance by examination year')).toBeInTheDocument();
     expect(screen.getByText('Part A, B and C performance')).toBeInTheDocument();
     expect(screen.getAllByText('Weak').length).toBeGreaterThan(0);
@@ -608,6 +648,73 @@ describe('analytics screen', () => {
     expect(screen.getByText('Response trend by test date')).toBeInTheDocument();
     expect(screen.getAllByText('Mock B').length).toBeGreaterThan(0);
     expect(screen.getByText('Calculated from saved marking rules')).toBeInTheDocument();
+  });
+
+  it('warns about legacy invalid mock marking even when the percentage is below 100', async () => {
+    mockBackend({
+      ...PERFORMANCE,
+      mock: {
+        ...MOCK_ANALYTICS,
+        trend: MOCK_ANALYTICS.trend.map((point, index) =>
+          index === 0
+            ? { ...point, computedMarks: 50, computedPercentage: 50, configurationValid: false }
+            : point,
+        ),
+      },
+    });
+
+    render(<AnalyticsScreen today={TODAY} examDate={EXAM} />);
+    await screen.findByText('Recorded study time');
+    await userEvent.click(screen.getByRole('tab', { name: /Exam performance/ }));
+
+    expect(
+      await screen.findByText(/marking configuration that would now be rejected/i),
+    ).toBeInTheDocument();
+  });
+
+  it('shows evidence-only topics when the report range has no attempts', async () => {
+    const evidenceOnlyTopic = {
+      ...PYQ_TOPIC,
+      correct: 0,
+      incorrect: 0,
+      skipped: 0,
+      attempts: 0,
+      totalAttempts: 0,
+      distinctQuestions: 0,
+      evidenceQuestions: 5,
+      accuracy: null,
+      evidenceAccuracy: 0,
+      lastScoredAttemptDate: null,
+      sufficientData: true,
+    };
+
+    mockBackend({
+      ...PERFORMANCE,
+      pyq: {
+        ...PYQ_ANALYTICS,
+        totalRecords: 0,
+        correct: 0,
+        incorrect: 0,
+        skipped: 0,
+        outcomeUnknown: 0,
+        attempts: 0,
+        accuracy: null,
+        byTopic: [evidenceOnlyTopic],
+        byUnit: [],
+        byYear: [],
+        byPart: [],
+        weakTopics: [evidenceOnlyTopic],
+        responseTrend: [],
+      },
+    });
+
+    render(<AnalyticsScreen today={TODAY} examDate={EXAM} />);
+    await screen.findByText('Recorded study time');
+    await userEvent.click(screen.getByRole('tab', { name: /Exam performance/ }));
+
+    expect(await screen.findByText('MMP-C01 · Dimensional analysis')).toBeInTheDocument();
+    expect(screen.queryByText('No PYQ attempts in this date range.')).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Evidence questions' })).toBeInTheDocument();
   });
 
   it('shows evidence groups and reasons for topic intelligence without unsupported claims', async () => {
@@ -622,11 +729,11 @@ describe('analytics screen', () => {
     expect(screen.getByText('Weak topics with sufficient evidence')).toBeInTheDocument();
     expect(screen.getByText('Revision overdue')).toBeInTheDocument();
     expect(
-      screen.getAllByText(/PYQ accuracy 33.3% across 6 scored attempts/).length,
+      screen.getAllByText(/PYQ accuracy 33.3% across 6 distinct questions/).length,
     ).toBeGreaterThan(0);
     expect(screen.getAllByText(/Revision is 2 days overdue/).length).toBeGreaterThan(0);
     expect(
-      screen.getAllByText(/Only 3 scored PYQ attempts; at least 5 are required/).length,
+      screen.getAllByText(/Only 3 distinct questions with a scored outcome; at least 5/).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText('High confidence, weak PYQ evidence')).toBeInTheDocument();
     expect(screen.getByText('Low confidence, strong PYQ evidence')).toBeInTheDocument();
@@ -696,7 +803,14 @@ describe('analytics screen', () => {
       if (command === 'get_performance_analytics') {
         return Promise.resolve({
           ...PERFORMANCE,
-          pyq: { ...PYQ_ANALYTICS, totalRecords: 0, attempts: 0, accuracy: null, byTopic: [] },
+          pyq: {
+            ...PYQ_ANALYTICS,
+            totalRecords: 0,
+            attempts: 0,
+            accuracy: null,
+            byTopic: [],
+            weakTopics: [],
+          },
           mock: {
             ...MOCK_ANALYTICS,
             testCount: 0,

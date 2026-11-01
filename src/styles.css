@@ -3411,6 +3411,27 @@ sup {
   margin-top: 14px;
 }
 
+.history-date-filter {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: var(--space-3) var(--space-4);
+  align-items: end;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.history-date-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.history-date-error {
+  grid-column: 1 / -1;
+}
+
 .task-filter-group {
   display: inline-flex;
   gap: 4px;
@@ -4495,6 +4516,14 @@ sup {
     border-radius: 16px;
   }
 
+  .history-date-filter {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-date-actions {
+    grid-column: auto;
+  }
+
   .calendar-nav h2 {
     width: 100%;
     order: -1;
@@ -4759,6 +4788,26 @@ sup {
 .pyq-filter-search {
   grid-column: span 4;
   min-width: 0;
+}
+
+.pyq-date-range {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.history-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .pyq-editor-card,
@@ -5531,6 +5580,10 @@ sup {
   .pyq-filter-actions .primary-button,
   .pyq-filter-actions .secondary-button {
     width: 100%;
+  }
+
+  .pyq-date-range {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .import-disclosure {
@@ -7342,6 +7395,25 @@ sup {
 
 .backup-status-error strong {
   color: var(--error);
+}
+
+.backup-age-label {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.67rem;
+}
+
+.backup-age-warning {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--warning-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-panel);
+  background: var(--surface-soft);
+  color: var(--warning-ink);
+  font-size: 0.76rem;
+  line-height: 1.5;
 }
 
 .backup-card {

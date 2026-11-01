@@ -52,6 +52,15 @@ const TOPIC_C: RevisionTopic = {
   sectionTitle: 'Classical Mechanics',
 };
 
+const ARCHIVED_TOPIC: RevisionTopic = {
+  id: 4,
+  code: 'EMT-C01',
+  title: 'Electrostatics',
+  archived: true,
+  sectionCode: 'EMT',
+  sectionTitle: 'Electromagnetic Theory',
+};
+
 function schedule(overrides: Partial<RevisionSchedule> = {}): RevisionSchedule {
   return {
     status: 'active',
@@ -91,6 +100,14 @@ const STATE_C: RevisionTopicState = {
   daysUntilDue: null,
 };
 
+const ARCHIVED_STATE: RevisionTopicState = {
+  topic: ARCHIVED_TOPIC,
+  schedule: schedule({ lastRevisionDate: '2026-09-20', nextRevisionDate: '2026-10-01' }),
+  dueState: 'overdue',
+  daysOverdue: 29,
+  daysUntilDue: null,
+};
+
 const HISTORY: RevisionHistoryEntry = {
   id: 11,
   topicId: 1,
@@ -103,6 +120,15 @@ const HISTORY: RevisionHistoryEntry = {
   masteryBefore: 45,
   masteryAfter: 60,
   createdAt: '2026-10-25T10:00:00.000Z',
+};
+
+const ARCHIVED_HISTORY: RevisionHistoryEntry = {
+  ...HISTORY,
+  id: 12,
+  topicId: ARCHIVED_TOPIC.id,
+  revisionDate: '2026-09-20',
+  scheduledForDate: '2026-09-20',
+  notes: 'Archived revision outcome.',
 };
 
 const DASHBOARD: RevisionDashboard = {
@@ -136,6 +162,7 @@ const DASHBOARD: RevisionDashboard = {
   suspended: [],
   completedRecent: [{ history: HISTORY, topic: TOPIC_A }],
   topics: [STATE_A, STATE_B, STATE_C],
+  archivedTopics: [ARCHIVED_STATE],
   recommendations: [
     {
       topic: TOPIC_A,
@@ -145,11 +172,14 @@ const DASHBOARD: RevisionDashboard = {
       previousOutcome: 'good',
       masteryEstimate: 60,
       pyqAttempts: 6,
+      pyqQuestions: 6,
       pyqAccuracy: 33.3,
+      pyqEvidenceAccuracy: 33.3,
+      pyqLastAttemptDate: TODAY,
       pyqSufficient: true,
       priority: 'high',
       score: 100,
-      reasons: ['Due today', 'PYQ accuracy 33.3% over 6 scored attempts'],
+      reasons: ['Due today', 'PYQ accuracy 33.3% across 6 distinct questions'],
     },
     {
       topic: TOPIC_C,
@@ -159,13 +189,16 @@ const DASHBOARD: RevisionDashboard = {
       previousOutcome: null,
       masteryEstimate: null,
       pyqAttempts: 2,
+      pyqQuestions: 2,
       pyqAccuracy: 0,
+      pyqEvidenceAccuracy: 0,
+      pyqLastAttemptDate: TODAY,
       pyqSufficient: false,
       priority: 'medium',
       score: 50,
       reasons: [
         'Not scheduled yet',
-        'Only 2 scored PYQ attempts; insufficient evidence for a weak-topic claim',
+        'Only 2 distinct questions with a scored outcome; insufficient evidence for a weak-topic claim',
       ],
     },
   ],
@@ -180,6 +213,9 @@ function mockRevisionBackend() {
       return Promise.resolve(DASHBOARD);
     }
     if (command === 'get_revision_history') {
+      if (args?.topicId === ARCHIVED_TOPIC.id) {
+        return Promise.resolve([ARCHIVED_HISTORY]);
+      }
       return Promise.resolve(args?.topicId === TOPIC_A.id ? [HISTORY] : []);
     }
     if (command === 'complete_revision') {
@@ -293,6 +329,29 @@ describe('revision screen', () => {
     });
   });
 
+  it('opens archived revision history read-only without scheduling actions', async () => {
+    mockRevisionBackend();
+
+    render(<RevisionScreen today={TODAY} />);
+
+    await screen.findByText('Archived revision history (1)');
+    await userEvent.click(screen.getByRole('button', { name: 'View history' }));
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'EMT-C01 · Electrostatics',
+        level: 2,
+      }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('Archived revision outcome.')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Archived topic. Revision scheduling is read-only/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start revision' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Manual reschedule' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Topic revision notes (optional)')).not.toBeInTheDocument();
+  });
+
   it('manually reschedules, suspends, and schedules an unscheduled topic explicitly', async () => {
     mockRevisionBackend();
 
@@ -368,6 +427,7 @@ describe('revision screen', () => {
       suspended: [],
       completedRecent: [],
       topics: [],
+      archivedTopics: [],
       recommendations: [],
     });
 

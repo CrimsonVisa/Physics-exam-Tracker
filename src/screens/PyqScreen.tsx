@@ -1,8 +1,9 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import { CsvImportPanel } from '../components/CsvImportPanel';
+import { DateField } from '../components/DateField';
 import { PyqEditor } from '../components/PyqEditor';
 import { toCommandError } from '../lib/commandError';
-import { formatDateLong } from '../lib/dateOnly';
+import { formatDateLong, parseDateOnly } from '../lib/dateOnly';
 import {
   applyPyqImport,
   deletePyqAttempt,
@@ -27,12 +28,15 @@ type FilterForm = {
   topicId: string;
   status: string;
   query: string;
+  fromDate: string;
+  toDate: string;
 };
 
 type PendingDelete = number | null;
 
 const EMPTY_OPTIONS: PyqOptions = { years: [], sections: [], topics: [] };
 const MAX_QUERY_CHARS = 100;
+const PAGE_SIZE = 20;
 
 function statusLabel(status: PyqStatus): string {
   switch (status) {
@@ -74,10 +78,13 @@ export default function PyqScreen({ today }: { today: string }) {
     topicId: '',
     status: '',
     query: '',
+    fromDate: '',
+    toDate: '',
   });
   const [appliedFilter, setAppliedFilter] = useState<PyqFilter>({});
   const [filterError, setFilterError] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<PyqAttempt[]>([]);
+  const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -170,8 +177,22 @@ export default function PyqScreen({ today }: { today: string }) {
       }
     }
 
+    if (filterForm.fromDate && !parseDateOnly(filterForm.fromDate)) {
+      setFilterError('Choose a real start date or leave it blank.');
+      return;
+    }
+    if (filterForm.toDate && !parseDateOnly(filterForm.toDate)) {
+      setFilterError('Choose a real end date or leave it blank.');
+      return;
+    }
+    if (filterForm.fromDate && filterForm.toDate && filterForm.fromDate > filterForm.toDate) {
+      setFilterError('The start date cannot be after the end date.');
+      return;
+    }
+
     setIsLoading(true);
     setLoadError(null);
+    setPage(1);
     setAppliedFilter({
       ...(year ? { year } : {}),
       ...(filterForm.part ? { part: filterForm.part as PyqPart } : {}),
@@ -179,6 +200,8 @@ export default function PyqScreen({ today }: { today: string }) {
       ...(topicId ? { topicId } : {}),
       ...(filterForm.status ? { status: filterForm.status as PyqStatus } : {}),
       ...(query ? { query } : {}),
+      ...(filterForm.fromDate ? { fromDate: filterForm.fromDate } : {}),
+      ...(filterForm.toDate ? { toDate: filterForm.toDate } : {}),
     });
   }
 
@@ -190,10 +213,13 @@ export default function PyqScreen({ today }: { today: string }) {
       topicId: '',
       status: '',
       query: '',
+      fromDate: '',
+      toDate: '',
     });
     setFilterError(null);
     setIsLoading(true);
     setLoadError(null);
+    setPage(1);
     setAppliedFilter({});
   }
 
@@ -224,6 +250,9 @@ export default function PyqScreen({ today }: { today: string }) {
     (topic) => !filterForm.sectionCode || topic.sectionCode === filterForm.sectionCode,
   );
   const activeFilters = Object.keys(appliedFilter).length > 0;
+  const pageCount = Math.max(1, Math.ceil(attempts.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const visibleAttempts = attempts.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <div className="page-container pyq-page">
@@ -349,6 +378,23 @@ export default function PyqScreen({ today }: { today: string }) {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="pyq-date-range">
+            <DateField
+              id="pyq-filter-from"
+              label="Attempted from (optional)"
+              value={filterForm.fromDate}
+              max={filterForm.toDate || undefined}
+              onChange={(value) => setFilterForm((current) => ({ ...current, fromDate: value }))}
+            />
+            <DateField
+              id="pyq-filter-to"
+              label="Attempted to (optional)"
+              value={filterForm.toDate}
+              min={filterForm.fromDate || undefined}
+              onChange={(value) => setFilterForm((current) => ({ ...current, toDate: value }))}
+            />
           </div>
 
           <div className="form-field pyq-filter-search">
@@ -482,7 +528,7 @@ export default function PyqScreen({ today }: { today: string }) {
             </div>
           ) : (
             <div className="pyq-list">
-              {attempts.map((attempt) => (
+              {visibleAttempts.map((attempt) => (
                 <article className="pyq-row" key={attempt.id}>
                   <div className="pyq-row-main">
                     <div className="pyq-row-heading">
@@ -571,6 +617,32 @@ export default function PyqScreen({ today }: { today: string }) {
                 </article>
               ))}
             </div>
+          )}
+
+          {pageCount > 1 && (
+            <nav className="history-pagination" aria-label="PYQ history pages">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setPage((current) => Math.max(1, Math.min(current, pageCount) - 1))}
+                disabled={safePage === 1}
+              >
+                Previous page
+              </button>
+              <span>
+                Page {safePage} of {pageCount} · {attempts.length} attempts
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() =>
+                  setPage((current) => Math.min(pageCount, Math.min(current, pageCount) + 1))
+                }
+                disabled={safePage === pageCount}
+              >
+                Next page
+              </button>
+            </nav>
           )}
         </section>
       )}

@@ -577,6 +577,8 @@ describe('settings dashboard', () => {
             proposedScheduledDate: '2027-01-05',
             offsetDays: -10,
             outsideWindow: false,
+            deadlineDate: null,
+            deadlineConflict: false,
           },
         ],
         outsideWindow: [
@@ -623,6 +625,37 @@ describe('settings dashboard', () => {
         acceptedChanges: [{ taskId: 7, expectedScheduledDate: '2026-12-09' }],
       },
     });
+  });
+
+  it('blocks applying an exam-date preview when an anchored task would pass its deadline', async () => {
+    mockBackend({
+      preview_exam_date_change: (args) => ({
+        ...previewFor(args?.settings as Settings),
+        changes: [
+          {
+            taskId: 7,
+            title: 'Deadline-bound revision',
+            currentScheduledDate: '2026-12-09',
+            proposedScheduledDate: '2027-01-09',
+            offsetDays: -10,
+            outsideWindow: false,
+            deadlineDate: '2026-12-31',
+            deadlineConflict: true,
+          },
+        ],
+      }),
+    });
+
+    renderApp();
+
+    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    fireEvent.change(examDate, { target: { value: '2027-01-19' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect(await screen.findByText('Deadline-bound revision')).toBeInTheDocument();
+    expect(screen.getByText(/Moves past its deadline/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply exam-date change' })).toBeDisabled();
+    expect(callsFor('apply_exam_date_change')).toHaveLength(0);
   });
 
   it('reports a stale preview without leaving a half-applied confirmation open', async () => {

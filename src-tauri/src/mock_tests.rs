@@ -20,6 +20,17 @@ pub const MAX_MARKS: f64 = 100_000.0;
 pub const MAX_MARKING_VALUE: f64 = 1_000.0;
 pub const MAX_NOTES_CHARS: usize = 2_000;
 
+const SCORE_TOLERANCE_FACTOR: f64 = 1e-9;
+const PERCENTAGE_TOLERANCE: f64 = 1e-9;
+
+fn marks_tolerance(value: f64) -> f64 {
+    value.abs().max(1.0) * SCORE_TOLERANCE_FACTOR
+}
+
+fn percentage_exceeds_maximum(computed_marks: f64, max_marks: f64) -> bool {
+    max_marks <= 0.0 || computed_marks / max_marks * 100.0 > 100.0 + PERCENTAGE_TOLERANCE
+}
+
 pub const CSV_HEADERS: &[&str] = &[
     "test_name",
     "test_date",
@@ -119,6 +130,7 @@ pub struct MockTest {
     pub total_unanswered: i64,
     pub computed_marks: f64,
     pub computed_percentage: f64,
+    pub configuration_valid: bool,
     pub notes: String,
     pub review_observations: String,
     pub created_at: String,
@@ -179,6 +191,19 @@ impl ValidatedPart {
             + self.incorrect as f64 * self.incorrect_marks
             + self.unanswered as f64 * self.unanswered_marks
     }
+}
+
+fn highest_possible_marks(parts: &[ValidatedPart]) -> f64 {
+    parts
+        .iter()
+        .map(|part| part.questions as f64 * part.correct_marks)
+        .sum()
+}
+
+fn maximum_marks_validation_message(maximum_possible: f64) -> String {
+    format!(
+        "Maximum marks must be at least the highest score this marking configuration can produce ({maximum_possible:.2})."
+    )
 }
 
 struct ValidatedMock {
@@ -644,6 +669,17 @@ fn validate_csv_row(values: &HashMap<&str, &str>) -> Result<ImportedMock, Vec<Im
         return Err(errors);
     }
 
+    let highest_possible = highest_possible_marks(&parts);
+    if let Some(maximum) = max_marks
+        && maximum + marks_tolerance(highest_possible) < highest_possible
+    {
+        errors.push(ImportFieldError::new(
+            "max_marks",
+            maximum_marks_validation_message(highest_possible),
+        ));
+        return Err(errors);
+    }
+
     let validated = ValidatedMock {
         test_name,
         test_date: test_date.to_owned(),
@@ -654,6 +690,14 @@ fn validate_csv_row(values: &HashMap<&str, &str>) -> Result<ImportedMock, Vec<Im
         notes: notes.to_owned(),
         review_observations: review_observations.to_owned(),
     };
+
+    if percentage_exceeds_maximum(validated.computed_marks(), validated.max_marks) {
+        errors.push(ImportFieldError::new(
+            "max_marks",
+            "The calculated score cannot exceed maximum marks. Review the part counts and marking configuration.",
+        ));
+        return Err(errors);
+    }
 
     Ok(ImportedMock {
         validated,
@@ -743,16 +787,16 @@ fn parse_csv_part(
             "Correct-answer marks must be between 0 and 1000.",
         ));
     }
-    if !(-MAX_MARKING_VALUE..=MAX_MARKING_VALUE).contains(&incorrect_marks) {
+    if !(-MAX_MARKING_VALUE..=0.0).contains(&incorrect_marks) {
         part_errors.push(ImportFieldError::new(
             format!("{prefix}_incorrect_marks"),
-            "Incorrect-answer marks must be between -1000 and 1000.",
+            "Incorrect-answer marks must be zero or negative.",
         ));
     }
-    if !(-MAX_MARKING_VALUE..=MAX_MARKING_VALUE).contains(&unanswered_marks) {
+    if !(-MAX_MARKING_VALUE..=0.0).contains(&unanswered_marks) {
         part_errors.push(ImportFieldError::new(
             format!("{prefix}_unanswered_marks"),
-            "Unanswered marks must be between -1000 and 1000.",
+            "Unanswered marks must be zero or negative.",
         ));
     }
 
@@ -892,7 +936,15 @@ fn validate_input(input: MockTestInput) -> Result<ValidatedMock, AppError> {
         ));
     }
 
-    Ok(ValidatedMock {
+    let highest_possible = highest_possible_marks(&parts);
+    if input.max_marks + marks_tolerance(highest_possible) < highest_possible {
+        return Err(AppError::validation(
+            "maxMarks",
+            maximum_marks_validation_message(highest_possible),
+        ));
+    }
+
+    let validated = ValidatedMock {
         test_name,
         test_date,
         duration_minutes: input.duration_minutes,
@@ -901,7 +953,18 @@ fn validate_input(input: MockTestInput) -> Result<ValidatedMock, AppError> {
         parts,
         notes: input.notes,
         review_observations: input.review_observations,
-    })
+    };
+
+    if validated.computed_marks() > validated.max_marks + marks_tolerance(validated.max_marks)
+        || percentage_exceeds_maximum(validated.computed_marks(), validated.max_marks)
+    {
+        return Err(AppError::validation(
+            "maxMarks",
+            "The calculated score cannot exceed maximum marks. Review the part counts and marking configuration.",
+        ));
+    }
+
+    Ok(validated)
 }
 
 fn validate_part(field: &'static str, input: MockPartInput) -> Result<ValidatedPart, AppError> {
@@ -941,22 +1004,18 @@ fn validate_part(field: &'static str, input: MockPartInput) -> Result<ValidatedP
     }
 
     let incorrect_marks = input.incorrect_marks.unwrap_or(0.0);
-    if !incorrect_marks.is_finite()
-        || !(-MAX_MARKING_VALUE..=MAX_MARKING_VALUE).contains(&incorrect_marks)
-    {
+    if !incorrect_marks.is_finite() || !(-MAX_MARKING_VALUE..=0.0).contains(&incorrect_marks) {
         return Err(AppError::validation(
             field,
-            "Incorrect-answer marks must be between -1000 and 1000.",
+            "Incorrect-answer marks must be zero or negative. Use 0 when wrong answers are not penalised.",
         ));
     }
 
     let unanswered_marks = input.unanswered_marks.unwrap_or(0.0);
-    if !unanswered_marks.is_finite()
-        || !(-MAX_MARKING_VALUE..=MAX_MARKING_VALUE).contains(&unanswered_marks)
-    {
+    if !unanswered_marks.is_finite() || !(-MAX_MARKING_VALUE..=0.0).contains(&unanswered_marks) {
         return Err(AppError::validation(
             field,
-            "Unanswered marks must be between -1000 and 1000.",
+            "Unanswered marks must be zero or negative. Use 0 when unanswered questions are not penalised.",
         ));
     }
 
@@ -1049,6 +1108,7 @@ fn map_mock(row: &rusqlite::Row<'_>) -> rusqlite::Result<MockTest> {
     let computed_marks = part_a.marks + part_b.marks + part_c.marks;
     let max_marks: f64 = row.get(4)?;
     let total_attempted = part_a.attempted + part_b.attempted + part_c.attempted;
+    let configuration_valid = valid_marking_configuration(max_marks, [&part_a, &part_b, &part_c]);
 
     Ok(MockTest {
         id: row.get(0)?,
@@ -1064,6 +1124,7 @@ fn map_mock(row: &rusqlite::Row<'_>) -> rusqlite::Result<MockTest> {
         total_unanswered: part_a.unanswered + part_b.unanswered + part_c.unanswered,
         computed_marks,
         computed_percentage: computed_marks / max_marks * 100.0,
+        configuration_valid,
         part_a,
         part_b,
         part_c,
@@ -1095,6 +1156,27 @@ fn map_part(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<MockPart
             + incorrect as f64 * incorrect_marks
             + unanswered as f64 * unanswered_marks,
     })
+}
+
+fn valid_marking_configuration(max_marks: f64, parts: [&MockPartResult; 3]) -> bool {
+    let highest_possible = parts
+        .iter()
+        .map(|part| part.questions as f64 * part.correct_marks)
+        .sum::<f64>();
+    let computed_marks = parts.iter().map(|part| part.marks).sum::<f64>();
+    let maximum_covers_possible = max_marks + marks_tolerance(highest_possible) >= highest_possible
+        && !percentage_exceeds_maximum(computed_marks, max_marks);
+
+    maximum_covers_possible
+        && parts.iter().all(|part| {
+            part.correct_marks.is_finite()
+                && part.correct_marks >= 0.0
+                && part.incorrect_marks.is_finite()
+                && part.incorrect_marks <= 0.0
+                && part.unanswered_marks.is_finite()
+                && part.unanswered_marks <= 0.0
+                && part.correct + part.incorrect + part.unanswered == part.questions
+        })
 }
 
 fn existing_import_keys(connection: &Connection) -> Result<HashSet<String>, AppError> {
@@ -1168,7 +1250,7 @@ mod tests {
             test_name: "Mock 1".to_owned(),
             test_date: "2026-10-30".to_owned(),
             duration_minutes: 180,
-            max_marks: 200.0,
+            max_marks: 240.0,
             marks_obtained: Some(140.0),
             part_a: part(20, 15, 3, 2, 2.0, -0.5),
             part_b: part(40, 25, 10, 5, 3.0, -1.0),
@@ -1195,7 +1277,7 @@ mod tests {
         // 25*3 + 10*(-1) + 5*0 = 65
         // 10*4 + 5*(-1) + 5*0 = 35
         assert_eq!(created.computed_marks, 128.5);
-        assert_eq!(created.computed_percentage, 64.25);
+        assert!((created.computed_percentage - 53.54166666666667).abs() < 1e-9);
         assert_eq!(created.total_questions, 80);
         assert_eq!(created.total_attempted, 68);
         assert_eq!(created.total_correct, 50);
@@ -1217,7 +1299,7 @@ mod tests {
         assert_eq!(updated.part_b.marks, 75.0);
         assert_eq!(updated.part_c.marks, 0.0);
         assert_eq!(updated.computed_marks, 90.0);
-        assert_eq!(updated.computed_percentage, 45.0);
+        assert_eq!(updated.computed_percentage, 37.5);
 
         let all = list(&connection).expect("mocks should list");
         assert_eq!(all.len(), 1);
@@ -1228,6 +1310,80 @@ mod tests {
                 .expect_err("missing mock should fail")
                 .code,
             "mock_test_not_found"
+        );
+    }
+
+    #[test]
+    fn saved_invalid_marking_configurations_are_flagged_without_rewriting() {
+        let mut connection = connection();
+        let created = create(&mut connection, input()).expect("mock should save");
+        assert!(created.configuration_valid);
+
+        connection
+            .execute(
+                "UPDATE mock_tests SET max_marks = 200 WHERE id = ?1",
+                [created.id],
+            )
+            .expect("legacy maximum should change");
+        let lower_maximum = load(&connection, created.id).expect("mock should load");
+        assert!(!lower_maximum.configuration_valid);
+        assert_eq!(lower_maximum.max_marks, 200.0);
+        assert!((lower_maximum.computed_percentage - 64.25).abs() < 1e-9);
+
+        connection
+            .execute(
+                "UPDATE mock_tests
+                 SET max_marks = 240,
+                     part_a_incorrect_marks = 1
+                 WHERE id = ?1",
+                [created.id],
+            )
+            .expect("legacy penalty should change");
+        let positive_penalty = load(&connection, created.id).expect("mock should load");
+        assert!(!positive_penalty.configuration_valid);
+    }
+
+    #[test]
+    fn mock_validation_rejects_maximum_marks_within_the_old_rounding_margin() {
+        let mut connection = connection();
+        let mut invalid = input();
+        invalid.max_marks = 239.995;
+
+        let error = create(&mut connection, invalid).expect_err("maximum must be rejected");
+        assert_eq!(error.field, Some("maxMarks"));
+    }
+
+    #[test]
+    fn mock_validation_rejects_tiny_maximum_marks_with_an_impossible_percentage() {
+        let mut connection = connection();
+        let mut invalid = input();
+        invalid.max_marks = 0.001;
+        invalid.marks_obtained = None;
+        invalid.part_a = part(1, 1, 0, 0, 0.001000001, 0.0);
+        invalid.part_b = part(0, 0, 0, 0, 0.0, 0.0);
+        invalid.part_c = part(0, 0, 0, 0, 0.0, 0.0);
+
+        let error = create(&mut connection, invalid).expect_err("percentage must be rejected");
+        assert_eq!(error.field, Some("maxMarks"));
+    }
+
+    #[test]
+    fn csv_import_rejects_tiny_maximum_marks_with_an_impossible_percentage() {
+        let connection = connection();
+        let header = CSV_HEADERS.join(",");
+        let csv = format!(
+            "{header}\n\
+             Tiny Maximum,2026-10-30,180,0.001,,1,1,0,0,0.001000001,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,,\n"
+        );
+
+        let preview = preview_import(&connection, &csv).expect("preview should load");
+        assert_eq!(preview.valid_rows, 0);
+        assert_eq!(preview.invalid_rows, 1);
+        assert!(
+            preview.rows[0]
+                .errors
+                .iter()
+                .any(|error| error.field == "max_marks")
         );
     }
 
@@ -1267,10 +1423,34 @@ mod tests {
             ),
             (
                 MockTestInput {
+                    max_marks: 200.0,
+                    ..input()
+                },
+                "maxMarks",
+            ),
+            (
+                MockTestInput {
                     marks_obtained: Some(250.0),
                     ..input()
                 },
                 "marksObtained",
+            ),
+            (
+                MockTestInput {
+                    part_a: part(20, 15, 3, 2, 2.0, 1.0),
+                    ..input()
+                },
+                "partA",
+            ),
+            (
+                MockTestInput {
+                    part_a: MockPartInput {
+                        unanswered_marks: Some(1.0),
+                        ..part(20, 15, 3, 2, 2.0, -0.5)
+                    },
+                    ..input()
+                },
+                "partA",
             ),
             (
                 MockTestInput {
@@ -1325,9 +1505,9 @@ mod tests {
     fn csv_preview_and_import_skip_duplicates_and_reject_invalid_rows() {
         let mut connection = connection();
         let csv = "test_name,test_date,duration_minutes,max_marks,marks_obtained,part_a_questions,part_a_correct,part_a_incorrect,part_a_unanswered,part_a_correct_marks,part_a_incorrect_marks,part_a_unanswered_marks,part_b_questions,part_b_correct,part_b_incorrect,part_b_unanswered,part_b_correct_marks,part_b_incorrect_marks,part_b_unanswered_marks,part_c_questions,part_c_correct,part_c_incorrect,part_c_unanswered,part_c_correct_marks,part_c_incorrect_marks,part_c_unanswered_marks,notes,review_observations,external_id\n\
-                    Mock A,2026-10-30,180,200,,20,15,3,2,2,-0.5,0,40,25,10,5,3,-1,0,20,10,5,5,4,-1,0,Good run,Review later,mock-1\n\
-                   Bad Date,2026-02-30,180,200,,20,15,3,2,2,-0.5,0,40,25,10,5,3,-1,0,20,10,5,5,4,-1,0,,,\n\
-                    No Questions,2026-10-29,180,200,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,,\n";
+                    Mock A,2026-10-30,180,240,,20,15,3,2,2,-0.5,0,40,25,10,5,3,-1,0,20,10,5,5,4,-1,0,Good run,Review later,mock-1\n\
+                   Bad Date,2026-02-30,180,240,,20,15,3,2,2,-0.5,0,40,25,10,5,3,-1,0,20,10,5,5,4,-1,0,,,\n\
+                    No Questions,2026-10-29,180,240,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,,\n";
 
         let preview = preview_import(&connection, csv).expect("preview should load");
         assert_eq!(preview.total_rows, 3);
@@ -1344,6 +1524,33 @@ mod tests {
         assert_eq!(repeat.skipped, 1);
         assert_eq!(repeat.rejected, 2);
         assert_eq!(list(&connection).expect("mocks should list").len(), 1);
+    }
+
+    #[test]
+    fn csv_import_rejects_positive_penalties_and_understated_maximum_marks() {
+        let connection = connection();
+        let header = CSV_HEADERS.join(",");
+        let csv = format!(
+            "{header}\n\
+             Low Maximum,2026-10-30,180,10,,20,15,3,2,2,-0.5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,,\n\
+             Positive Penalty,2026-10-30,180,40,,1,1,0,0,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,,\n"
+        );
+
+        let preview = preview_import(&connection, &csv).expect("preview should load");
+        assert_eq!(preview.valid_rows, 0);
+        assert_eq!(preview.invalid_rows, 2);
+        assert!(
+            preview.rows[0]
+                .errors
+                .iter()
+                .any(|error| error.field == "max_marks")
+        );
+        assert!(
+            preview.rows[1]
+                .errors
+                .iter()
+                .any(|error| error.field == "part_a_incorrect_marks")
+        );
     }
 
     #[test]

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { CsvImportPanel } from '../components/CsvImportPanel';
+import { DateField } from '../components/DateField';
 import { MockTestEditor } from '../components/MockTestEditor';
 import { toCommandError } from '../lib/commandError';
-import { formatDateLong } from '../lib/dateOnly';
+import { formatDateLong, parseDateOnly } from '../lib/dateOnly';
 import {
   applyMockImport,
   deleteMockTest,
@@ -25,6 +26,9 @@ function percentageLabel(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+const PAGE_SIZE = 20;
+const PERCENTAGE_TOLERANCE = 1e-9;
+
 export default function MockTestsScreen({ today }: { today: string }) {
   const [tests, setTests] = useState<MockTest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,6 +41,10 @@ export default function MockTestsScreen({ today }: { today: string }) {
   );
   const [pendingDelete, setPendingDelete] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [dateForm, setDateForm] = useState({ fromDate: '', toDate: '' });
+  const [appliedDates, setAppliedDates] = useState<{ fromDate?: string; toDate?: string }>({});
+  const [dateError, setDateError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +78,39 @@ export default function MockTestsScreen({ today }: { today: string }) {
     setReloadKey((key) => key + 1);
   }
 
+  function handleDateFilter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const fromDate = dateForm.fromDate;
+    const toDate = dateForm.toDate;
+
+    if (fromDate && !parseDateOnly(fromDate)) {
+      setDateError('Choose a real start date or leave it blank.');
+      return;
+    }
+    if (toDate && !parseDateOnly(toDate)) {
+      setDateError('Choose a real end date or leave it blank.');
+      return;
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      setDateError('The start date cannot be after the end date.');
+      return;
+    }
+
+    setDateError(null);
+    setPage(1);
+    setAppliedDates({
+      ...(fromDate ? { fromDate } : {}),
+      ...(toDate ? { toDate } : {}),
+    });
+  }
+
+  function clearDateFilter() {
+    setDateForm({ fromDate: '', toDate: '' });
+    setDateError(null);
+    setPage(1);
+    setAppliedDates({});
+  }
+
   async function handleDelete(testId: number) {
     if (deletingId !== null) {
       return;
@@ -93,13 +134,35 @@ export default function MockTestsScreen({ today }: { today: string }) {
     }
   }
 
+  const filteredTests = tests.filter((test) => {
+    if (appliedDates.fromDate && test.testDate < appliedDates.fromDate) {
+      return false;
+    }
+    if (appliedDates.toDate && test.testDate > appliedDates.toDate) {
+      return false;
+    }
+    return true;
+  });
   const averagePercentage =
-    tests.length === 0
+    filteredTests.length === 0
       ? null
-      : tests.reduce((total, test) => total + test.computedPercentage, 0) / tests.length;
+      : filteredTests.reduce((total, test) => total + test.computedPercentage, 0) /
+        filteredTests.length;
   const bestPercentage =
-    tests.length === 0 ? null : Math.max(...tests.map((test) => test.computedPercentage));
-  const latest = tests[0] ?? null;
+    filteredTests.length === 0
+      ? null
+      : Math.max(...filteredTests.map((test) => test.computedPercentage));
+  const latest = filteredTests[0] ?? null;
+  const invalidConfigurationCount = tests.filter(
+    (test) =>
+      !test.configurationValid ||
+      !Number.isFinite(test.computedPercentage) ||
+      test.computedPercentage > 100 + PERCENTAGE_TOLERANCE,
+  ).length;
+  const pageCount = Math.max(1, Math.ceil(filteredTests.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const visibleTests = filteredTests.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const hasDateFilter = Boolean(appliedDates.fromDate || appliedDates.toDate);
 
   return (
     <div className="page-container mock-page">
@@ -115,8 +178,8 @@ export default function MockTestsScreen({ today }: { today: string }) {
 
       <section className="mock-summary-grid" aria-label="Mock test summary">
         <div className="mock-summary-card">
-          <span>Tests recorded</span>
-          <strong>{tests.length}</strong>
+          <span>Tests shown</span>
+          <strong>{filteredTests.length}</strong>
         </div>
         <div className="mock-summary-card">
           <span>Average calculated score</span>
@@ -164,6 +227,16 @@ export default function MockTestsScreen({ today }: { today: string }) {
           role={feedback.tone === 'error' ? 'alert' : 'status'}
         >
           {feedback.message}
+        </p>
+      )}
+
+      {invalidConfigurationCount > 0 && (
+        <p className="save-feedback save-feedback-warning" role="status">
+          {invalidConfigurationCount} saved mock test
+          {invalidConfigurationCount === 1 ? '' : 's'} use
+          {invalidConfigurationCount === 1 ? 's' : ''} a marking configuration that would now be
+          rejected. Review maximum marks, penalty signs, and part totals for the affected record
+          {invalidConfigurationCount === 1 ? '' : 's'}.
         </p>
       )}
 
@@ -230,21 +303,67 @@ export default function MockTestsScreen({ today }: { today: string }) {
           <div className="card-heading">
             <div>
               <p className="eyebrow">Review history</p>
-              <h2 id="mock-history-heading">Previous mock tests ({tests.length})</h2>
+              <h2 id="mock-history-heading">
+                Previous mock tests ({filteredTests.length}
+                {hasDateFilter ? ` of ${tests.length}` : ''})
+              </h2>
             </div>
           </div>
 
-          {tests.length === 0 ? (
+          <form className="history-date-filter" onSubmit={handleDateFilter} noValidate>
+            <DateField
+              id="mock-history-from"
+              label="Test date from (optional)"
+              value={dateForm.fromDate}
+              max={dateForm.toDate || undefined}
+              onChange={(value) => {
+                setDateForm((current) => ({ ...current, fromDate: value }));
+                setDateError(null);
+              }}
+            />
+            <DateField
+              id="mock-history-to"
+              label="Test date to (optional)"
+              value={dateForm.toDate}
+              min={dateForm.fromDate || undefined}
+              onChange={(value) => {
+                setDateForm((current) => ({ ...current, toDate: value }));
+                setDateError(null);
+              }}
+            />
+            <div className="history-date-actions">
+              <button type="submit" className="secondary-button">
+                Apply dates
+              </button>
+              {hasDateFilter && (
+                <button type="button" className="link-button" onClick={clearDateFilter}>
+                  Clear dates
+                </button>
+              )}
+            </div>
+            {dateError && (
+              <p className="field-error history-date-error" role="alert">
+                {dateError}
+              </p>
+            )}
+          </form>
+
+          {filteredTests.length === 0 ? (
             <div className="task-empty">
-              <p className="task-empty-title">No mock tests recorded yet</p>
+              <p className="task-empty-title">
+                {tests.length === 0
+                  ? 'No mock tests recorded yet'
+                  : 'No mock tests match this date range'}
+              </p>
               <p>
-                Add a completed mock test with its part counts and marking configuration, or import
-                a CSV file using the template below.
+                {tests.length === 0
+                  ? 'Add a completed mock test with its part counts and marking configuration, or import a CSV file using the template below.'
+                  : 'Choose a wider test-date range or clear the dates to see every saved mock test.'}
               </p>
             </div>
           ) : (
             <div className="mock-list">
-              {tests.map((test) => (
+              {visibleTests.map((test) => (
                 <article className="mock-row" key={test.id}>
                   <div className="mock-row-heading">
                     <div>
@@ -263,6 +382,11 @@ export default function MockTestsScreen({ today }: { today: string }) {
                         {formatScore(test.computedMarks)} / {formatScore(test.maxMarks)}
                       </strong>
                       <small>{percentageLabel(test.computedPercentage)}</small>
+                      {(!test.configurationValid ||
+                        !Number.isFinite(test.computedPercentage) ||
+                        test.computedPercentage > 100 + PERCENTAGE_TOLERANCE) && (
+                        <small className="field-error">Review marking configuration</small>
+                      )}
                     </div>
                   </div>
 
@@ -391,6 +515,32 @@ export default function MockTestsScreen({ today }: { today: string }) {
                 </article>
               ))}
             </div>
+          )}
+
+          {pageCount > 1 && (
+            <nav className="history-pagination" aria-label="Mock-test history pages">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setPage((current) => Math.max(1, Math.min(current, pageCount) - 1))}
+                disabled={safePage === 1}
+              >
+                Previous page
+              </button>
+              <span>
+                Page {safePage} of {pageCount} · {filteredTests.length} tests
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() =>
+                  setPage((current) => Math.min(pageCount, Math.min(current, pageCount) + 1))
+                }
+                disabled={safePage === pageCount}
+              >
+                Next page
+              </button>
+            </nav>
           )}
         </section>
       )}

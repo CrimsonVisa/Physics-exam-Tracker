@@ -681,9 +681,11 @@ fn revision_consistency(
         .query_row(
             "SELECT
                 COUNT(*),
-                COALESCE(SUM(CASE WHEN next_revision_date < ?1 THEN 1 ELSE 0 END), 0)
-             FROM revision_schedules
-             WHERE status = 'active'",
+                COALESCE(SUM(CASE WHEN r.next_revision_date < ?1 THEN 1 ELSE 0 END), 0)
+             FROM revision_schedules r
+             JOIN syllabus_topics t ON t.id = r.topic_id
+             WHERE r.status = 'active'
+               AND t.is_archived = 0",
             [date_only::format_date_only(today)],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -1018,6 +1020,18 @@ mod tests {
         .expect("on-time completion");
         revision::schedule_topic(&mut connection, overdue_topic, "2026-10-27", today)
             .expect("overdue schedule");
+        let archived_topic = topic(&connection, "EMT-C01");
+        revision::schedule_topic(&mut connection, archived_topic, "2020-01-01", today)
+            .expect("archived schedule");
+        connection
+            .execute(
+                "UPDATE syllabus_topics
+                 SET is_archived = 1,
+                     archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = ?1",
+                [archived_topic],
+            )
+            .expect("revision topic should archive");
 
         let analytics = study_analytics(&connection, "2026-10-01", "2026-10-30", today)
             .expect("analytics should load");

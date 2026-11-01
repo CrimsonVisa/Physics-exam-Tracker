@@ -298,8 +298,11 @@ export default function RevisionScreen({ today }: { today: string }) {
       return true;
     }) ?? [];
 
+  const archivedTopics = dashboard?.archivedTopics ?? [];
   const selectedState =
-    dashboard?.topics.find((state) => state.topic.id === selectedTopicId) ?? null;
+    dashboard?.topics.find((state) => state.topic.id === selectedTopicId) ??
+    archivedTopics.find((state) => state.topic.id === selectedTopicId) ??
+    null;
   const plannerTopics: PlannerTopic[] =
     dashboard?.topics.map((state) => ({
       id: state.topic.id,
@@ -659,6 +662,52 @@ export default function RevisionScreen({ today }: { today: string }) {
             )}
           </section>
 
+          {archivedTopics.length > 0 && (
+            <details className="revision-settings-disclosure">
+              <summary>Archived revision history ({archivedTopics.length})</summary>
+              <p className="settings-lede">
+                Archived topics keep their schedules and revision history. Open a topic to view it
+                read-only; unarchive the topic in Syllabus to schedule new revisions.
+              </p>
+              <div className="revision-topic-table-wrap">
+                <table className="revision-topic-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Topic</th>
+                      <th scope="col">Unit</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Last revision</th>
+                      <th scope="col">Completed</th>
+                      <th scope="col">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {archivedTopics.map((state) => (
+                      <tr key={`archived-revision-topic-${state.topic.id}`}>
+                        <th scope="row">
+                          {state.topic.code} · {state.topic.title}
+                        </th>
+                        <td>{state.topic.sectionTitle}</td>
+                        <td>{statusLabel(state)}</td>
+                        <td>{dateLabel(state.schedule?.lastRevisionDate ?? null)}</td>
+                        <td>{state.schedule?.completedRevisions ?? 0}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => openTopic(state.topic.id)}
+                          >
+                            View history
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+
           {selectedState && (
             <RevisionTopicDetail
               key={`revision-detail-${selectedState.topic.id}`}
@@ -668,6 +717,7 @@ export default function RevisionScreen({ today }: { today: string }) {
               plannerTopics={plannerTopics}
               onChanged={reload}
               onClose={() => setSelectedTopicId(null)}
+              readOnly={selectedState.topic.archived}
             />
           )}
         </>

@@ -180,6 +180,7 @@ describe('backup and data management screen', () => {
     invokeMock.mockReset();
     openDialogMock.mockReset();
     vi.restoreAllMocks();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-30T12:00:00.000Z'));
   });
 
   it('shows last backup outcomes and saves automatic-backup settings', async () => {
@@ -192,6 +193,8 @@ describe('backup and data management screen', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('The selected backup folder was unavailable.')).toBeInTheDocument();
     expect(screen.getByText(/Database 0123456789abcdef/)).toBeInTheDocument();
+    expect(screen.getByText('Last success 1 day ago.')).toBeInTheDocument();
+    expect(screen.queryByText(/Consider creating a new backup/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText('Enable automatic backups'));
     await userEvent.selectOptions(screen.getByLabelText('Frequency'), 'weekly');
@@ -361,6 +364,86 @@ describe('backup and data management screen', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Merge and preserve/ })).toBeDisabled();
     expect(screen.getByRole('radio', { name: /Complete replacement/ })).toBeChecked();
+  });
+
+  it('does not warn at exactly seven days', async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-05T12:00:00.000Z'));
+    mockBackend();
+    render(<BackupScreen />);
+
+    expect(await screen.findByText('Last success 7 days ago.')).toBeInTheDocument();
+    expect(screen.queryByText(/Consider creating a new backup/)).not.toBeInTheDocument();
+  });
+
+  it('warns once the elapsed time is just over seven days', async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-05T12:00:00.001Z'));
+    mockBackend();
+    render(<BackupScreen />);
+
+    expect(await screen.findByText('Last success 7 days ago.')).toBeInTheDocument();
+    expect(screen.getByText(/The last verified backup was 7 days ago/)).toBeInTheDocument();
+  });
+
+  it('warns when the last verified backup is stale', async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-10T12:00:00.000Z'));
+    mockBackend();
+    render(<BackupScreen />);
+
+    expect(await screen.findByText('Last success 12 days ago.')).toBeInTheDocument();
+    expect(screen.getByText(/The last verified backup was 12 days ago/)).toBeInTheDocument();
+  });
+
+  it('treats an invalid last-success timestamp as unavailable', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_backup_overview') {
+        return Promise.resolve({
+          ...OVERVIEW,
+          settings: { ...OVERVIEW.settings, lastSuccessAt: 'not-a-date' },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+    render(<BackupScreen />);
+
+    expect(await screen.findByText('Backup age unavailable.')).toBeInTheDocument();
+    expect(screen.getByText(/last backup timestamp could not be read/i)).toBeInTheDocument();
+  });
+
+  it('treats a future last-success timestamp as unverified', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_backup_overview') {
+        return Promise.resolve({
+          ...OVERVIEW,
+          settings: { ...OVERVIEW.settings, lastSuccessAt: '2026-11-01T12:00:00.000Z' },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+    render(<BackupScreen />);
+
+    expect(await screen.findByText('Backup age unavailable.')).toBeInTheDocument();
+    expect(screen.getByText(/last backup timestamp could not be read/i)).toBeInTheDocument();
+    expect(screen.queryByText('Last success today.')).not.toBeInTheDocument();
+  });
+
+  it('warns when no verified backup exists', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_backup_overview') {
+        return Promise.resolve({
+          ...OVERVIEW,
+          settings: {
+            ...OVERVIEW.settings,
+            lastSuccessAt: null,
+            lastSuccessFile: null,
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+    render(<BackupScreen />);
+
+    expect(await screen.findByText(/No verified backup has been recorded yet/)).toBeInTheDocument();
+    expect(screen.getByText('No successful backup recorded yet.')).toBeInTheDocument();
   });
 
   it('shows a load error and retries', async () => {

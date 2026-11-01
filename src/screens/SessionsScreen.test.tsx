@@ -226,6 +226,9 @@ describe('study sessions screen', () => {
 
     expect(await screen.findByRole('heading', { name: 'Edit study session' })).toBeInTheDocument();
     expect(screen.getByLabelText('Syllabus topic (optional)')).toHaveValue('2');
+    expect(screen.getByLabelText('Session date')).toBeEnabled();
+    expect(screen.getByLabelText('Minutes')).toBeEnabled();
+    expect(screen.getByLabelText('Seconds')).toBeEnabled();
     expect(
       within(screen.getByLabelText('Syllabus topic (optional)')).getByRole('option', {
         name: /Dimensional analysis/,
@@ -345,8 +348,11 @@ describe('study sessions screen', () => {
 
     expect(screen.getByRole('heading', { name: 'Edit study session' })).toBeInTheDocument();
     expect(screen.getByLabelText('Session date')).toHaveValue(TODAY);
+    expect(screen.getByLabelText('Session date')).toBeDisabled();
     expect(screen.getByLabelText('Minutes')).toHaveValue(25);
+    expect(screen.getByLabelText('Minutes')).toBeDisabled();
     expect(screen.getByLabelText('Seconds')).toHaveValue(0);
+    expect(screen.getByLabelText('Seconds')).toBeDisabled();
     expect(screen.getByLabelText('Syllabus topic (optional)')).toHaveValue('1');
 
     fireEvent.change(screen.getByLabelText('Notes (optional)'), {

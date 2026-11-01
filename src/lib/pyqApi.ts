@@ -52,6 +52,8 @@ export type PyqFilter = {
   topicId?: number;
   status?: PyqStatus;
   query?: string;
+  fromDate?: string;
+  toDate?: string;
 };
 
 export type PyqInput = {

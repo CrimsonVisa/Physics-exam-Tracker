@@ -130,6 +130,62 @@ function parseOptionalNumber(value: string): number | null | 'invalid' {
   return Number.isFinite(parsed) ? parsed : 'invalid';
 }
 
+const MARKS_TOLERANCE_FACTOR = 1e-9;
+const PERCENTAGE_TOLERANCE = 1e-9;
+
+function marksTolerance(value: number): number {
+  return Math.max(1, Math.abs(value)) * MARKS_TOLERANCE_FACTOR;
+}
+
+function partMaximum(input: MockPartInput): number {
+  return input.questions * (input.correctMarks ?? 0);
+}
+
+function partScore(input: MockPartInput): number {
+  return (
+    input.correct * (input.correctMarks ?? 0) +
+    input.incorrect * (input.incorrectMarks ?? 0) +
+    input.unanswered * (input.unansweredMarks ?? 0)
+  );
+}
+
+function savedConfigurationIssues(test: MockTest): string[] {
+  const issues: string[] = [];
+  const parts = [
+    ['Part A', test.partA],
+    ['Part B', test.partB],
+    ['Part C', test.partC],
+  ] as const;
+  const highestPossible = parts.reduce(
+    (total, [, part]) => total + part.questions * part.correctMarks,
+    0,
+  );
+
+  if (test.maxMarks + marksTolerance(highestPossible) < highestPossible) {
+    issues.push(
+      `Maximum marks (${formatScore(test.maxMarks)}) do not cover the highest possible score (${formatScore(highestPossible)}).`,
+    );
+  }
+  if (test.computedPercentage > 100 + PERCENTAGE_TOLERANCE) {
+    issues.push('The calculated percentage is above 100%.');
+  }
+  for (const [label, part] of parts) {
+    if (part.incorrectMarks > 0) {
+      issues.push(`${label} has positive incorrect-answer marks.`);
+    }
+    if (part.unansweredMarks > 0) {
+      issues.push(`${label} has positive unanswered marks.`);
+    }
+    if (part.correct + part.incorrect + part.unanswered !== part.questions) {
+      issues.push(`${label} counts do not add up to its question total.`);
+    }
+  }
+
+  return issues.length === 0
+    ? ['This saved marking configuration would be rejected by the current rules.']
+    : issues;
+}
+
 function validatePart(part: PartForm): {
   input: MockPartInput | null;
   error: string | null;
@@ -176,17 +232,23 @@ function validatePart(part: PartForm): {
   const incorrectMarks = parseOptionalNumber(part.incorrectMarks);
   if (
     incorrectMarks === 'invalid' ||
-    (incorrectMarks !== null && (incorrectMarks < -1_000 || incorrectMarks > 1_000))
+    (incorrectMarks !== null && (incorrectMarks < -1_000 || incorrectMarks > 0))
   ) {
-    return { input: null, error: 'Incorrect-answer marks must be between -1000 and 1000.' };
+    return {
+      input: null,
+      error: 'Incorrect-answer marks must be zero or negative. Use 0 for no penalty.',
+    };
   }
 
   const unansweredMarks = parseOptionalNumber(part.unansweredMarks);
   if (
     unansweredMarks === 'invalid' ||
-    (unansweredMarks !== null && (unansweredMarks < -1_000 || unansweredMarks > 1_000))
+    (unansweredMarks !== null && (unansweredMarks < -1_000 || unansweredMarks > 0))
   ) {
-    return { input: null, error: 'Unanswered marks must be between -1000 and 1000.' };
+    return {
+      input: null,
+      error: 'Unanswered marks must be zero or negative. Use 0 for no penalty.',
+    };
   }
 
   return {
@@ -274,6 +336,28 @@ function validateForm(form: MockForm): {
     errors.partA = 'A mock test must contain at least one question across Parts A, B and C.';
   }
 
+  if (!errors.partA && !errors.partB && !errors.partC && typeof maxMarks === 'number') {
+    const highestPossible = PART_KEYS.reduce(
+      (total, key) => total + partMaximum(partResults[key].input!),
+      0,
+    );
+    if (maxMarks + marksTolerance(highestPossible) < highestPossible) {
+      errors.maxMarks = `Maximum marks must be at least the highest possible score from this marking configuration (${formatScore(highestPossible)}).`;
+    } else {
+      const computedMarks = PART_KEYS.reduce(
+        (total, key) => total + partScore(partResults[key].input!),
+        0,
+      );
+      if (
+        computedMarks > maxMarks + marksTolerance(maxMarks) ||
+        (maxMarks > 0 && (computedMarks / maxMarks) * 100 > 100 + PERCENTAGE_TOLERANCE)
+      ) {
+        errors.maxMarks =
+          'The calculated score cannot exceed maximum marks. Review maximum marks or the marking configuration.';
+      }
+    }
+  }
+
   if (Object.keys(errors).length > 0) {
     return { input: null, errors };
   }
@@ -302,6 +386,7 @@ function partCalculation(part: PartForm): {
   incorrect: number;
   unanswered: number;
   marks: number;
+  maximumMarks: number;
 } {
   const questions = parseWholeNumber(part.questions) ?? 0;
   const correct = parseWholeNumber(part.correct) ?? 0;
@@ -322,6 +407,7 @@ function partCalculation(part: PartForm): {
     incorrect,
     unanswered,
     marks,
+    maximumMarks: questions * (typeof correctMarks === 'number' ? correctMarks : 0),
   };
 }
 
@@ -415,14 +501,32 @@ export function MockTestEditor({ test, today, onSaved, onCancel }: MockTestEdito
   }));
   const totalMarks = calculations.reduce((total, part) => total + part.marks, 0);
   const totalQuestions = calculations.reduce((total, part) => total + part.questions, 0);
+  const highestPossibleMarks = calculations.reduce((total, part) => total + part.maximumMarks, 0);
   const maxMarksValue = parseOptionalNumber(form.maxMarks);
+  const maxMarksInsufficient =
+    typeof maxMarksValue === 'number' &&
+    maxMarksValue + marksTolerance(highestPossibleMarks) < highestPossibleMarks;
   const computedPercentage =
     typeof maxMarksValue === 'number' && maxMarksValue > 0
       ? (totalMarks / maxMarksValue) * 100
       : null;
+  const impossibleScore =
+    computedPercentage !== null &&
+    (!Number.isFinite(computedPercentage) || computedPercentage > 100 + PERCENTAGE_TOLERANCE);
 
   return (
     <form className="planner-form mock-form" onSubmit={handleSubmit} noValidate>
+      {test && !test.configurationValid && (
+        <div className="save-feedback save-feedback-warning" role="status">
+          <p>Saved marking configuration needs review before this record can be saved again.</p>
+          <ul>
+            {savedConfigurationIssues(test).map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="planner-form-row">
         <div className={`form-field${errors.testName ? ' form-field-invalid' : ''}`}>
           <label htmlFor="mock-name">Test name</label>
@@ -474,7 +578,9 @@ export function MockTestEditor({ test, today, onSaved, onCancel }: MockTestEdito
           )}
         </div>
 
-        <div className={`form-field${errors.maxMarks ? ' form-field-invalid' : ''}`}>
+        <div
+          className={`form-field${errors.maxMarks || maxMarksInsufficient ? ' form-field-invalid' : ''}`}
+        >
           <label htmlFor="mock-max-marks">Maximum marks</label>
           <input
             id="mock-max-marks"
@@ -483,13 +589,19 @@ export function MockTestEditor({ test, today, onSaved, onCancel }: MockTestEdito
             step="0.01"
             value={form.maxMarks}
             onChange={(event) => handleField('maxMarks', event.target.value)}
-            aria-invalid={errors.maxMarks ? true : undefined}
+            aria-invalid={errors.maxMarks || maxMarksInsufficient ? true : undefined}
+            aria-describedby="mock-max-marks-hint"
             disabled={isSaving}
             required
           />
-          {errors.maxMarks && (
+          <p className="field-hint" id="mock-max-marks-hint">
+            Highest possible score from this marking configuration:{' '}
+            {formatScore(highestPossibleMarks)}.
+          </p>
+          {(errors.maxMarks || maxMarksInsufficient) && (
             <p className="field-error" role="alert">
-              {errors.maxMarks}
+              {errors.maxMarks ??
+                `Maximum marks must be at least ${formatScore(highestPossibleMarks)}.`}
             </p>
           )}
         </div>
@@ -597,6 +709,7 @@ export function MockTestEditor({ test, today, onSaved, onCancel }: MockTestEdito
                 <input
                   id={`mock-${key}-incorrect-marks`}
                   type="number"
+                  max={0}
                   step="0.01"
                   value={form[key].incorrectMarks}
                   onChange={(event) => handlePart(key, 'incorrectMarks', event.target.value)}
@@ -608,6 +721,7 @@ export function MockTestEditor({ test, today, onSaved, onCancel }: MockTestEdito
                 <input
                   id={`mock-${key}-unanswered-marks`}
                   type="number"
+                  max={0}
                   step="0.01"
                   value={form[key].unansweredMarks}
                   onChange={(event) => handlePart(key, 'unansweredMarks', event.target.value)}
@@ -661,6 +775,13 @@ export function MockTestEditor({ test, today, onSaved, onCancel }: MockTestEdito
           <strong>{totalQuestions}</strong>
         </div>
       </section>
+
+      {impossibleScore && (
+        <p className="save-feedback save-feedback-error" role="alert">
+          The calculated score is above maximum marks. Review maximum marks or the marking
+          configuration before saving.
+        </p>
+      )}
 
       <div className={`form-field${errors.notes ? ' form-field-invalid' : ''}`}>
         <label htmlFor="mock-notes">Notes (optional)</label>

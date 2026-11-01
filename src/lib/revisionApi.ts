@@ -86,7 +86,10 @@ export type RevisionRecommendation = {
   previousOutcome: RevisionOutcome | null;
   masteryEstimate: number | null;
   pyqAttempts: number;
+  pyqQuestions: number;
   pyqAccuracy: number | null;
+  pyqEvidenceAccuracy: number | null;
+  pyqLastAttemptDate: string | null;
   pyqSufficient: boolean;
   priority: 'high' | 'medium' | 'low';
   score: number;
@@ -103,6 +106,7 @@ export type RevisionDashboard = {
   suspended: RevisionTopicState[];
   completedRecent: RevisionHistoryWithTopic[];
   topics: RevisionTopicState[];
+  archivedTopics: RevisionTopicState[];
   recommendations: RevisionRecommendation[];
   mockScopeNote: string;
   mockTestCount: number;

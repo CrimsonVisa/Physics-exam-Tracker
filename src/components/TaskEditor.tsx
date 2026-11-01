@@ -112,6 +112,23 @@ function validateTaskForm(
     errors.deadlineDate = 'Choose a real calendar date or leave the deadline blank.';
   }
 
+  const effectiveScheduledDate =
+    form.scheduleAnchor === 'manual'
+      ? parseDateOnly(form.scheduledDate)
+        ? form.scheduledDate
+        : null
+      : offsetDays === null
+        ? null
+        : addDaysDateOnly(examDate, offsetDays);
+  if (
+    form.deadlineDate &&
+    parseDateOnly(form.deadlineDate) &&
+    effectiveScheduledDate &&
+    form.deadlineDate < effectiveScheduledDate
+  ) {
+    errors.deadlineDate = 'The deadline cannot be earlier than the scheduled date.';
+  }
+
   let topicId: number | null = null;
   if (form.topicId) {
     const parsed = Number(form.topicId);

@@ -1,11 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
+use chrono::{Days, NaiveDate};
 use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::{date_only, error::AppError, mock_tests};
 
-pub const MINIMUM_WEAK_ATTEMPTS: i64 = 5;
+pub const MINIMUM_EVIDENCE_QUESTIONS: i64 = 5;
+pub const EVIDENCE_WINDOW_DAYS: i64 = 365;
 pub const WEAK_ACCURACY_THRESHOLD: f64 = 50.0;
 pub const STRONG_ACCURACY_THRESHOLD: f64 = 75.0;
 pub const MAX_STUDY_PERFORMANCE_DAYS: usize = 60;
@@ -23,7 +25,13 @@ pub struct PyqTopicPerformance {
     pub incorrect: i64,
     pub skipped: i64,
     pub attempts: i64,
+    pub total_attempts: i64,
+    pub distinct_questions: i64,
+    pub evidence_questions: i64,
     pub accuracy: Option<f64>,
+    pub evidence_accuracy: Option<f64>,
+    pub last_scored_attempt_date: Option<String>,
+    pub skipped_only: bool,
     pub sufficient_data: bool,
 }
 
@@ -81,7 +89,8 @@ pub struct PyqAnalytics {
     pub outcome_unknown: i64,
     pub attempts: i64,
     pub accuracy: Option<f64>,
-    pub minimum_weak_attempts: i64,
+    pub minimum_evidence_questions: i64,
+    pub evidence_window_days: i64,
     pub weak_accuracy_threshold: f64,
     pub by_topic: Vec<PyqTopicPerformance>,
     pub by_unit: Vec<PyqUnitPerformance>,
@@ -100,6 +109,7 @@ pub struct MockTrendPoint {
     pub max_marks: f64,
     pub computed_marks: f64,
     pub computed_percentage: f64,
+    pub configuration_valid: bool,
     pub reported_marks: Option<f64>,
 }
 
@@ -171,18 +181,28 @@ pub struct StudyPerformance {
     pub days: Vec<StudyPerformanceDay>,
 }
 
-pub fn pyq(connection: &Connection) -> Result<PyqAnalytics, AppError> {
-    pyq_in_range(connection, None, None)
+pub(crate) fn evidence_cutoff(today: NaiveDate) -> String {
+    today
+        .checked_sub_days(Days::new((EVIDENCE_WINDOW_DAYS - 1) as u64))
+        .map(date_only::format_date_only)
+        .unwrap_or_else(|| "0001-01-01".to_owned())
+}
+
+pub fn pyq(connection: &Connection, today: NaiveDate) -> Result<PyqAnalytics, AppError> {
+    pyq_in_range(connection, None, None, today)
 }
 
 pub fn pyq_in_range(
     connection: &Connection,
     from_date: Option<&str>,
     to_date: Option<&str>,
+    today: NaiveDate,
 ) -> Result<PyqAnalytics, AppError> {
     let from = normalize_optional_date(from_date, "fromDate")?;
     let to = normalize_optional_date(to_date, "toDate")?;
     validate_range_order(from.as_deref(), to.as_deref())?;
+    let evidence_from = evidence_cutoff(today);
+    let evidence_to = date_only::format_date_only(today);
 
     let (total_records, correct, incorrect, skipped, outcome_unknown): (i64, i64, i64, i64, i64) =
         connection
@@ -209,21 +229,32 @@ pub fn pyq_in_range(
             )
             .map_err(|error| AppError::database("PYQ totals could not be calculated", error))?;
 
-    let by_topic = query_topic_performance(connection, from.as_deref(), to.as_deref())?;
+    let by_topic = topic_performance(
+        connection,
+        from.as_deref(),
+        to.as_deref(),
+        &evidence_from,
+        &evidence_to,
+    )?;
     let mut weak_topics = by_topic
         .iter()
         .filter(|topic| {
-            topic.attempts >= MINIMUM_WEAK_ATTEMPTS
+            topic.evidence_questions >= MINIMUM_EVIDENCE_QUESTIONS
                 && topic
-                    .accuracy
+                    .evidence_accuracy
                     .is_some_and(|accuracy| accuracy < WEAK_ACCURACY_THRESHOLD)
         })
         .cloned()
         .collect::<Vec<_>>();
     weak_topics.sort_by(|left, right| {
-        left.accuracy
-            .partial_cmp(&right.accuracy)
+        left.evidence_accuracy
+            .partial_cmp(&right.evidence_accuracy)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                right
+                    .last_scored_attempt_date
+                    .cmp(&left.last_scored_attempt_date)
+            })
     });
 
     Ok(PyqAnalytics {
@@ -234,7 +265,8 @@ pub fn pyq_in_range(
         outcome_unknown,
         attempts: correct + incorrect,
         accuracy: accuracy(correct, incorrect),
-        minimum_weak_attempts: MINIMUM_WEAK_ATTEMPTS,
+        minimum_evidence_questions: MINIMUM_EVIDENCE_QUESTIONS,
+        evidence_window_days: EVIDENCE_WINDOW_DAYS,
         weak_accuracy_threshold: WEAK_ACCURACY_THRESHOLD,
         by_topic,
         by_unit: query_unit_performance(connection, from.as_deref(), to.as_deref())?,
@@ -245,10 +277,12 @@ pub fn pyq_in_range(
     })
 }
 
-fn query_topic_performance(
+pub(crate) fn topic_performance(
     connection: &Connection,
     from: Option<&str>,
     to: Option<&str>,
+    evidence_from: &str,
+    evidence_to: &str,
 ) -> Result<Vec<PyqTopicPerformance>, AppError> {
     let mut statement = connection
         .prepare(
@@ -261,7 +295,23 @@ fn query_topic_performance(
                 s.title,
                 COALESCE(SUM(CASE WHEN p.status = 'correct' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN p.status = 'incorrect' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN p.status = 'skipped' THEN 1 ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN p.status = 'skipped' THEN 1 ELSE 0 END), 0),
+                COUNT(*),
+                COUNT(DISTINCT CASE
+                    WHEN p.status IN ('correct', 'incorrect') THEN
+                        printf(
+                            '%d|%s|%s|%s',
+                            p.question_year,
+                            lower(trim(p.exam_session)),
+                            p.part,
+                            lower(trim(p.question_reference))
+                        )
+                    ELSE NULL
+                END),
+                MAX(CASE
+                    WHEN p.status IN ('correct', 'incorrect') THEN p.attempt_date
+                    ELSE NULL
+                END)
              FROM pyq_attempts p
              JOIN syllabus_topics t ON t.id = p.topic_id
              JOIN syllabus_sections s ON s.id = t.section_id
@@ -272,10 +322,13 @@ fn query_topic_performance(
         )
         .map_err(|error| AppError::database("PYQ topic analytics could not be prepared", error))?;
 
-    statement
+    let mut topics = statement
         .query_map(rusqlite::params![from, to], |row| {
             let correct: i64 = row.get(6)?;
             let incorrect: i64 = row.get(7)?;
+            let skipped: i64 = row.get(8)?;
+            let total_attempts: i64 = row.get(9)?;
+            let distinct_questions: i64 = row.get(10)?;
             let attempts = correct + incorrect;
             Ok(PyqTopicPerformance {
                 topic_id: row.get(0)?,
@@ -286,15 +339,167 @@ fn query_topic_performance(
                 section_title: row.get(5)?,
                 correct,
                 incorrect,
-                skipped: row.get(8)?,
+                skipped,
                 attempts,
+                total_attempts,
+                distinct_questions,
+                evidence_questions: 0,
                 accuracy: accuracy(correct, incorrect),
-                sufficient_data: attempts >= MINIMUM_WEAK_ATTEMPTS,
+                evidence_accuracy: None,
+                last_scored_attempt_date: row.get(11)?,
+                skipped_only: total_attempts > 0 && attempts == 0 && skipped == total_attempts,
+                sufficient_data: false,
             })
         })
         .map_err(|error| AppError::database("PYQ topic analytics could not be queried", error))?
         .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|error| AppError::database("PYQ topic analytics could not be read", error))
+        .map_err(|error| AppError::database("PYQ topic analytics could not be read", error))?;
+
+    let mut evidence_statement = connection
+        .prepare(
+            "WITH scored AS (
+                SELECT
+                    p.topic_id,
+                    p.status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY
+                            p.topic_id,
+                            p.question_year,
+                            lower(trim(p.exam_session)),
+                            p.part,
+                            lower(trim(p.question_reference))
+                        ORDER BY p.attempt_date DESC, p.id DESC
+                    ) AS recency_rank
+                FROM pyq_attempts p
+                WHERE p.status IN ('correct', 'incorrect')
+                  AND p.attempt_date >= ?1
+                  AND p.attempt_date <= ?2
+             )
+             SELECT
+                s.topic_id,
+                t.code,
+                t.title,
+                t.is_archived,
+                section.code,
+                section.title,
+                COUNT(*),
+                SUM(CASE WHEN s.status = 'correct' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN s.status = 'incorrect' THEN 1 ELSE 0 END)
+             FROM scored s
+             JOIN syllabus_topics t ON t.id = s.topic_id
+             JOIN syllabus_sections section ON section.id = t.section_id
+             WHERE s.recency_rank = 1
+             GROUP BY s.topic_id",
+        )
+        .map_err(|error| {
+            AppError::database("PYQ latest-question evidence could not be prepared", error)
+        })?;
+
+    let evidence_rows = evidence_statement
+        .query_map(rusqlite::params![evidence_from, evidence_to], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? != 0,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+            ))
+        })
+        .map_err(|error| {
+            AppError::database("PYQ latest-question evidence could not be queried", error)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| {
+            AppError::database("PYQ latest-question evidence could not be read", error)
+        })?;
+
+    let evidence_by_topic = evidence_rows
+        .into_iter()
+        .map(
+            |(
+                topic_id,
+                code,
+                title,
+                archived,
+                section_code,
+                section_title,
+                questions,
+                correct,
+                incorrect,
+            )| {
+                (
+                    topic_id,
+                    (
+                        code,
+                        title,
+                        archived,
+                        section_code,
+                        section_title,
+                        questions,
+                        correct,
+                        incorrect,
+                    ),
+                )
+            },
+        )
+        .collect::<std::collections::HashMap<_, _>>();
+    let existing_topic_ids = topics
+        .iter()
+        .map(|topic| topic.topic_id)
+        .collect::<HashSet<_>>();
+
+    for topic in &mut topics {
+        if let Some((_, _, _, _, _, questions, correct, incorrect)) =
+            evidence_by_topic.get(&topic.topic_id)
+        {
+            topic.evidence_questions = *questions;
+            topic.evidence_accuracy = accuracy(*correct, *incorrect);
+            topic.sufficient_data = *questions >= MINIMUM_EVIDENCE_QUESTIONS;
+        }
+    }
+
+    let mut evidence_only = Vec::new();
+    for (
+        topic_id,
+        (code, title, archived, section_code, section_title, questions, correct, incorrect),
+    ) in evidence_by_topic
+    {
+        if existing_topic_ids.contains(&topic_id) {
+            continue;
+        }
+        evidence_only.push(PyqTopicPerformance {
+            topic_id,
+            code,
+            title,
+            archived,
+            section_code,
+            section_title,
+            correct: 0,
+            incorrect: 0,
+            skipped: 0,
+            attempts: 0,
+            total_attempts: 0,
+            distinct_questions: 0,
+            evidence_questions: questions,
+            accuracy: None,
+            evidence_accuracy: accuracy(correct, incorrect),
+            last_scored_attempt_date: None,
+            skipped_only: false,
+            sufficient_data: questions >= MINIMUM_EVIDENCE_QUESTIONS,
+        });
+    }
+    evidence_only.sort_by(|left, right| {
+        left.section_code
+            .cmp(&right.section_code)
+            .then_with(|| left.code.cmp(&right.code))
+    });
+    topics.extend(evidence_only);
+
+    Ok(topics)
 }
 
 fn query_unit_performance(
@@ -506,6 +711,7 @@ fn mock_analytics_from_tests(tests: Vec<mock_tests::MockTest>) -> Result<MockAna
             max_marks: test.max_marks,
             computed_marks: test.computed_marks,
             computed_percentage: test.computed_percentage,
+            configuration_valid: test.configuration_valid,
             reported_marks: test.marks_obtained,
         })
         .collect::<Vec<_>>();
@@ -609,13 +815,14 @@ pub fn performance(
     connection: &Connection,
     from_date: &str,
     to_date: &str,
+    today: NaiveDate,
 ) -> Result<PerformanceAnalytics, AppError> {
     let from = normalize_required_date(from_date, "fromDate")?;
     let to = normalize_required_date(to_date, "toDate")?;
     validate_range_order(Some(&from), Some(&to))?;
 
     Ok(PerformanceAnalytics {
-        pyq: pyq_in_range(connection, Some(&from), Some(&to))?,
+        pyq: pyq_in_range(connection, Some(&from), Some(&to), today)?,
         mock: mocks_in_range(connection, Some(&from), Some(&to))?,
         from_date: from,
         to_date: to,
@@ -781,13 +988,17 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-    use crate::{db, pyq, sessions, syllabus};
+    use crate::{db, pyq, revision, sessions, syllabus, topic_intelligence};
 
     fn connection() -> Connection {
         let mut connection =
             db::test_connection_with_defaults(NaiveDate::from_ymd_opt(2026, 10, 30).expect("date"));
         syllabus::seed(&mut connection).expect("syllabus should seed");
         connection
+    }
+
+    fn today() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, 30).expect("date")
     }
 
     fn topic_id(connection: &Connection, code: &str) -> i64 {
@@ -801,12 +1012,23 @@ mod tests {
     }
 
     fn pyq_input(topic_id: i64, year: i64, part: &str, status: &str, date: &str) -> pyq::PyqInput {
+        pyq_input_with_reference(topic_id, year, part, status, date, "Q1")
+    }
+
+    fn pyq_input_with_reference(
+        topic_id: i64,
+        year: i64,
+        part: &str,
+        status: &str,
+        date: &str,
+        reference: &str,
+    ) -> pyq::PyqInput {
         pyq::PyqInput {
             question_year: year,
             exam_session: String::new(),
             part: part.to_owned(),
             topic_id,
-            question_reference: "Q1".to_owned(),
+            question_reference: reference.to_owned(),
             attempt_date: date.to_owned(),
             status: status.to_owned(),
             marks_obtained: None,
@@ -850,22 +1072,42 @@ mod tests {
         let mmp = topic_id(&connection, "MMP-C01");
         let ga = topic_id(&connection, "GA-01");
 
-        for status in ["correct", "correct", "incorrect", "incorrect", "skipped"] {
+        for (index, status) in ["correct", "correct", "incorrect", "incorrect", "skipped"]
+            .into_iter()
+            .enumerate()
+        {
             pyq::create(
                 &mut connection,
-                pyq_input(mmp, 2024, "B", status, "2026-10-30"),
+                pyq_input_with_reference(
+                    mmp,
+                    2024,
+                    "B",
+                    status,
+                    "2026-10-30",
+                    &format!("MMP-{index}"),
+                ),
             )
             .expect("PYQ should save");
         }
-        for status in ["correct", "correct", "incorrect", "incorrect"] {
+        for (index, status) in ["correct", "correct", "incorrect", "incorrect"]
+            .into_iter()
+            .enumerate()
+        {
             pyq::create(
                 &mut connection,
-                pyq_input(ga, 2023, "A", status, "2026-10-29"),
+                pyq_input_with_reference(
+                    ga,
+                    2023,
+                    "A",
+                    status,
+                    "2026-10-29",
+                    &format!("GA-{index}"),
+                ),
             )
             .expect("PYQ should save");
         }
 
-        let analytics = pyq(&connection).expect("analytics should load");
+        let analytics = pyq(&connection, today()).expect("analytics should load");
         assert_eq!(analytics.total_records, 9);
         assert_eq!(analytics.correct, 4);
         assert_eq!(analytics.incorrect, 4);
@@ -899,25 +1141,319 @@ mod tests {
         assert_eq!(analytics.by_year[0].incorrect, 2);
         assert_eq!(analytics.by_year[0].skipped, 1);
 
-        let weak = pyq(&connection).expect("analytics should load");
+        let weak = pyq(&connection, today()).expect("analytics should load");
         assert!(weak.weak_topics.is_empty());
 
-        for _ in 0..2 {
+        for index in 0..2 {
             pyq::create(
                 &mut connection,
-                pyq_input(mmp, 2024, "C", "incorrect", "2026-10-28"),
+                pyq_input_with_reference(
+                    mmp,
+                    2024,
+                    "C",
+                    "incorrect",
+                    "2026-10-28",
+                    &format!("MMP-extra-{index}"),
+                ),
             )
             .expect("PYQ should save");
         }
-        let analytics = pyq(&connection).expect("analytics should load");
+        let analytics = pyq(&connection, today()).expect("analytics should load");
         let weak = analytics
             .weak_topics
             .iter()
             .find(|topic| topic.code == "MMP-C01")
-            .expect("MMP should be weak after enough attempts");
+            .expect("MMP should be weak after enough distinct questions");
         assert_eq!(weak.attempts, 6);
+        assert_eq!(weak.distinct_questions, 6);
+        assert_eq!(weak.evidence_questions, 6);
         assert_eq!(weak.accuracy, Some(33.33333333333333));
+        assert_eq!(weak.evidence_accuracy, Some(33.33333333333333));
         assert!(weak.sufficient_data);
+    }
+
+    #[test]
+    fn repeated_references_do_not_inflate_topic_evidence() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C01");
+
+        for _ in 0..6 {
+            pyq::create(
+                &mut connection,
+                pyq_input_with_reference(
+                    topic,
+                    2024,
+                    "B",
+                    "incorrect",
+                    "2026-10-30",
+                    "SAME-QUESTION",
+                ),
+            )
+            .expect("PYQ should save");
+        }
+
+        let analytics = pyq(&connection, today()).expect("analytics should load");
+        let stats = analytics
+            .by_topic
+            .iter()
+            .find(|entry| entry.topic_id == topic)
+            .expect("topic analytics should exist");
+        assert_eq!(stats.attempts, 6);
+        assert_eq!(stats.distinct_questions, 1);
+        assert_eq!(stats.evidence_questions, 1);
+        assert!(!stats.sufficient_data);
+        assert!(analytics.weak_topics.is_empty());
+    }
+
+    #[test]
+    fn topic_evidence_uses_the_latest_outcome_for_each_distinct_question() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C01");
+
+        for index in 0..5 {
+            pyq::create(
+                &mut connection,
+                pyq_input_with_reference(
+                    topic,
+                    2024,
+                    "B",
+                    "incorrect",
+                    "2026-10-01",
+                    &format!("LATEST-{index}"),
+                ),
+            )
+            .expect("PYQ should save");
+        }
+        pyq::create(
+            &mut connection,
+            pyq_input_with_reference(topic, 2024, "B", "correct", "2026-10-30", "LATEST-0"),
+        )
+        .expect("recent reattempt should save");
+
+        let analytics = pyq(&connection, today()).expect("analytics should load");
+        let stats = analytics
+            .by_topic
+            .iter()
+            .find(|entry| entry.topic_id == topic)
+            .expect("topic analytics should exist");
+        assert_eq!(stats.attempts, 6);
+        assert_eq!(stats.distinct_questions, 5);
+        assert_eq!(stats.evidence_questions, 5);
+        assert_eq!(stats.accuracy, Some(16.666666666666664));
+        assert_eq!(stats.evidence_accuracy, Some(20.0));
+        assert_eq!(
+            stats.last_scored_attempt_date.as_deref(),
+            Some("2026-10-30")
+        );
+    }
+
+    #[test]
+    fn stale_questions_do_not_count_as_current_evidence() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C01");
+
+        for index in 0..5 {
+            pyq::create(
+                &mut connection,
+                pyq_input_with_reference(
+                    topic,
+                    2019,
+                    "B",
+                    "incorrect",
+                    "2019-06-01",
+                    &format!("STALE-{index}"),
+                ),
+            )
+            .expect("PYQ should save");
+        }
+
+        let analytics = pyq(&connection, today()).expect("analytics should load");
+        assert_eq!(analytics.evidence_window_days, EVIDENCE_WINDOW_DAYS);
+        let stats = analytics
+            .by_topic
+            .iter()
+            .find(|entry| entry.topic_id == topic)
+            .expect("topic analytics should exist");
+        assert_eq!(stats.attempts, 5);
+        assert_eq!(stats.distinct_questions, 5);
+        assert_eq!(stats.evidence_questions, 0);
+        assert_eq!(stats.evidence_accuracy, None);
+        assert!(!stats.sufficient_data);
+        assert!(analytics.weak_topics.is_empty());
+    }
+
+    #[test]
+    fn evidence_window_is_exactly_365_calendar_dates() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C01");
+
+        for index in 0..5 {
+            pyq::create(
+                &mut connection,
+                pyq_input_with_reference(
+                    topic,
+                    2024,
+                    "B",
+                    "incorrect",
+                    "2025-10-31",
+                    &format!("BOUNDARY-{index}"),
+                ),
+            )
+            .expect("boundary PYQ should save");
+        }
+        pyq::create(
+            &mut connection,
+            pyq_input_with_reference(topic, 2023, "B", "correct", "2025-10-30", "OLDER"),
+        )
+        .expect("older PYQ should remain in history");
+
+        let analytics = pyq(&connection, today()).expect("analytics should load");
+        let stats = analytics
+            .by_topic
+            .iter()
+            .find(|entry| entry.topic_id == topic)
+            .expect("topic analytics should exist");
+        assert_eq!(stats.attempts, 6);
+        assert_eq!(stats.distinct_questions, 6);
+        assert_eq!(stats.evidence_questions, 5);
+        assert_eq!(stats.evidence_accuracy, Some(0.0));
+        assert!(stats.sufficient_data);
+    }
+
+    #[test]
+    fn future_and_older_attempts_do_not_count_as_current_evidence() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C02");
+
+        for index in 0..5 {
+            pyq::create(
+                &mut connection,
+                pyq_input_with_reference(
+                    topic,
+                    2024,
+                    "B",
+                    "correct",
+                    "2027-01-01",
+                    &format!("FUTURE-{index}"),
+                ),
+            )
+            .expect("future PYQ should save for history");
+        }
+
+        let analytics = pyq(&connection, today()).expect("analytics should load");
+        let stats = analytics
+            .by_topic
+            .iter()
+            .find(|entry| entry.topic_id == topic)
+            .expect("topic analytics should exist");
+        assert_eq!(stats.distinct_questions, 5);
+        assert_eq!(stats.evidence_questions, 0);
+        assert_eq!(stats.evidence_accuracy, None);
+        assert!(!stats.sufficient_data);
+        assert!(
+            !analytics
+                .weak_topics
+                .iter()
+                .any(|entry| entry.topic_id == topic)
+        );
+    }
+
+    #[test]
+    fn short_report_ranges_do_not_limit_the_rolling_evidence_window() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "GA-01");
+
+        for index in 0..5 {
+            pyq::create(
+                &mut connection,
+                pyq_input_with_reference(
+                    topic,
+                    2023,
+                    "A",
+                    "incorrect",
+                    "2025-11-01",
+                    &format!("OUTSIDE-RANGE-{index}"),
+                ),
+            )
+            .expect("evidence outside the report range should save");
+        }
+
+        let filtered = performance(&connection, "2026-10-10", "2026-10-20", today())
+            .expect("performance should load");
+        let matching_topics = filtered
+            .pyq
+            .by_topic
+            .iter()
+            .filter(|entry| entry.topic_id == topic)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching_topics.len(),
+            1,
+            "evidence-only topic must not duplicate"
+        );
+        let filtered_topic = matching_topics[0];
+        assert_eq!(filtered.pyq.total_records, 0);
+        assert_eq!(filtered_topic.attempts, 0);
+        assert_eq!(filtered_topic.correct, 0);
+        assert_eq!(filtered_topic.incorrect, 0);
+        assert_eq!(filtered_topic.skipped, 0);
+        assert_eq!(filtered_topic.total_attempts, 0);
+        assert_eq!(filtered_topic.distinct_questions, 0);
+        assert_eq!(filtered_topic.accuracy, None);
+        assert_eq!(filtered_topic.last_scored_attempt_date, None);
+        assert_eq!(filtered_topic.evidence_questions, 5);
+        assert_eq!(filtered_topic.evidence_accuracy, Some(0.0));
+        assert!(
+            filtered
+                .pyq
+                .weak_topics
+                .iter()
+                .any(|entry| entry.topic_id == topic),
+            "filtered Analytics must use the rolling evidence window for weak claims"
+        );
+
+        let full = pyq(&connection, today()).expect("unfiltered analytics should load");
+        let full_topic = full
+            .by_topic
+            .iter()
+            .find(|entry| entry.topic_id == topic)
+            .expect("unfiltered topic analytics should exist");
+        assert_eq!(full_topic.distinct_questions, 5);
+        assert_eq!(full_topic.evidence_questions, 5);
+
+        let intelligence = topic_intelligence::topic_intelligence(&connection, today())
+            .expect("topic intelligence should load");
+        let weak = intelligence
+            .weak
+            .iter()
+            .find(|entry| entry.code == "GA-01")
+            .expect("topic intelligence should use the rolling evidence window");
+        assert_eq!(weak.pyq_questions, 5);
+
+        let revision = revision::dashboard(&connection, today()).expect("revision should load");
+        let recommendation = revision
+            .recommendations
+            .iter()
+            .find(|entry| entry.topic.code == "GA-01")
+            .expect("revision should use the same rolling evidence window");
+        assert_eq!(recommendation.pyq_questions, 5);
+    }
+
+    #[test]
+    fn empty_report_ranges_do_not_fabricate_topics_without_scored_evidence() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "CM-C01");
+        pyq::create(
+            &mut connection,
+            pyq_input_with_reference(topic, 2024, "A", "skipped", "2025-11-01", "SKIPPED"),
+        )
+        .expect("skipped PYQ should save");
+
+        let filtered = performance(&connection, "2026-10-10", "2026-10-20", today())
+            .expect("performance should load");
+        assert_eq!(filtered.pyq.total_records, 0);
+        assert!(filtered.pyq.by_topic.is_empty());
+        assert!(filtered.pyq.weak_topics.is_empty());
     }
 
     #[test]
@@ -1021,8 +1557,8 @@ mod tests {
         )
         .expect("later mock should save");
 
-        let filtered =
-            performance(&connection, "2026-10-10", "2026-10-20").expect("performance should load");
+        let filtered = performance(&connection, "2026-10-10", "2026-10-20", today())
+            .expect("performance should load");
         assert_eq!(filtered.pyq.total_records, 1);
         assert_eq!(filtered.pyq.correct, 0);
         assert_eq!(filtered.pyq.incorrect, 1);
@@ -1056,7 +1592,7 @@ mod tests {
             vec!["2026-10-15".to_owned()]
         );
         assert_eq!(
-            pyq_in_range(&connection, Some("2026-10-01"), Some("2026-10-15"))
+            pyq_in_range(&connection, Some("2026-10-01"), Some("2026-10-15"), today())
                 .expect("bounded PYQ analytics should load")
                 .total_records,
             1
@@ -1068,7 +1604,7 @@ mod tests {
             1
         );
         assert_eq!(
-            performance(&connection, "2026-10-20", "2026-10-10")
+            performance(&connection, "2026-10-20", "2026-10-10", today())
                 .expect_err("reversed range should fail")
                 .field,
             Some("fromDate")

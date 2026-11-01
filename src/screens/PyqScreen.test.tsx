@@ -116,6 +116,12 @@ describe('PYQ screen', () => {
     fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'MMP' } });
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: '5' } });
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'correct' } });
+    fireEvent.change(screen.getByLabelText('Attempted from (optional)'), {
+      target: { value: '2026-10-01' },
+    });
+    fireEvent.change(screen.getByLabelText('Attempted to (optional)'), {
+      target: { value: '2026-10-31' },
+    });
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'symmetry' } });
     await userEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
 
@@ -129,9 +135,33 @@ describe('PYQ screen', () => {
           topicId: 5,
           status: 'correct',
           query: 'symmetry',
+          fromDate: '2026-10-01',
+          toDate: '2026-10-31',
         },
       });
     });
+  });
+
+  it('paginates long filtered histories', async () => {
+    const attempts = Array.from({ length: 21 }, (_, index) => ({
+      ...ATTEMPT,
+      id: 100 + index,
+      questionReference: `Paper B Q${index + 1}`,
+    }));
+    mockPyqBackend({ attempts });
+
+    render(<PyqScreen today={TODAY} />);
+
+    await screen.findByText('Paper B Q1');
+    expect(document.querySelectorAll('.pyq-row')).toHaveLength(20);
+    expect(screen.getByText('Page 1 of 2 · 21 attempts')).toBeInTheDocument();
+    expect(screen.queryByText('Paper B Q21')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    expect(document.querySelectorAll('.pyq-row')).toHaveLength(1);
+    expect(screen.getByText('Paper B Q21')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
   });
 
   it('opens the editor and deletes an attempt only after confirmation', async () => {

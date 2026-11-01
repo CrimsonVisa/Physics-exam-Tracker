@@ -318,7 +318,9 @@ stays attributed to its **local start date**; the session date is not split betw
 Sessions can also be entered or corrected manually. Manual entries have no clock timestamps, accept a
 duration from 1 second to 24 hours, and support up to 2,000 characters of notes. Editing and deletion
 run in transactions and recalculate the affected totals. Deleting a session never changes syllabus
-progress or deletes a topic.
+progress or deletes a topic. Timer-created sessions keep their recorded date, duration, and timestamps
+fixed; only their topic and notes can be edited. Manual sessions keep fully editable dates and
+durations. This prevents a timer record from contradicting its original timestamps.
 
 The Sessions page filters by date range and optional topic, groups history by session date, and shows
 the selected-range, today, and current-week totals. Weeks run Monday through Sunday in the local
@@ -362,8 +364,10 @@ the task to a manual schedule anchor; completed tasks cannot be rescheduled. Del
 confirmed in the UI and never deletes syllabus progress or study sessions.
 
 Tasks display overdue and upcoming indicators from the effective due date: the deadline when one is
-set, otherwise the scheduled date. The checklist supports open/completed/all views and title or
-description search. Priority and High-Yield remain personal planning labels.
+set, otherwise the scheduled date. A deadline cannot be earlier than the task's scheduled or
+exam-derived date, and rescheduling an open task past its deadline is rejected. The checklist supports
+open/completed/all views, title or description search, and optional scheduled-date From/To filters.
+Priority and High-Yield remain personal planning labels.
 
 ### Planned study blocks and explicit session links
 
@@ -395,15 +399,18 @@ Changing the exam date never writes immediately. The app first requests a previe
 - Future open tasks using an exam-relative offset and their old/new dates.
 - Future open tasks or planned blocks that would fall outside the proposed preparation start and exam
   date.
+- Exam-anchored tasks whose proposed date would be later than their saved deadline.
 - Counts of completed tasks, manual tasks, and planned blocks that will be preserved.
 
 Applying the preview is transactional. Only the accepted future exam-anchored tasks move, using their
 stored offsets from the new exam date; settings are updated in the same transaction. Completed tasks,
 manual-dated tasks, planned blocks, historical sessions, recorded study time, and syllabus progress
-never move. Out-of-window items are preserved with warnings rather than silently changed. Cancelling
-the preview writes nothing. A stale preview is rejected if the exam date or an anchored task changed,
-and the user must preview again. Direct settings updates also refuse an exam-date change while future
-open exam-anchored tasks exist, requiring the preview flow.
+never move. Out-of-window items are preserved with warnings rather than silently changed. A preview
+with a deadline conflict cannot be applied; the user must cancel it and correct the deadline first.
+The apply transaction rechecks the same rule before writing. Cancelling the preview writes nothing. A
+stale preview is rejected if the exam date or an anchored task changed, and the user must preview
+again. Direct settings updates also refuse an exam-date change while future open exam-anchored tasks
+exist, requiring the preview flow.
 
 ## PYQ bank and mock tests
 
@@ -424,12 +431,25 @@ test never creates individual PYQ attempts.
 
 PYQ statuses are `attempted`, `correct`, `incorrect`, and `skipped`. Accuracy uses only correct and
 incorrect outcomes; skipped and outcome-unknown attempts are reported separately. Multiple attempts
-for the same question reference remain separate historical records when entered manually.
+for the same question reference remain separate historical records when entered manually, but
+topic-level evidence counts each distinct question once and uses that question's latest scored
+outcome. The identity combines question year, session, part, and normalized reference text; no
+identifier is invented.
 
-The PYQ screen filters by question year, part, syllabus unit, topic, status, and free-text search
-across reference, session, and notes. It supports full create/edit/delete, with confirmation before
-deletion. Topic references are validated against the local syllabus catalog, including archived
-topics for historical data.
+Evidence recency is explicit: weak/strong evidence uses the **365 calendar dates ending today**,
+inclusive. That is today plus the preceding 364 dates; for example, on 2026-10-30 the evidence window
+is 2025-10-31 through 2026-10-30, and attempts dated 2025-10-30 or earlier and 2026-10-31 or later are
+excluded. This rolling window is independent of Analytics report-from/report-to filters, so every
+screen uses the same evidence. A question's latest scored outcome inside the window is used; older
+outcomes remain in history and in range/all-time counts but do not support a current weak or strong
+claim. A topic needs at least five distinct scored questions in the evidence window before it can be
+labelled weak or strong. Repeated attempts on one question cannot inflate that evidence count.
+
+The PYQ screen filters by question year, part, syllabus unit, topic, status, attempt-date range, and
+free-text search across reference, session, and notes. Long histories are paginated in 20-row pages.
+It supports full create/edit/delete, with confirmation before deletion. Topic references are validated
+against the local syllabus catalog, including archived topics for historical data. Skipped-only
+topics are reported separately from topics with no attempts.
 
 ### Mock tests and scoring
 
@@ -448,9 +468,16 @@ sum over parts of:
 ```
 
 No universal marking scheme is assumed. Correct-answer marks must be supplied for any part with
-questions; incorrect and unanswered values default to zero (no penalty) when left blank. The optional
-reported score must not exceed maximum marks and is preserved for comparison, while analytics and
-trends use the calculated score.
+questions. Incorrect-answer and unanswered marks must be zero or negative; leave them blank for no
+penalty. Maximum marks must be at least the highest score the marking configuration can produce.
+This prevents new records from reporting an impossible calculated percentage above 100%, including
+inputs close to the floating-point boundary. Existing records are never rewritten automatically; a
+saved record is flagged for review when its marking configuration would fail these rules, even if its
+current calculated percentage happens to remain at or below 100%. Opening that saved record shows the
+specific legacy configuration warning. The optional reported score must not exceed maximum marks and
+is preserved for comparison, while analytics and trends use the calculated score. Create, update and
+CSV import all reject any calculated percentage above 100%, including tiny maximum-mark edge cases. Long mock histories include test-date filters and 20-record pages. Summary cards
+follow the active test-date filter, and the card labels state that they describe the tests shown.
 
 ### Analytics
 
@@ -462,9 +489,9 @@ The Analytics screen uses only saved records:
   unanswered counts, and response trends. PYQ and mock metrics are never combined.
 - Daily, weekly, and monthly study trends, duration buckets, unit attribution, focus/break support,
   date filters, and same-length period comparisons.
-- A weak-topic screen that requires at least five correct-or-incorrect attempts and accuracy below
-  50%. Topics with fewer attempts are labelled **Insufficient data**, never “weak” from one or two
-  attempts.
+- A weak-topic screen that requires at least five distinct scored questions and latest-outcome
+  accuracy below 50%. Topics with fewer questions are labelled **Insufficient data**, never “weak”
+  from one or two attempts. Repeated attempts on the same question count once.
 - Topic intelligence, the preparation timeline, and actionable insights described in the Phase 8
   section below.
 
@@ -564,10 +591,16 @@ revisions remain outside study-time totals unless a separate study session is re
 ### Advisory recommendations
 
 Recommendations are deterministic and advisory. They combine overdue/due dates, previous outcomes,
-mastery estimate, and PYQ accuracy only when at least five scored attempts exist. Topics with fewer
-attempts are explicitly annotated as insufficient evidence rather than labelled weak. Scheduling
-changes never happen from a recommendation alone; the user must open the topic or choose **Add to
-schedule**.
+mastery estimate, and PYQ evidence only when at least five distinct questions have scored outcomes in
+the last 365 calendar days. The evidence uses each question's latest scored result in that window, so repeated
+attempts cannot increase the question count and older attempts are superseded by newer outcomes for
+the same question. Topics with fewer evidence questions are explicitly annotated as insufficient
+evidence rather than labelled weak. Scheduling changes never happen from a recommendation alone; the
+user must open the topic or choose **Add to schedule**. Archived topics keep their schedules and
+history in SQLite but are excluded from active revision queues, recommendations, revision calendar
+items, and reminder counts. A separate read-only archived-history section on the Revision screen lets
+the user inspect those outcomes without scheduling changes. Revision schedule, completion, notes and
+status mutations reject archived topics in the backend as well as the UI.
 
 Mock tests are stored at part level without a topic mapping. They remain available in Analytics, but
 they are not used to rank individual topic recommendations; the revision dashboard says this
@@ -633,20 +666,26 @@ Duplicate sessions on one date count as one active day. Planned blocks never ext
 ### Topic intelligence
 
 Scored PYQ accuracy is `correct / (correct + incorrect)`. Skipped and outcome-unknown attempts are
-shown but not counted as scored attempts.
+shown but not counted as scored attempts. Topic evidence groups attempts by distinct question
+identity (year, session, part, and normalized reference) and uses each question's latest scored
+outcome. Evidence is limited to the last 365 calendar days, so old outcomes remain in history and all-time
+counts but cannot support a current claim.
 
-- Weak with evidence: at least 5 scored attempts and accuracy below 50%.
-- Strong with evidence: at least 5 scored attempts and accuracy of 75% or higher.
-- Insufficient evidence: 1-4 scored attempts. Topics with no PYQ attempts are reported as no-data
-  counts, not classified weak or strong.
+- Weak with evidence: at least 5 distinct evidence questions in the last 365 calendar days and latest-outcome
+  accuracy below 50%.
+- Strong with evidence: at least 5 distinct evidence questions in the same window and latest-outcome
+  accuracy of 75% or higher.
+- Insufficient evidence: 1-4 recent distinct questions, older-only evidence, or skipped-only
+  attempts. These are reported separately and never labelled weak or strong.
 - Needs revision: saved due/overdue signals, a previous Again/Difficult outcome, or an upcoming schedule
   with a saved mastery estimate below 40 after at least one completed revision.
 - Confidence mismatches: confidence 4-5 with sufficient weak PYQ evidence, or confidence 1-2 with
   sufficient strong PYQ evidence.
 
-Every evidence item displays its supporting attempts, correct/incorrect counts, accuracy, revision
-dates/outcomes, and reason text. Syllabus status and confidence are user context, not proof of mastery.
-Mock tests remain part-level and are never assigned to individual topics.
+Every evidence item displays its recent evidence-question count, all-time distinct-question count, raw
+scored attempts, correct/incorrect counts, latest-outcome accuracy, last scored date, revision
+dates/outcomes, and reason text. Syllabus status and confidence are user context, not proof of
+mastery. Mock tests remain part-level and are never assigned to individual topics.
 
 ### Performance separation
 
@@ -785,6 +824,11 @@ Manifest format version **1** is unchanged. Record counts are optional metadata,
 manifests written by earlier 1.2.0 builds remain readable; when counts are present, restore rejects a
 manifest whose counts do not match the database inside the file. Resource tables are counted only
 when they exist, which preserves restore compatibility with older schemas.
+
+The Backup screen shows the age of the last verified backup and warns when none exists, the recorded
+timestamp is invalid or in the future, or the last success is more than seven days old. This is
+advisory only; it does not create, delete, or modify any backup file and does not change
+automatic-backup scheduling or retention.
 
 Restore requires the manifest. A renamed backup, missing manifest, truncated file, changed checksum,
 or schema newer than this app is rejected. Manual filenames identify the reason, schema, and local

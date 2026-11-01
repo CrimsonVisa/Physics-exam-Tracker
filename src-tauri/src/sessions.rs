@@ -203,15 +203,40 @@ pub fn update(
         AppError::database("The study-session transaction could not be started", error)
     })?;
 
-    let existing_topic_id: Option<i64> = transaction
+    let existing = transaction
         .query_row(
-            "SELECT topic_id FROM study_sessions WHERE id = ?1",
+            "SELECT topic_id, source, session_date, duration_seconds
+             FROM study_sessions WHERE id = ?1",
             [session_id],
-            |row| row.get(0),
+            |row| {
+                Ok((
+                    row.get::<_, Option<i64>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| AppError::database("The study session could not be checked", error))?
         .ok_or_else(AppError::session_not_found)?;
+
+    let (existing_topic_id, source, existing_date, existing_duration) = existing;
+
+    if source == "timer" {
+        if validated.session_date != existing_date {
+            return Err(AppError::validation(
+                "sessionDate",
+                "Timer-session dates are fixed by their recorded start timestamp.",
+            ));
+        }
+        if validated.duration_seconds != existing_duration {
+            return Err(AppError::validation(
+                "durationSeconds",
+                "Timer-session durations are fixed by their recorded timer. Edit only its topic or notes.",
+            ));
+        }
+    }
 
     if let Some(topic_id) = validated.topic_id
         && existing_topic_id != Some(topic_id)
@@ -800,6 +825,83 @@ mod tests {
         .unwrap();
         assert_eq!(by_date.len(), 1);
         assert_eq!(by_date[0].topic.as_ref().unwrap().code, "MMP-C01");
+    }
+
+    #[test]
+    fn timer_sessions_keep_their_recorded_date_and_duration() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "GA-01");
+        let transaction = connection.transaction().expect("transaction should start");
+        let session_id = insert_timer_session(
+            &transaction,
+            Some(topic),
+            "2026-11-01",
+            "2026-11-01T23:50:00.000Z",
+            "2026-11-02T00:15:00.000Z",
+            1_500,
+            "Cross-midnight focus",
+        )
+        .expect("timer session should save");
+        transaction.commit().expect("transaction should commit");
+
+        let original = load_by_id(&connection, session_id).expect("timer session should load");
+        assert_eq!(original.session_date, "2026-11-01");
+        assert_eq!(
+            original.started_at.as_deref(),
+            Some("2026-11-01T23:50:00.000Z")
+        );
+        assert_eq!(
+            original.ended_at.as_deref(),
+            Some("2026-11-02T00:15:00.000Z")
+        );
+
+        let edited = update(
+            &mut connection,
+            session_id,
+            StudySessionInput {
+                topic_id: Some(topic),
+                session_date: original.session_date.clone(),
+                duration_seconds: original.duration_seconds,
+                notes: "Edited context".to_owned(),
+            },
+        )
+        .expect("notes should remain editable");
+        assert_eq!(edited.notes, "Edited context");
+        assert_eq!(edited.started_at, original.started_at);
+        assert_eq!(edited.ended_at, original.ended_at);
+
+        let date_error = update(
+            &mut connection,
+            session_id,
+            StudySessionInput {
+                topic_id: Some(topic),
+                session_date: "2026-11-02".to_owned(),
+                duration_seconds: original.duration_seconds,
+                notes: "Do not save".to_owned(),
+            },
+        )
+        .expect_err("timer session date must stay fixed");
+        assert_eq!(date_error.field, Some("sessionDate"));
+
+        let duration_error = update(
+            &mut connection,
+            session_id,
+            StudySessionInput {
+                topic_id: Some(topic),
+                session_date: original.session_date.clone(),
+                duration_seconds: original.duration_seconds + 1,
+                notes: "Do not save".to_owned(),
+            },
+        )
+        .expect_err("timer session duration must stay fixed");
+        assert_eq!(duration_error.field, Some("durationSeconds"));
+
+        let unchanged = load_by_id(&connection, session_id).expect("timer session should reload");
+        assert_eq!(unchanged.session_date, original.session_date);
+        assert_eq!(unchanged.duration_seconds, original.duration_seconds);
+        assert_eq!(unchanged.started_at, original.started_at);
+        assert_eq!(unchanged.ended_at, original.ended_at);
+        assert_eq!(unchanged.notes, "Edited context");
     }
 
     #[test]

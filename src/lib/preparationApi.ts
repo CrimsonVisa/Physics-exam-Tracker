@@ -182,7 +182,8 @@ export type StudyAnalytics = {
 };
 
 export type TopicIntelligenceThresholds = {
-  minimumScoredAttempts: number;
+  minimumScoredQuestions: number;
+  evidenceWindowDays: number;
   weakAccuracyThreshold: number;
   strongAccuracyThreshold: number;
   highConfidenceMinimum: number;
@@ -209,7 +210,13 @@ export type TopicEvidence = {
   pyqIncorrect: number;
   pyqSkipped: number;
   pyqAttempts: number;
+  pyqTotalAttempts: number;
+  pyqTotalQuestions: number;
+  pyqQuestions: number;
   pyqAccuracy: number | null;
+  pyqEvidenceAccuracy: number | null;
+  pyqLastAttemptDate: string | null;
+  skippedOnly: boolean;
   sufficientData: boolean;
   reasons: string[];
 };
@@ -219,6 +226,7 @@ export type TopicIntelligence = {
   totalTopics: number;
   scoredTopics: number;
   noDataTopics: number;
+  skippedOnlyTopics: number;
   strong: TopicEvidence[];
   weak: TopicEvidence[];
   needsRevision: TopicEvidence[];

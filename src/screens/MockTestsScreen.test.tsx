@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MockTest } from '../lib/mockTestApi';
@@ -47,6 +47,7 @@ function makeTest(overrides: Partial<MockTest> = {}): MockTest {
     totalUnanswered: 6,
     computedMarks: 50,
     computedPercentage: 50,
+    configurationValid: true,
     notes: 'First attempt',
     reviewObservations: 'Slow in Part C',
     createdAt: '2026-10-01T10:00:00.000Z',
@@ -97,6 +98,40 @@ describe('mock tests screen', () => {
     expect(within(row as HTMLElement).getAllByText('11').length).toBe(3);
   });
 
+  it('scopes the summary cards to the active date filter', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_mock_tests') {
+        return Promise.resolve([MOCK_B, makeTest()]);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    render(<MockTestsScreen today={TODAY} />);
+    await screen.findByRole('heading', { name: 'Mock B', level: 3 });
+
+    fireEvent.change(screen.getByLabelText('Test date from (optional)'), {
+      target: { value: '2026-10-15' },
+    });
+    fireEvent.change(screen.getByLabelText('Test date to (optional)'), {
+      target: { value: '2026-10-15' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Apply dates' }));
+
+    const summary = screen.getByRole('region', { name: 'Mock test summary' });
+    await waitFor(() =>
+      expect(within(summary).getByText('Tests shown').parentElement).toHaveTextContent('1'),
+    );
+    expect(within(summary).getByText('Average calculated score').parentElement).toHaveTextContent(
+      '70.0%',
+    );
+    expect(within(summary).getByText('Best calculated score').parentElement).toHaveTextContent(
+      '70.0%',
+    );
+    expect(within(summary).getByText('Latest calculated score').parentElement).toHaveTextContent(
+      '70.0%',
+    );
+  });
+
   it('opens the create editor and deletes a test after confirmation', async () => {
     const deleteMockTest = vi.fn().mockResolvedValue(undefined);
     invokeMock.mockImplementation((command: string) => {
@@ -128,6 +163,81 @@ describe('mock tests screen', () => {
 
     await waitFor(() => expect(deleteMockTest).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Mock test deleted.')).toBeInTheDocument();
+  });
+
+  it('filters and paginates the mock-test history', async () => {
+    const tests = Array.from({ length: 21 }, (_, index) =>
+      makeTest({
+        id: 100 + index,
+        testName: `Mock ${index + 1}`,
+        testDate: `2026-10-${String(index + 1).padStart(2, '0')}`,
+      }),
+    );
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_mock_tests') {
+        return Promise.resolve(tests);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    render(<MockTestsScreen today={TODAY} />);
+
+    await screen.findByRole('heading', { name: 'Mock 1', level: 3 });
+    expect(document.querySelectorAll('.mock-row')).toHaveLength(20);
+    expect(screen.getByText('Page 1 of 2 · 21 tests')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByRole('heading', { name: 'Mock 21', level: 3 })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Test date from (optional)'), {
+      target: { value: '2026-09-01' },
+    });
+    fireEvent.change(screen.getByLabelText('Test date to (optional)'), {
+      target: { value: '2026-09-30' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Apply dates' }));
+
+    expect(await screen.findByText('No mock tests match this date range')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Clear dates' }));
+    expect(await screen.findByRole('heading', { name: 'Mock 1', level: 3 })).toBeInTheDocument();
+  });
+
+  it('warns when a saved mock test has an impossible calculated percentage', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_mock_tests') {
+        return Promise.resolve([makeTest({ computedMarks: 120, computedPercentage: 120 })]);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    render(<MockTestsScreen today={TODAY} />);
+
+    expect(
+      await screen.findByText(/marking configuration that would now be rejected/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Review marking configuration')).toBeInTheDocument();
+  });
+
+  it('warns about a legacy invalid configuration even when the calculated percentage is below 100', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_mock_tests') {
+        return Promise.resolve([
+          makeTest({
+            computedMarks: 50,
+            computedPercentage: 50,
+            configurationValid: false,
+          }),
+        ]);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    render(<MockTestsScreen today={TODAY} />);
+
+    expect(
+      await screen.findByText(/marking configuration that would now be rejected/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Review marking configuration')).toBeInTheDocument();
+    expect(screen.getAllByText('50.0%').length).toBeGreaterThan(0);
   });
 
   it('shows an empty state when no mock tests are saved', async () => {

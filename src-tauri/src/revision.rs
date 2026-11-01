@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    analytics::{MINIMUM_WEAK_ATTEMPTS, WEAK_ACCURACY_THRESHOLD},
+    analytics::{self, EVIDENCE_WINDOW_DAYS, MINIMUM_EVIDENCE_QUESTIONS, WEAK_ACCURACY_THRESHOLD},
     date_only,
     error::AppError,
 };
@@ -135,7 +135,10 @@ pub struct RevisionRecommendation {
     pub previous_outcome: Option<String>,
     pub mastery_estimate: Option<f64>,
     pub pyq_attempts: i64,
+    pub pyq_questions: i64,
     pub pyq_accuracy: Option<f64>,
+    pub pyq_evidence_accuracy: Option<f64>,
+    pub pyq_last_attempt_date: Option<String>,
     pub pyq_sufficient: bool,
     pub priority: String,
     pub score: i64,
@@ -154,6 +157,7 @@ pub struct RevisionDashboard {
     pub suspended: Vec<RevisionTopicState>,
     pub completed_recent: Vec<RevisionHistoryWithTopic>,
     pub topics: Vec<RevisionTopicState>,
+    pub archived_topics: Vec<RevisionTopicState>,
     pub recommendations: Vec<RevisionRecommendation>,
     pub mock_scope_note: String,
     pub mock_test_count: i64,
@@ -359,6 +363,7 @@ fn validate_settings(input: &RevisionSettingsInput) -> Result<(), AppError> {
 pub fn dashboard(connection: &Connection, today: NaiveDate) -> Result<RevisionDashboard, AppError> {
     let settings = load_settings(connection)?;
     let topics = topic_states(connection, today)?;
+    let archived_topics = archived_topic_states(connection, today)?;
     let mut due_today = Vec::new();
     let mut overdue = Vec::new();
     let mut upcoming = Vec::new();
@@ -422,8 +427,15 @@ pub fn dashboard(connection: &Connection, today: NaiveDate) -> Result<RevisionDa
     };
 
     let completed_recent = recent_history(connection, today)?;
-    let pyq_performance = pyq_topic_performance(connection)?;
-    let recommendations = recommendations(&topics, &pyq_performance);
+    let evidence_from = analytics::evidence_cutoff(today);
+    let evidence_to = date_only::format_date_only(today);
+    let pyq_performance =
+        analytics::topic_performance(connection, None, None, &evidence_from, &evidence_to)?;
+    let pyq_by_topic = pyq_performance
+        .into_iter()
+        .map(|topic| (topic.topic_id, topic))
+        .collect::<HashMap<_, _>>();
+    let recommendations = recommendations(&topics, &pyq_by_topic);
     let mock_test_count = connection
         .query_row("SELECT count(*) FROM mock_tests", [], |row| row.get(0))
         .map_err(|error| AppError::database("Mock tests could not be counted", error))?;
@@ -438,6 +450,7 @@ pub fn dashboard(connection: &Connection, today: NaiveDate) -> Result<RevisionDa
         suspended,
         completed_recent,
         topics,
+        archived_topics,
         recommendations,
         mock_scope_note: MOCK_SCOPE_NOTE.to_owned(),
         mock_test_count,
@@ -520,6 +533,7 @@ pub fn schedule_topic(
         )
     })?;
     let topic = load_topic(&transaction, topic_id)?;
+    ensure_topic_is_mutable(&topic)?;
 
     if let Some(schedule) = load_schedule(&transaction, topic_id)? {
         let state = build_state(topic, Some(schedule), today)?;
@@ -573,6 +587,7 @@ pub fn reschedule(
         )
     })?;
     let topic = load_topic(&transaction, topic_id)?;
+    ensure_topic_is_mutable(&topic)?;
     load_schedule(&transaction, topic_id)?.ok_or_else(AppError::revision_not_scheduled)?;
 
     transaction
@@ -607,6 +622,7 @@ pub fn update_notes(
         AppError::database("The revision-notes transaction could not be started", error)
     })?;
     let topic = load_topic(&transaction, topic_id)?;
+    ensure_topic_is_mutable(&topic)?;
     load_schedule(&transaction, topic_id)?.ok_or_else(AppError::revision_not_scheduled)?;
 
     transaction
@@ -650,6 +666,7 @@ pub fn set_status(
         )
     })?;
     let topic = load_topic(&transaction, topic_id)?;
+    ensure_topic_is_mutable(&topic)?;
     load_schedule(&transaction, topic_id)?.ok_or_else(AppError::revision_not_scheduled)?;
 
     transaction
@@ -696,6 +713,7 @@ pub fn complete(
     })?;
     let settings = load_settings(&transaction)?;
     let topic = load_topic(&transaction, topic_id)?;
+    ensure_topic_is_mutable(&topic)?;
     let schedule =
         load_schedule(&transaction, topic_id)?.ok_or_else(AppError::revision_not_scheduled)?;
     if schedule.status == "suspended" {
@@ -796,16 +814,24 @@ pub fn prepare_reminder(
 
     let due_today: i64 = connection
         .query_row(
-            "SELECT count(*) FROM revision_schedules
-             WHERE status = 'active' AND next_revision_date = ?1",
+            "SELECT count(*)
+             FROM revision_schedules r
+             JOIN syllabus_topics t ON t.id = r.topic_id
+             WHERE r.status = 'active'
+               AND t.is_archived = 0
+               AND r.next_revision_date = ?1",
             [&today_text],
             |row| row.get(0),
         )
         .map_err(|error| AppError::database("Due revisions could not be counted", error))?;
     let overdue: i64 = connection
         .query_row(
-            "SELECT count(*) FROM revision_schedules
-             WHERE status = 'active' AND next_revision_date < ?1",
+            "SELECT count(*)
+             FROM revision_schedules r
+             JOIN syllabus_topics t ON t.id = r.topic_id
+             WHERE r.status = 'active'
+               AND t.is_archived = 0
+               AND r.next_revision_date < ?1",
             [&today_text],
             |row| row.get(0),
         )
@@ -865,6 +891,7 @@ pub fn calendar_items(
              JOIN syllabus_topics t ON t.id = r.topic_id
              JOIN syllabus_sections s ON s.id = t.section_id
              WHERE r.status = 'active'
+               AND t.is_archived = 0
                AND r.next_revision_date >= ?1
                AND r.next_revision_date <= ?2
              ORDER BY r.next_revision_date, s.display_order, t.display_order",
@@ -997,6 +1024,23 @@ fn topic_states(
         .collect()
 }
 
+fn archived_topic_states(
+    connection: &Connection,
+    today: NaiveDate,
+) -> Result<Vec<RevisionTopicState>, AppError> {
+    let topics = load_archived_topics(connection)?;
+    let mut schedules = load_schedules(connection)?;
+    let mut states = topics
+        .into_iter()
+        .map(|topic| {
+            let schedule = schedules.remove(&topic.id);
+            build_state(topic, schedule, today)
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    states.sort_by(|left, right| left.topic.code.cmp(&right.topic.code));
+    Ok(states)
+}
+
 fn build_state(
     topic: RevisionTopic,
     schedule: Option<RevisionSchedule>,
@@ -1038,6 +1082,7 @@ fn load_topics(connection: &Connection) -> Result<Vec<RevisionTopic>, AppError> 
                 s.title
              FROM syllabus_topics t
              JOIN syllabus_sections s ON s.id = t.section_id
+             WHERE t.is_archived = 0
              ORDER BY s.display_order, t.display_order, t.code",
         )
         .map_err(|error| AppError::database("Revision topics could not be prepared", error))?;
@@ -1056,6 +1101,57 @@ fn load_topics(connection: &Connection) -> Result<Vec<RevisionTopic>, AppError> 
         .map_err(|error| AppError::database("Revision topics could not be queried", error))?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|error| AppError::database("Revision topics could not be read", error))
+}
+
+fn load_archived_topics(connection: &Connection) -> Result<Vec<RevisionTopic>, AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                t.id,
+                t.code,
+                t.title,
+                t.is_archived,
+                s.code,
+                s.title
+             FROM syllabus_topics t
+             JOIN syllabus_sections s ON s.id = t.section_id
+             WHERE t.is_archived = 1
+               AND (
+                    EXISTS (SELECT 1 FROM revision_schedules r WHERE r.topic_id = t.id)
+                    OR EXISTS (SELECT 1 FROM revision_history h WHERE h.topic_id = t.id)
+               )
+             ORDER BY s.display_order, t.display_order, t.code",
+        )
+        .map_err(|error| {
+            AppError::database("Archived revision topics could not be prepared", error)
+        })?;
+
+    statement
+        .query_map([], |row| {
+            Ok(RevisionTopic {
+                id: row.get(0)?,
+                code: row.get(1)?,
+                title: row.get(2)?,
+                archived: row.get::<_, i64>(3)? != 0,
+                section_code: row.get(4)?,
+                section_title: row.get(5)?,
+            })
+        })
+        .map_err(|error| {
+            AppError::database("Archived revision topics could not be queried", error)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| AppError::database("Archived revision topics could not be read", error))
+}
+
+fn ensure_topic_is_mutable(topic: &RevisionTopic) -> Result<(), AppError> {
+    if topic.archived {
+        return Err(AppError::validation(
+            "topicId",
+            "Archived topics are read-only. Unarchive the topic before changing its revision schedule.",
+        ));
+    }
+    Ok(())
 }
 
 fn load_topic(connection: &Connection, topic_id: i64) -> Result<RevisionTopic, AppError> {
@@ -1266,56 +1362,25 @@ fn map_history_at(
     })
 }
 
-fn pyq_topic_performance(
-    connection: &Connection,
-) -> Result<HashMap<i64, (i64, Option<f64>)>, AppError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT
-                topic_id,
-                COALESCE(SUM(CASE WHEN status = 'correct' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN status = 'incorrect' THEN 1 ELSE 0 END), 0)
-             FROM pyq_attempts
-             GROUP BY topic_id",
-        )
-        .map_err(|error| {
-            AppError::database("PYQ recommendation data could not be prepared", error)
-        })?;
-
-    let rows = statement
-        .query_map([], |row| {
-            let topic_id: i64 = row.get(0)?;
-            let correct: i64 = row.get(1)?;
-            let incorrect: i64 = row.get(2)?;
-            let attempts = correct + incorrect;
-            let accuracy = if attempts == 0 {
-                None
-            } else {
-                Some(correct as f64 / attempts as f64 * 100.0)
-            };
-            Ok((topic_id, (attempts, accuracy)))
-        })
-        .map_err(|error| AppError::database("PYQ recommendation data could not be queried", error))?
-        .collect::<rusqlite::Result<HashMap<_, _>>>()
-        .map_err(|error| AppError::database("PYQ recommendation data could not be read", error))?;
-
-    Ok(rows)
-}
-
 fn recommendations(
     states: &[RevisionTopicState],
-    pyq: &HashMap<i64, (i64, Option<f64>)>,
+    pyq: &HashMap<i64, analytics::PyqTopicPerformance>,
 ) -> Vec<RevisionRecommendation> {
     let mut recommendations = Vec::new();
 
     for state in states {
-        let pyq_stats = pyq.get(&state.topic.id).copied().unwrap_or((0, None));
-        let pyq_attempts = pyq_stats.0;
-        let pyq_accuracy = pyq_stats.1;
-        let pyq_sufficient = pyq_attempts >= MINIMUM_WEAK_ATTEMPTS;
+        let pyq_stats = pyq.get(&state.topic.id);
+        let pyq_attempts = pyq_stats.map_or(0, |entry| entry.attempts);
+        let pyq_questions = pyq_stats.map_or(0, |entry| entry.evidence_questions);
+        let pyq_accuracy = pyq_stats.and_then(|entry| entry.accuracy);
+        let pyq_evidence_accuracy = pyq_stats.and_then(|entry| entry.evidence_accuracy);
+        let pyq_last_attempt_date = pyq_stats
+            .and_then(|entry| entry.last_scored_attempt_date.as_deref())
+            .map(str::to_owned);
+        let pyq_sufficient = pyq_questions >= MINIMUM_EVIDENCE_QUESTIONS;
         let weak_unscheduled = state.schedule.is_none()
             && pyq_sufficient
-            && pyq_accuracy.is_some_and(|accuracy| accuracy < WEAK_ACCURACY_THRESHOLD);
+            && pyq_evidence_accuracy.is_some_and(|accuracy| accuracy < WEAK_ACCURACY_THRESHOLD);
 
         if state.schedule.is_none() && !weak_unscheduled {
             continue;
@@ -1398,21 +1463,22 @@ fn recommendations(
         }
 
         if pyq_sufficient {
-            let accuracy = pyq_accuracy.unwrap_or(0.0);
+            let accuracy = pyq_evidence_accuracy.unwrap_or(0.0);
             if accuracy < WEAK_ACCURACY_THRESHOLD {
                 score += 20;
             } else if accuracy >= 75.0 {
                 score -= 10;
             }
             reasons.push(format!(
-                "PYQ accuracy {:.1}% over {} scored attempts",
-                accuracy, pyq_attempts
+                "PYQ accuracy {:.1}% across {} distinct questions in the last {} days using each question's latest scored outcome (raw scored attempts: {})",
+                accuracy, pyq_questions, EVIDENCE_WINDOW_DAYS, pyq_attempts
             ));
         } else if pyq_attempts > 0 {
             reasons.push(format!(
-                "Only {} scored PYQ attempt{}; insufficient evidence for a weak-topic claim",
-                pyq_attempts,
-                if pyq_attempts == 1 { "" } else { "s" }
+                "Only {} distinct question{} with a scored outcome in the last {} days; insufficient evidence for a weak-topic claim",
+                pyq_questions,
+                if pyq_questions == 1 { "" } else { "s" },
+                EVIDENCE_WINDOW_DAYS
             ));
         }
 
@@ -1453,7 +1519,10 @@ fn recommendations(
                 .as_ref()
                 .map(|schedule| schedule.mastery_estimate),
             pyq_attempts,
+            pyq_questions,
             pyq_accuracy,
+            pyq_evidence_accuracy,
+            pyq_last_attempt_date,
             pyq_sufficient,
             priority: priority.to_owned(),
             score,
@@ -1559,13 +1628,22 @@ mod tests {
     }
 
     fn pyq_input(topic_id: i64, status: &str, reference: &str) -> pyq::PyqInput {
+        pyq_input_on(topic_id, status, reference, "2026-10-30")
+    }
+
+    fn pyq_input_on(
+        topic_id: i64,
+        status: &str,
+        reference: &str,
+        attempt_date: &str,
+    ) -> pyq::PyqInput {
         pyq::PyqInput {
             question_year: 2024,
             exam_session: String::new(),
             part: "B".to_owned(),
             topic_id,
             question_reference: reference.to_owned(),
-            attempt_date: "2026-10-30".to_owned(),
+            attempt_date: attempt_date.to_owned(),
             status: status.to_owned(),
             marks_obtained: None,
             max_marks: None,
@@ -1964,15 +2042,22 @@ mod tests {
         schedule_topic(&mut connection, insufficient, "2026-10-30", today)
             .expect("insufficient schedule");
 
-        for status in [
+        for (index, status) in [
             "correct",
             "incorrect",
             "incorrect",
             "incorrect",
             "incorrect",
             "incorrect",
-        ] {
-            pyq::create(&mut connection, pyq_input(weak, status, "WEAK")).expect("PYQ");
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            pyq::create(
+                &mut connection,
+                pyq_input(weak, status, &format!("WEAK-{index}")),
+            )
+            .expect("PYQ");
         }
         pyq::create(
             &mut connection,
@@ -1984,12 +2069,24 @@ mod tests {
             pyq_input(insufficient, "incorrect", "LOW-2"),
         )
         .expect("PYQ");
-        for _ in 0..6 {
+        for index in 0..6 {
             pyq::create(
                 &mut connection,
-                pyq_input(unscheduled_weak, "incorrect", "UNSCHEDULED"),
+                pyq_input(
+                    unscheduled_weak,
+                    "incorrect",
+                    &format!("UNSCHEDULED-{index}"),
+                ),
             )
             .expect("PYQ");
+        }
+        let stale = topic_id(&connection, "EMT-C01");
+        for index in 0..6 {
+            pyq::create(
+                &mut connection,
+                pyq_input_on(stale, "incorrect", &format!("STALE-{index}"), "2019-06-01"),
+            )
+            .expect("stale PYQ should save in history");
         }
         mock_tests::create(&mut connection, minimal_mock_input()).expect("mock should save");
 
@@ -2042,6 +2139,89 @@ mod tests {
             .expect("unscheduled weak recommendation");
         assert!(!unscheduled.scheduled);
         assert_eq!(unscheduled.due_state, "not_scheduled");
+        assert!(
+            !dashboard
+                .recommendations
+                .iter()
+                .any(|item| item.topic.code == "EMT-C01"),
+            "stale-only PYQ evidence must not create an unscheduled recommendation"
+        );
+    }
+
+    #[test]
+    fn archived_topics_leave_active_queues_but_keep_revision_history() {
+        let mut connection = connection();
+        let topic = topic_id(&connection, "MMP-C01");
+        let today = date(2026, 10, 30);
+
+        schedule_topic(&mut connection, topic, "2026-10-30", today).expect("schedule");
+        complete(
+            &mut connection,
+            topic,
+            CompleteRevisionInput {
+                outcome: "good".to_owned(),
+                notes: "Completed before archiving".to_owned(),
+            },
+            today,
+        )
+        .expect("revision should complete");
+
+        connection
+            .execute(
+                "UPDATE syllabus_topics
+                 SET is_archived = 1,
+                     archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = ?1",
+                [topic],
+            )
+            .expect("topic should archive");
+
+        let dashboard = dashboard(&connection, today).expect("dashboard should load");
+        assert!(!dashboard.topics.iter().any(|state| state.topic.id == topic));
+        let archived = dashboard
+            .archived_topics
+            .iter()
+            .find(|state| state.topic.id == topic)
+            .expect("archived history should remain available");
+        assert!(archived.topic.archived);
+        assert!(archived.schedule.is_some());
+        assert!(
+            !dashboard
+                .recommendations
+                .iter()
+                .any(|recommendation| recommendation.topic.id == topic)
+        );
+        let calendar = calendar_items(&connection, "2026-10-30", "2027-12-31")
+            .expect("calendar items should load");
+        assert!(!calendar.iter().any(|item| item.topic_id == topic));
+
+        let history = history(&connection, topic).expect("history should remain readable");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].outcome, "good");
+
+        for error in [
+            schedule_topic(&mut connection, topic, "2026-12-01", today)
+                .expect_err("archived schedules must be read-only"),
+            reschedule(&mut connection, topic, "2026-12-02", today)
+                .expect_err("archived schedules must not be rescheduled"),
+            update_notes(&mut connection, topic, "Do not save", today)
+                .expect_err("archived notes must be read-only"),
+            set_status(&mut connection, topic, "suspended", today)
+                .expect_err("archived status must be read-only"),
+            complete(
+                &mut connection,
+                topic,
+                CompleteRevisionInput {
+                    outcome: "good".to_owned(),
+                    notes: "Do not save".to_owned(),
+                },
+                today,
+            )
+            .expect_err("archived revisions must not be completed"),
+        ] {
+            assert_eq!(error.field, Some("topicId"));
+            assert!(error.message.contains("read-only"));
+        }
     }
 
     #[test]

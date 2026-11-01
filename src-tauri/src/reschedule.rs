@@ -15,6 +15,8 @@ pub struct TaskDateChange {
     pub proposed_scheduled_date: String,
     pub offset_days: i64,
     pub outside_window: bool,
+    pub deadline_date: Option<String>,
+    pub deadline_conflict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -139,6 +141,16 @@ pub fn apply(
         .map(|change| (change.task_id, change))
         .collect();
 
+    if let Some(conflict) = changes.iter().find(|change| change.deadline_conflict) {
+        return Err(AppError::validation(
+            "acceptedChanges",
+            format!(
+                "The exam-date change would move \"{}\" past its deadline. Resolve that deadline before applying the new exam date.",
+                conflict.title
+            ),
+        ));
+    }
+
     let mut accepted_ids = HashSet::new();
     for accepted in &input.accepted_changes {
         if !accepted_ids.insert(accepted.task_id) {
@@ -161,11 +173,13 @@ pub fn apply(
                  WHERE id = ?2
                    AND status = 'open'
                    AND schedule_anchor = 'exam'
-                   AND scheduled_date = ?3",
+                   AND scheduled_date = ?3
+                   AND (deadline_date IS NULL OR deadline_date >= ?4)",
                 params![
                     change.proposed_scheduled_date,
                     change.task_id,
                     change.current_scheduled_date,
+                    change.proposed_scheduled_date,
                 ],
             )
             .map_err(|error| {
@@ -173,6 +187,15 @@ pub fn apply(
             })?;
 
         if changed != 1 {
+            if change.deadline_conflict {
+                return Err(AppError::validation(
+                    "acceptedChanges",
+                    format!(
+                        "The exam-date change would move \"{}\" past its deadline.",
+                        change.title
+                    ),
+                ));
+            }
             return Err(AppError::reschedule_stale());
         }
     }
@@ -233,7 +256,7 @@ fn proposal_changes(
     let today_text = date_only::format_date_only(today);
     let mut statement = connection
         .prepare(
-            "SELECT id, title, scheduled_date, schedule_offset_days
+            "SELECT id, title, scheduled_date, schedule_offset_days, deadline_date
              FROM checklist_tasks
              WHERE status = 'open' AND schedule_anchor = 'exam'
              ORDER BY id",
@@ -247,13 +270,14 @@ fn proposal_changes(
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })
         .map_err(|error| AppError::database("Exam-anchored tasks could not be queried", error))?;
 
     let mut changes = Vec::new();
     for row in rows {
-        let (task_id, title, current_scheduled_date, offset) =
+        let (task_id, title, current_scheduled_date, offset, deadline_date) =
             row.map_err(|error| AppError::database("An anchored task could not be read", error))?;
 
         if current_scheduled_date < today_text {
@@ -275,6 +299,10 @@ fn proposal_changes(
             continue;
         }
 
+        let deadline_conflict = deadline_date
+            .as_deref()
+            .is_some_and(|deadline| proposed_scheduled_date.as_str() > deadline);
+
         changes.push(TaskDateChange {
             task_id,
             title,
@@ -282,6 +310,8 @@ fn proposal_changes(
             proposed_scheduled_date,
             offset_days: offset,
             outside_window: proposed < new_preparation_start_date || proposed > new_exam_date,
+            deadline_date,
+            deadline_conflict,
         });
     }
 
@@ -572,6 +602,71 @@ mod tests {
                 .expect("completed task should reload")
                 .scheduled_date,
             "2026-12-14"
+        );
+    }
+
+    #[test]
+    fn exam_date_changes_reject_anchored_tasks_that_would_pass_their_deadline() {
+        let mut connection = connection();
+        let today = date(2026, 10, 30);
+        let mut input = anchored_input("Deadline anchor", -10);
+        input.deadline_date = Some("2026-12-31".to_owned());
+        let task = planner::create_task(&mut connection, input, today).expect("task should save");
+
+        let preview = preview(
+            &connection,
+            settings_input("2027-01-19", "2026-12-01"),
+            today,
+        )
+        .expect("preview should load");
+
+        let change = preview
+            .changes
+            .iter()
+            .find(|change| change.task_id == task.id)
+            .expect("deadline task should move");
+        assert_eq!(change.proposed_scheduled_date, "2027-01-09");
+        assert_eq!(change.deadline_date.as_deref(), Some("2026-12-31"));
+        assert!(change.deadline_conflict);
+        assert!(!change.outside_window);
+        assert!(
+            !preview
+                .outside_window
+                .iter()
+                .any(|item| { item.kind == "task_deadline" && item.id == task.id })
+        );
+
+        let accepted = preview
+            .changes
+            .iter()
+            .map(|change| AcceptedTaskChange {
+                task_id: change.task_id,
+                expected_scheduled_date: change.current_scheduled_date.clone(),
+            })
+            .collect::<Vec<_>>();
+        let error = apply(
+            &mut connection,
+            ApplyExamDateChangeInput {
+                settings: settings_input("2027-01-19", "2026-12-01"),
+                expected_exam_date: "2026-12-19".to_owned(),
+                accepted_changes: accepted,
+            },
+            today,
+        )
+        .expect_err("apply should reject the deadline conflict");
+
+        assert_eq!(error.field, Some("acceptedChanges"));
+        assert_eq!(
+            settings::load(&connection)
+                .expect("settings should load")
+                .exam_date,
+            "2026-12-19"
+        );
+        assert_eq!(
+            planner::load_task(&connection, task.id, today)
+                .expect("task should reload")
+                .scheduled_date,
+            "2026-12-09"
         );
     }
 

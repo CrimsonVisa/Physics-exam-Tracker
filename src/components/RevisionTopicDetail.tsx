@@ -35,6 +35,7 @@ type RevisionTopicDetailProps = {
   plannerTopics: PlannerTopic[];
   onChanged: () => void;
   onClose: () => void;
+  readOnly?: boolean;
 };
 
 function dateLabel(value: string | null): string {
@@ -58,6 +59,7 @@ export function RevisionTopicDetail({
   plannerTopics,
   onChanged,
   onClose,
+  readOnly = false,
 }: RevisionTopicDetailProps) {
   const [history, setHistory] = useState<RevisionHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -316,63 +318,75 @@ export function RevisionTopicDetail({
             </div>
           </dl>
 
-          <div className="revision-actions">
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => {
-                setMode('reviewing');
-                setFeedback(null);
-              }}
-              disabled={busy !== null || schedule.status === 'suspended'}
-            >
-              Start revision
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                setMode('rescheduling');
-                setRescheduleDate(schedule.nextRevisionDate);
-                setDateError(null);
-                setFeedback(null);
-              }}
-              disabled={busy !== null}
-            >
-              Manual reschedule
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                setMode('planning');
-                setFeedback(null);
-              }}
-              disabled={busy !== null}
-            >
-              Plan study block
-            </button>
-            {schedule.status === 'active' ? (
+          {readOnly && (
+            <p className="revision-note">
+              Archived topic. Revision scheduling is read-only until the topic is unarchived.
+            </p>
+          )}
+
+          {!readOnly && (
+            <div className="revision-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setMode('reviewing');
+                  setFeedback(null);
+                }}
+                disabled={busy !== null || schedule.status === 'suspended'}
+              >
+                Start revision
+              </button>
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => void handleStatusChange('suspended')}
+                onClick={() => {
+                  setMode('rescheduling');
+                  setRescheduleDate(schedule.nextRevisionDate);
+                  setDateError(null);
+                  setFeedback(null);
+                }}
                 disabled={busy !== null}
               >
-                {busy === 'suspended' ? 'Suspending…' : 'Suspend scheduling'}
+                Manual reschedule
               </button>
-            ) : (
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => void handleStatusChange('active')}
+                onClick={() => {
+                  setMode('planning');
+                  setFeedback(null);
+                }}
                 disabled={busy !== null}
               >
-                {busy === 'active' ? 'Reactivating…' : 'Reactivate scheduling'}
+                Plan study block
               </button>
-            )}
-          </div>
+              {schedule.status === 'active' ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void handleStatusChange('suspended')}
+                  disabled={busy !== null}
+                >
+                  {busy === 'suspended' ? 'Suspending…' : 'Suspend scheduling'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void handleStatusChange('active')}
+                  disabled={busy !== null}
+                >
+                  {busy === 'active' ? 'Reactivating…' : 'Reactivate scheduling'}
+                </button>
+              )}
+            </div>
+          )}
         </>
+      ) : readOnly ? (
+        <p className="revision-note">
+          This archived topic has no revision schedule. Any saved history remains available below.
+        </p>
       ) : (
         <form className="revision-inline-form" onSubmit={handleSchedule} noValidate>
           <p className="revision-note">
@@ -397,7 +411,7 @@ export function RevisionTopicDetail({
         </form>
       )}
 
-      {feedback && (
+      {!readOnly && feedback && (
         <p
           className={`save-feedback save-feedback-${feedback.tone}`}
           role={feedback.tone === 'error' ? 'alert' : 'status'}
@@ -406,7 +420,7 @@ export function RevisionTopicDetail({
         </p>
       )}
 
-      {schedule && mode === 'reviewing' && (
+      {!readOnly && schedule && mode === 'reviewing' && (
         <form className="revision-review-form" onSubmit={handleComplete} noValidate>
           <div className="card-heading">
             <div>
@@ -471,7 +485,7 @@ export function RevisionTopicDetail({
         </form>
       )}
 
-      {schedule && mode === 'rescheduling' && (
+      {!readOnly && schedule && mode === 'rescheduling' && (
         <form className="revision-inline-form" onSubmit={handleReschedule} noValidate>
           <DateField
             id="revision-reschedule-date"
@@ -501,7 +515,7 @@ export function RevisionTopicDetail({
         </form>
       )}
 
-      {schedule && mode === 'planning' && (
+      {!readOnly && schedule && mode === 'planning' && (
         <section className="revision-plan-editor" aria-labelledby="revision-plan-heading">
           <div className="card-heading">
             <div>
@@ -543,7 +557,7 @@ export function RevisionTopicDetail({
         </section>
       )}
 
-      {schedule && (
+      {!readOnly && schedule && (
         <form className="revision-notes-form" onSubmit={handleSaveNotes}>
           <div className="form-field">
             <label htmlFor="revision-topic-notes">Topic revision notes (optional)</label>

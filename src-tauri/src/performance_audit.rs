@@ -190,7 +190,7 @@ fn performance_audit_with_larger_local_dataset() {
     );
 
     let started = Instant::now();
-    let performance = analytics::performance(&connection, "2026-01-01", "2026-10-30")
+    let performance = analytics::performance(&connection, "2026-01-01", "2026-10-30", today)
         .expect("performance analytics");
     println!(
         "performance analytics: {:?} ({} PYQ topics)",

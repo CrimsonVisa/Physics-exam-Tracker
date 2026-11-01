@@ -29,6 +29,8 @@ import { formatStudyDuration } from '../lib/studyTime';
 
 export type AnalyticsTab = 'study' | 'performance' | 'topics' | 'timeline';
 
+const PERCENTAGE_TOLERANCE = 1e-9;
+
 type Range = {
   fromDate: string;
   toDate: string;
@@ -547,18 +549,19 @@ function PyqSection({ pyq }: { pyq: PyqAnalytics }) {
           <span>Weak topics</span>
           <strong>{pyq.weakTopics.length}</strong>
           <small>
-            At least {pyq.minimumWeakAttempts} scored attempts and below{' '}
+            At least {pyq.minimumEvidenceQuestions} evidence questions in the last{' '}
+            {pyq.evidenceWindowDays} days and latest-outcome accuracy below{' '}
             {pyq.weakAccuracyThreshold.toFixed(0)}%
           </small>
         </div>
         <div className="analytics-stat-card">
-          <span>Units with PYQ data</span>
+          <span>Units with report-range PYQ data</span>
           <strong>{pyq.byUnit.length}</strong>
-          <small>{pyq.byTopic.length} topics with saved scored or skipped attempts</small>
+          <small>{pyq.byTopic.length} topics with report attempts or rolling evidence</small>
         </div>
       </section>
 
-      {pyq.totalRecords === 0 ? (
+      {pyq.totalRecords === 0 && pyq.byTopic.length === 0 && pyq.weakTopics.length === 0 ? (
         <section className="analytics-card">
           <p className="analytics-empty">No PYQ attempts in this date range.</p>
         </section>
@@ -572,8 +575,13 @@ function PyqSection({ pyq }: { pyq: PyqAnalytics }) {
               </div>
             </div>
             <p className="analytics-note">
-              Skipped and outcome-unknown attempts are shown but excluded from scored accuracy. A
-              weak label requires at least {pyq.minimumWeakAttempts} scored attempts.
+              Report-range columns count only attempts in the selected date range. Evidence counts
+              distinct question references scored in the last {pyq.evidenceWindowDays} calendar days
+              and uses each question&apos;s latest scored outcome in that window. Older outcomes
+              remain in history but do not support a current weak or strong claim. Repeated attempts
+              on one question do not add extra evidence. Skipped and outcome-unknown attempts remain
+              visible but are excluded from accuracy. A weak label requires at least{' '}
+              {pyq.minimumEvidenceQuestions} evidence questions.
             </p>
             <div className="analytics-table-wrap">
               <table className="analytics-table">
@@ -581,11 +589,14 @@ function PyqSection({ pyq }: { pyq: PyqAnalytics }) {
                   <tr>
                     <th scope="col">Topic</th>
                     <th scope="col">Unit</th>
-                    <th scope="col">Scored</th>
+                    <th scope="col">Scored attempts</th>
+                    <th scope="col">Distinct questions in range</th>
+                    <th scope="col">Evidence questions</th>
                     <th scope="col">Correct</th>
                     <th scope="col">Incorrect</th>
                     <th scope="col">Skipped</th>
-                    <th scope="col">Accuracy</th>
+                    <th scope="col">Evidence accuracy</th>
+                    <th scope="col">Last scored</th>
                     <th scope="col">Evidence</th>
                   </tr>
                 </thead>
@@ -597,14 +608,25 @@ function PyqSection({ pyq }: { pyq: PyqAnalytics }) {
                       </th>
                       <td>{topic.sectionTitle}</td>
                       <td>{topic.attempts}</td>
+                      <td>{topic.distinctQuestions}</td>
+                      <td>{topic.evidenceQuestions}</td>
                       <td>{topic.correct}</td>
                       <td>{topic.incorrect}</td>
                       <td>{topic.skipped}</td>
-                      <td>{percentageLabel(topic.accuracy)}</td>
+                      <td>{percentageLabel(topic.evidenceAccuracy)}</td>
+                      <td>
+                        {topic.lastScoredAttemptDate ? dateLabel(topic.lastScoredAttemptDate) : '—'}
+                      </td>
                       <td>
                         {!topic.sufficientData ? (
                           <span className="analytics-tag analytics-tag-insufficient">
-                            Insufficient data
+                            {topic.skippedOnly
+                              ? 'Skipped only'
+                              : topic.distinctQuestions > 0 && topic.evidenceQuestions === 0
+                                ? 'Stale evidence'
+                                : topic.distinctQuestions === 0
+                                  ? 'No scored outcomes'
+                                  : 'Insufficient data'}
                           </span>
                         ) : weakIds.has(topic.topicId) ? (
                           <span className="analytics-tag analytics-tag-weak">Weak</span>
@@ -738,6 +760,13 @@ function PyqSection({ pyq }: { pyq: PyqAnalytics }) {
 }
 
 function MockSection({ mock }: { mock: MockAnalytics }) {
+  const invalidScoreCount = mock.trend.filter(
+    (point) =>
+      !point.configurationValid ||
+      !Number.isFinite(point.computedPercentage) ||
+      point.computedPercentage > 100 + PERCENTAGE_TOLERANCE,
+  ).length;
+
   return (
     <>
       <section className="analytics-overview" aria-label="Mock-test performance overview">
@@ -766,6 +795,15 @@ function MockSection({ mock }: { mock: MockAnalytics }) {
           </small>
         </div>
       </section>
+
+      {invalidScoreCount > 0 && (
+        <p className="analytics-note analytics-negative">
+          {invalidScoreCount} saved mock test{invalidScoreCount === 1 ? '' : 's'} use
+          {invalidScoreCount === 1 ? 's' : ''} a marking configuration that would now be rejected.
+          Review maximum marks and marking values in Mock tests. Reported scores remain separate
+          from calculated scores.
+        </p>
+      )}
 
       {mock.testCount === 0 ? (
         <section className="analytics-card">
@@ -935,12 +973,24 @@ function EvidenceRow({ evidence }: { evidence: TopicEvidence }) {
       </ul>
       <dl className="topic-evidence-facts">
         <div>
-          <dt>PYQ accuracy</dt>
-          <dd>{percentageLabel(evidence.pyqAccuracy)}</dd>
+          <dt>Evidence accuracy</dt>
+          <dd>{percentageLabel(evidence.pyqEvidenceAccuracy)}</dd>
+        </div>
+        <div>
+          <dt>Evidence questions</dt>
+          <dd>{evidence.pyqQuestions}</dd>
+        </div>
+        <div>
+          <dt>All distinct questions</dt>
+          <dd>{evidence.pyqTotalQuestions}</dd>
         </div>
         <div>
           <dt>Scored attempts</dt>
           <dd>{evidence.pyqAttempts}</dd>
+        </div>
+        <div>
+          <dt>Last scored attempt</dt>
+          <dd>{evidence.pyqLastAttemptDate ? dateLabel(evidence.pyqLastAttemptDate) : 'None'}</dd>
         </div>
         <div>
           <dt>Correct / incorrect</dt>
@@ -1018,14 +1068,20 @@ function TopicsTab({ intelligence }: { intelligence: TopicIntelligence }) {
         <div className="analytics-stat-card">
           <span>No scored PYQ data</span>
           <strong>{intelligence.noDataTopics}</strong>
-          <small>No weak or strong claim is inferred from silence</small>
+          <small>
+            No weak or strong claim is inferred from silence
+            {intelligence.skippedOnlyTopics > 0
+              ? ` · ${intelligence.skippedOnlyTopics} skipped-only`
+              : ''}
+          </small>
         </div>
         <div className="analytics-stat-card">
           <span>Weak with evidence</span>
           <strong>{intelligence.weak.length}</strong>
           <small>
-            Below {intelligence.thresholds.weakAccuracyThreshold.toFixed(0)}% with at least{' '}
-            {intelligence.thresholds.minimumScoredAttempts} scored attempts
+            Latest-outcome accuracy below {intelligence.thresholds.weakAccuracyThreshold.toFixed(0)}
+            % across at least {intelligence.thresholds.minimumScoredQuestions} evidence questions in
+            the last {intelligence.thresholds.evidenceWindowDays} calendar days
           </small>
         </div>
         <div className="analytics-stat-card">
@@ -1043,12 +1099,15 @@ function TopicsTab({ intelligence }: { intelligence: TopicIntelligence }) {
           </div>
         </div>
         <p className="analytics-note">
-          Strong: at least {intelligence.thresholds.minimumScoredAttempts} scored attempts and
+          Strong: at least {intelligence.thresholds.minimumScoredQuestions} evidence questions in
+          the last {intelligence.thresholds.evidenceWindowDays} calendar days with latest-outcome
           accuracy of {intelligence.thresholds.strongAccuracyThreshold.toFixed(0)}% or more. Weak:
-          at least {intelligence.thresholds.minimumScoredAttempts} scored attempts and accuracy
-          below {intelligence.thresholds.weakAccuracyThreshold.toFixed(0)}%. High-confidence
-          mismatch uses confidence {intelligence.thresholds.highConfidenceMinimum}/5 or more; the
-          reverse mismatch uses confidence {intelligence.thresholds.lowConfidenceMaximum}/5 or less.
+          at least {intelligence.thresholds.minimumScoredQuestions} evidence questions in the same
+          window with latest-outcome accuracy below{' '}
+          {intelligence.thresholds.weakAccuracyThreshold.toFixed(0)}%. Repeated attempts on one
+          question count once. High-confidence mismatch uses confidence{' '}
+          {intelligence.thresholds.highConfidenceMinimum}/5 or more; the reverse mismatch uses
+          confidence {intelligence.thresholds.lowConfidenceMaximum}/5 or less.
         </p>
         {intelligence.notes.map((note) => (
           <p className="analytics-note" key={note}>

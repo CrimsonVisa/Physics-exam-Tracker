@@ -503,7 +503,7 @@ async fn apply_pyq_import(
 fn get_pyq_analytics(
     state: tauri::State<'_, db::AppState>,
 ) -> Result<analytics::PyqAnalytics, AppError> {
-    state.with_connection(|connection| analytics::pyq(connection))
+    state.with_connection(|connection| analytics::pyq(connection, Local::now().date_naive()))
 }
 
 #[tauri::command]
@@ -586,7 +586,9 @@ fn get_performance_analytics(
     from_date: String,
     to_date: String,
 ) -> Result<analytics::PerformanceAnalytics, AppError> {
-    state.with_connection(|connection| analytics::performance(connection, &from_date, &to_date))
+    state.with_connection(|connection| {
+        analytics::performance(connection, &from_date, &to_date, Local::now().date_naive())
+    })
 }
 
 #[tauri::command]
