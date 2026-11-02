@@ -29,6 +29,7 @@ const SETTINGS: RevisionSettings = {
   maximumIntervalDays: 3650,
   includeWeekends: true,
   dailyRevisionTarget: 5,
+  dailyRevisionMinutes: 90,
   remindersEnabled: false,
   updatedAt: '2026-10-30T10:00:00.000Z',
 };
@@ -46,6 +47,7 @@ describe('revision settings panel', () => {
       initialGoodDays: 7,
       growthMultiplier: 2,
       dailyRevisionTarget: 6,
+      dailyRevisionMinutes: 120,
       includeWeekends: false,
     });
     const onSaved = vi.fn();
@@ -56,6 +58,9 @@ describe('revision settings panel', () => {
     fireEvent.change(screen.getByLabelText('Growth multiplier'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Daily revision target'), {
       target: { value: '6' },
+    });
+    fireEvent.change(screen.getByLabelText('Daily revision minutes'), {
+      target: { value: '120' },
     });
     await userEvent.click(screen.getByLabelText(/Include Saturdays and Sundays/));
     await userEvent.click(screen.getByRole('button', { name: 'Save revision settings' }));
@@ -72,6 +77,7 @@ describe('revision settings panel', () => {
           maximumIntervalDays: 3650,
           includeWeekends: false,
           dailyRevisionTarget: 6,
+          dailyRevisionMinutes: 120,
           remindersEnabled: false,
         },
       }),

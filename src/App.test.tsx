@@ -273,8 +273,32 @@ const EMPTY_REVISION_SETTINGS = {
   maximumIntervalDays: 3650,
   includeWeekends: true,
   dailyRevisionTarget: 5,
+  dailyRevisionMinutes: 90,
   remindersEnabled: false,
   updatedAt: '2026-10-30T10:00:00.000Z',
+};
+
+const EMPTY_REVISION_PLAN = {
+  today: TODAY,
+  planId: null,
+  planDate: null,
+  version: null,
+  status: null,
+  needsGeneration: true,
+  effectiveBudgetMinutes: 90,
+  maxTopics: 5,
+  plannedMinutes: 0,
+  completedMinutes: 0,
+  actualMinutesToday: 0,
+  remainingWorkMinutes: 0,
+  remainingDailyBudgetMinutes: 90,
+  overBudget: false,
+  overLimit: false,
+  scheduled: [],
+  completed: [],
+  backlog: [],
+  deferred: [],
+  unscheduledUrgent: [],
 };
 
 const EMPTY_REVISION_DASHBOARD = {
@@ -329,6 +353,7 @@ const TIMER_SNAPSHOT: TimerSnapshot = {
     lastEventAt: null,
     lastEventDurationMs: 0,
     lastCompletedSessionId: null,
+    revisionPlanItemId: null,
     recovery: null,
   },
   settings: {
@@ -386,6 +411,7 @@ function mockBackend(overrides: Record<string, MockHandler> = {}) {
       fileName: null,
     }),
     get_revision_dashboard: () => EMPTY_REVISION_DASHBOARD,
+    get_revision_daily_plan: () => EMPTY_REVISION_PLAN,
     get_revision_summaries: () => [],
     get_revision_history: () => [],
     check_revision_reminder: () => null,

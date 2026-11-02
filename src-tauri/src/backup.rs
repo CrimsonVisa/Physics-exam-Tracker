@@ -41,7 +41,7 @@ pub const CORE_BACKUP_TABLES: [&str; 16] = [
 
 /// Every table counted for a current-schema backup, including the four study
 /// resource tables. Older schemas are counted only for tables that actually exist.
-pub const BACKUP_TABLES: [&str; 20] = [
+pub const BACKUP_TABLES: [&str; 25] = [
     "settings",
     "syllabus_sources",
     "syllabus_sections",
@@ -57,6 +57,11 @@ pub const BACKUP_TABLES: [&str; 20] = [
     "revision_settings",
     "revision_schedules",
     "revision_history",
+    "revision_plan_items",
+    "revision_daily_plans",
+    "revision_daily_plan_items",
+    "revision_deferrals",
+    "revision_session_links",
     "dashboard_sections",
     "study_resources",
     "resource_progress",
@@ -1411,7 +1416,7 @@ mod tests {
         drop(library);
         assert!(!Path::new(&stored_path).exists());
 
-        let preview = preview_restore(&backup_path, 10, None).expect("preview should load");
+        let preview = preview_restore(&backup_path, 11, None).expect("preview should load");
         assert_eq!(preview.record_counts["study_resources"], 2);
         assert_eq!(
             preview
@@ -1557,7 +1562,7 @@ mod tests {
                 .filter_map(Result::ok)
                 .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp"))
         );
-        assert_eq!(result.manifest.schema_version, 10);
+        assert_eq!(result.manifest.schema_version, 11);
         assert_eq!(result.manifest.application_version, "1.2.0");
         assert_eq!(result.manifest.integrity_check, "ok");
         assert_eq!(
@@ -1654,8 +1659,8 @@ mod tests {
 
         let error = preview_restore(&path, 7, None).expect_err("newer schema should fail");
         assert!(error.message.contains("Update the app"));
-        let preview = preview_restore(&path, 10, None).expect("current schema should load");
-        assert_eq!(preview.manifest.schema_version, 10);
+        let preview = preview_restore(&path, 11, None).expect("current schema should load");
+        assert_eq!(preview.manifest.schema_version, 11);
         assert!(!preview.requires_upgrade);
         assert!(
             preview

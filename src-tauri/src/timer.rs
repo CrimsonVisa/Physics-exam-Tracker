@@ -38,7 +38,8 @@ const SELECT_TIMER: &str = "SELECT
         last_event,
         last_event_at,
         last_event_duration_ms,
-        last_completed_session_id
+        last_completed_session_id,
+        revision_plan_item_id
      FROM timer_state WHERE id = 1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -211,6 +212,7 @@ pub struct TimerState {
     pub last_event_at: Option<String>,
     pub last_event_duration_ms: i64,
     pub last_completed_session_id: Option<i64>,
+    pub revision_plan_item_id: Option<i64>,
     pub recovery: Option<TimerRecovery>,
 }
 
@@ -240,6 +242,7 @@ struct TimerRow {
     last_event_at: Option<DateTime<Utc>>,
     last_event_duration_ms: i64,
     last_completed_session_id: Option<i64>,
+    revision_plan_item_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -374,6 +377,7 @@ pub fn snapshot(
     Ok(snapshot)
 }
 
+#[cfg(test)]
 pub fn start(
     connection: &mut Connection,
     now: DateTime<Utc>,
@@ -381,9 +385,47 @@ pub fn start(
     mode: &str,
     topic_id: Option<i64>,
 ) -> Result<TimerSnapshot, AppError> {
+    start_with_plan(connection, now, local_date, mode, topic_id, None)
+}
+
+pub fn start_with_plan(
+    connection: &mut Connection,
+    now: DateTime<Utc>,
+    local_date: NaiveDate,
+    mode: &str,
+    topic_id: Option<i64>,
+    revision_plan_item_id: Option<i64>,
+) -> Result<TimerSnapshot, AppError> {
     let mode = TimerMode::parse(mode)?;
     if let Some(topic_id) = topic_id {
         ensure_active_topic(connection, topic_id)?;
+    }
+    if let Some(plan_item_id) = revision_plan_item_id {
+        let item = connection
+            .query_row(
+                "SELECT topic_id, status FROM revision_plan_items WHERE id = ?1",
+                [plan_item_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|error| {
+                AppError::database("The revision plan item could not be checked", error)
+            })?
+            .ok_or_else(|| {
+                AppError::validation("planItemId", "The revision plan item was not found.")
+            })?;
+        if matches!(item.1.as_str(), "completed" | "removed" | "deferred") {
+            return Err(AppError::validation(
+                "planItemId",
+                "This revision plan item is not available for a focus timer.",
+            ));
+        }
+        if topic_id != Some(item.0) {
+            return Err(AppError::validation(
+                "planItemId",
+                "The revision plan item belongs to a different topic.",
+            ));
+        }
     }
 
     let transaction = connection
@@ -413,6 +455,7 @@ pub fn start(
                  last_heartbeat_at = ?3,
                  topic_id = ?4,
                  session_date = ?5,
+                 revision_plan_item_id = ?6,
                  recovery_reason = NULL,
                  recovery_excluded_ms = 0,
                  recovery_at = NULL,
@@ -422,7 +465,14 @@ pub fn start(
                  last_completed_session_id = NULL,
                  updated_at = ?3
              WHERE id = 1",
-            params![mode.as_str(), duration_ms, now_text, topic_id, session_date],
+            params![
+                mode.as_str(),
+                duration_ms,
+                now_text,
+                topic_id,
+                session_date,
+                revision_plan_item_id
+            ],
         )
         .map_err(|error| AppError::database("The study timer could not be started", error))?;
 
@@ -569,6 +619,7 @@ pub fn discard(connection: &mut Connection, now: DateTime<Utc>) -> Result<TimerS
                  last_heartbeat_at = NULL,
                  topic_id = NULL,
                  session_date = NULL,
+                 revision_plan_item_id = NULL,
                  recovery_reason = NULL,
                  recovery_excluded_ms = 0,
                  recovery_at = NULL,
@@ -808,6 +859,10 @@ fn complete_locked(
         None
     };
 
+    if let (Some(session_id), Some(plan_item_id)) = (session_id, row.revision_plan_item_id) {
+        crate::revision_plan::attach_session(transaction, plan_item_id, session_id)?;
+    }
+
     let now_text = format_utc(now);
     transaction
         .execute(
@@ -819,6 +874,7 @@ fn complete_locked(
                  last_heartbeat_at = NULL,
                  topic_id = NULL,
                  session_date = NULL,
+                 revision_plan_item_id = NULL,
                  recovery_reason = NULL,
                  recovery_excluded_ms = 0,
                  recovery_at = NULL,
@@ -932,6 +988,7 @@ fn build_snapshot(connection: &Connection, now: DateTime<Utc>) -> Result<TimerSn
             last_event_at: row.last_event_at.map(format_utc),
             last_event_duration_ms: row.last_event_duration_ms,
             last_completed_session_id: row.last_completed_session_id,
+            revision_plan_item_id: row.revision_plan_item_id,
             recovery,
         },
         settings,
@@ -1001,6 +1058,7 @@ fn map_timer_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TimerRow> {
         last_event_at: parse_optional_utc(row.get(13)?)?,
         last_event_duration_ms: row.get(14)?,
         last_completed_session_id: row.get(15)?,
+        revision_plan_item_id: row.get(16)?,
     })
 }
 

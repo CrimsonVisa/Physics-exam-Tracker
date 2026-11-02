@@ -1000,6 +1000,7 @@ mod tests {
             &mut connection,
             late_topic,
             revision::CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "good".to_owned(),
                 notes: String::new(),
             },
@@ -1012,6 +1013,7 @@ mod tests {
             &mut connection,
             on_time_topic,
             revision::CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "easy".to_owned(),
                 notes: String::new(),
             },

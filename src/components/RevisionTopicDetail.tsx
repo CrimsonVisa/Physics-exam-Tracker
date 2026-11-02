@@ -2,11 +2,14 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { DateField } from './DateField';
 import { PlannedBlockEditor } from './PlannedBlockEditor';
 import { toCommandError } from '../lib/commandError';
-import { formatDateLong, parseDateOnly } from '../lib/dateOnly';
+import { addDaysDateOnly, formatDateLong, parseDateOnly } from '../lib/dateOnly';
 import type { PlannerTopic } from '../lib/plannerApi';
 import {
   completeRevision,
+  deferRevision,
   getRevisionHistory,
+  getRevisionIntervalPreview,
+  overrideDeferredRevision,
   reactivateRevision,
   rescheduleRevision,
   REVISION_OUTCOMES,
@@ -14,14 +17,24 @@ import {
   suspendRevision,
   updateRevisionNotes,
   type CompleteRevisionInput,
+  type RevisionDeferralReason,
   type RevisionHistoryEntry,
+  type RevisionIntervalDecision,
   type RevisionOutcome,
   type RevisionSettings,
   type RevisionTopicState,
 } from '../lib/revisionApi';
 import { nextIntervalFor, outcomeLabel, OUTCOME_LABELS } from '../lib/revisionScheduling';
 
-type DetailMode = 'idle' | 'reviewing' | 'rescheduling' | 'planning';
+type DetailMode = 'idle' | 'reviewing' | 'rescheduling' | 'planning' | 'deferring' | 'overriding';
+
+const DEFERRAL_REASONS: Record<RevisionDeferralReason, string> = {
+  time: 'Not enough time',
+  difficulty: 'Too difficult right now',
+  energy: 'Low energy',
+  life: 'Life interruption',
+  other: 'Other',
+};
 
 type Feedback = {
   tone: 'success' | 'error';
@@ -33,6 +46,7 @@ type RevisionTopicDetailProps = {
   settings: RevisionSettings;
   today: string;
   plannerTopics: PlannerTopic[];
+  planItemId?: number | null;
   onChanged: () => void;
   onClose: () => void;
   readOnly?: boolean;
@@ -57,6 +71,7 @@ export function RevisionTopicDetail({
   settings,
   today,
   plannerTopics,
+  planItemId = null,
   onChanged,
   onClose,
   readOnly = false,
@@ -74,6 +89,16 @@ export function RevisionTopicDetail({
   const [dateError, setDateError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const [intervalPreview, setIntervalPreview] = useState<RevisionIntervalDecision | null>(null);
+  const [intervalPreviewError, setIntervalPreviewError] = useState<string | null>(null);
+  const [deferDate, setDeferDate] = useState(
+    addDaysDateOnly(state.schedule?.nextRevisionDate ?? today, 7) ?? today,
+  );
+  const [deferReason, setDeferReason] = useState<RevisionDeferralReason>('time');
+  const [deferNotes, setDeferNotes] = useState('');
+  const [overrideDate, setOverrideDate] = useState(today);
+  const [overrideReason, setOverrideReason] = useState<RevisionDeferralReason>('time');
+  const [overrideNotes, setOverrideNotes] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -100,6 +125,29 @@ export function RevisionTopicDetail({
       cancelled = true;
     };
   }, [state.topic.id, historyKey]);
+
+  useEffect(() => {
+    if (mode !== 'reviewing' || !state.schedule) {
+      return;
+    }
+    let cancelled = false;
+    getRevisionIntervalPreview(state.topic.id, outcome, today)
+      .then((preview) => {
+        if (!cancelled) {
+          setIntervalPreview(preview);
+          setIntervalPreviewError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setIntervalPreview(null);
+          setIntervalPreviewError(toCommandError(error).message);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, outcome, state.topic.id, state.schedule, today]);
 
   function refreshHistory() {
     setHistoryLoading(true);
@@ -151,7 +199,11 @@ export function RevisionTopicDetail({
 
     setBusy('complete');
     setFeedback(null);
-    const input: CompleteRevisionInput = { outcome, notes: revisionNotes };
+    const input: CompleteRevisionInput = {
+      outcome,
+      notes: revisionNotes,
+      ...(planItemId === null ? {} : { planItemId }),
+    };
 
     try {
       const result = await completeRevision(state.topic.id, input);
@@ -159,7 +211,11 @@ export function RevisionTopicDetail({
         tone: 'success',
         message: `Revision recorded. Next review is ${dateLabel(
           result.state.schedule?.nextRevisionDate ?? null,
-        )} with a ${result.state.schedule?.currentIntervalDays ?? 0}-day interval.`,
+        )} with a ${result.state.schedule?.currentIntervalDays ?? 0}-day interval.${
+          result.history.actualSeconds !== null
+            ? ` Actual linked time: ${(result.history.actualSeconds / 60).toFixed(1)} minutes.`
+            : ''
+        }`,
       });
       setMode('idle');
       setRevisionNotes('');
@@ -193,6 +249,71 @@ export function RevisionTopicDetail({
         message: `Next revision manually set to ${dateLabel(rescheduleDate)}.`,
       });
       setMode('idle');
+      onChanged();
+    } catch (error) {
+      actionError(error);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDefer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) {
+      return;
+    }
+    if (!parseDateOnly(deferDate)) {
+      setDateError('Choose a real calendar date.');
+      return;
+    }
+    setDateError(null);
+    setBusy('defer');
+    setFeedback(null);
+    try {
+      const result = await deferRevision(state.topic.id, deferDate, deferReason, deferNotes);
+      setFeedback({
+        tone: 'success',
+        message: `Revision deferred until ${dateLabel(
+          result.schedule.deferredUntil ?? deferDate,
+        )}. Deferrals are recorded in an append-only audit trail and do not count as completed work.`,
+      });
+      setMode('idle');
+      setDeferNotes('');
+      onChanged();
+    } catch (error) {
+      actionError(error);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleOverride(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) {
+      return;
+    }
+    if (!parseDateOnly(overrideDate)) {
+      setDateError('Choose a real calendar date.');
+      return;
+    }
+    setDateError(null);
+    setBusy('override');
+    setFeedback(null);
+    try {
+      const result = await overrideDeferredRevision(
+        state.topic.id,
+        overrideDate,
+        overrideReason,
+        overrideNotes,
+      );
+      setFeedback({
+        tone: 'success',
+        message: `Deferral overridden. The topic is eligible again from ${dateLabel(
+          result.schedule.deferredUntil ?? overrideDate,
+        )}.`,
+      });
+      setMode('idle');
+      setOverrideNotes('');
       onChanged();
     } catch (error) {
       actionError(error);
@@ -251,6 +372,8 @@ export function RevisionTopicDetail({
   const schedule = state.schedule;
   const currentInterval = schedule?.currentIntervalDays ?? settings.minimumIntervalDays;
   const nextPreview = nextIntervalFor(settings, currentInterval, outcome);
+  const isDeferred = Boolean(schedule?.deferredUntil && schedule.deferredUntil > today);
+  const displayedInterval = intervalPreview?.intervalAfterDays ?? nextPreview;
 
   return (
     <section className="revision-detail-card" aria-labelledby="revision-detail-heading">
@@ -316,6 +439,12 @@ export function RevisionTopicDetail({
               <dt>Revision mastery estimate</dt>
               <dd>{schedule.masteryEstimate.toFixed(1)}%</dd>
             </div>
+            {schedule.deferredUntil && (
+              <div>
+                <dt>Deferred until</dt>
+                <dd>{dateLabel(schedule.deferredUntil)}</dd>
+              </div>
+            )}
           </dl>
 
           {readOnly && (
@@ -330,26 +459,61 @@ export function RevisionTopicDetail({
                 type="button"
                 className="primary-button"
                 onClick={() => {
+                  setIntervalPreview(null);
+                  setIntervalPreviewError(null);
                   setMode('reviewing');
                   setFeedback(null);
                 }}
-                disabled={busy !== null || schedule.status === 'suspended'}
+                disabled={busy !== null || schedule.status === 'suspended' || isDeferred}
               >
                 Start revision
               </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setMode('rescheduling');
-                  setRescheduleDate(schedule.nextRevisionDate);
-                  setDateError(null);
-                  setFeedback(null);
-                }}
-                disabled={busy !== null}
-              >
-                Manual reschedule
-              </button>
+              {isDeferred ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setMode('overriding');
+                    setOverrideDate(today);
+                    setDateError(null);
+                    setFeedback(null);
+                  }}
+                  disabled={busy !== null}
+                >
+                  Override deferral
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setMode('deferring');
+                      setDeferDate(
+                        addDaysDateOnly(schedule.nextRevisionDate, 7) ?? schedule.nextRevisionDate,
+                      );
+                      setDateError(null);
+                      setFeedback(null);
+                    }}
+                    disabled={busy !== null}
+                  >
+                    Defer revision
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setMode('rescheduling');
+                      setRescheduleDate(schedule.nextRevisionDate);
+                      setDateError(null);
+                      setFeedback(null);
+                    }}
+                    disabled={busy !== null}
+                  >
+                    Manual reschedule
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="secondary-button"
@@ -455,10 +619,29 @@ export function RevisionTopicDetail({
             <div className="form-field">
               <label htmlFor="revision-interval-preview">Next interval preview</label>
               <output id="revision-interval-preview" className="revision-interval-preview">
-                {nextPreview} days
+                {displayedInterval} days
               </output>
             </div>
           </div>
+          {intervalPreviewError ? (
+            <p className="field-hint">
+              Adaptive interval preview is unavailable: {intervalPreviewError}. The saved outcome
+              will still use the current rules.
+            </p>
+          ) : intervalPreview ? (
+            <div className="revision-interval-reasons">
+              <p className="field-hint">
+                Timing {intervalPreview.timingDays >= 0 ? '+' : ''}
+                {intervalPreview.timingDays} day(s) · evidence {intervalPreview.evidenceStatus} ·
+                factor {intervalPreview.evidenceFactor.toFixed(2)}
+              </p>
+              <ul className="revision-reasons">
+                {intervalPreview.reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div className="form-field">
             <label htmlFor="revision-review-notes">Revision notes (optional)</label>
             <textarea
@@ -502,6 +685,133 @@ export function RevisionTopicDetail({
           <div className="form-footer">
             <button type="submit" className="primary-button" disabled={busy !== null}>
               {busy === 'reschedule' ? 'Saving…' : 'Save new date'}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setMode('idle')}
+              disabled={busy !== null}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {!readOnly && schedule && mode === 'deferring' && (
+        <form className="revision-inline-form" onSubmit={handleDefer} noValidate>
+          <p className="revision-note">
+            Deferral is an explicit audit event. The topic becomes unavailable until the return date
+            and is never counted as completed or mastered.
+          </p>
+          <DateField
+            id="revision-defer-date"
+            label="Return date"
+            value={deferDate}
+            onChange={(value) => {
+              setDeferDate(value);
+              setDateError(null);
+            }}
+            hint="Must be later than the current next revision date."
+            error={dateError ?? undefined}
+            disabled={busy !== null}
+          />
+          <div className="planner-form-row">
+            <div className="form-field">
+              <label htmlFor="revision-defer-reason">Reason</label>
+              <select
+                id="revision-defer-reason"
+                value={deferReason}
+                onChange={(event) => setDeferReason(event.target.value as RevisionDeferralReason)}
+                disabled={busy !== null}
+              >
+                {Object.entries(DEFERRAL_REASONS).map(([value, label]) => (
+                  <option value={value} key={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-field">
+              <label htmlFor="revision-defer-notes">Notes (optional)</label>
+              <input
+                id="revision-defer-notes"
+                value={deferNotes}
+                maxLength={2000}
+                onChange={(event) => setDeferNotes(event.target.value)}
+                disabled={busy !== null}
+              />
+            </div>
+          </div>
+          <div className="form-footer">
+            <button type="submit" className="primary-button" disabled={busy !== null}>
+              {busy === 'defer' ? 'Deferring…' : 'Defer revision'}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setMode('idle')}
+              disabled={busy !== null}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {!readOnly && schedule && mode === 'overriding' && (
+        <form className="revision-inline-form" onSubmit={handleOverride} noValidate>
+          <p className="revision-note">
+            Overriding keeps the original deferral in the append-only audit trail and adds an
+            explicit override event. The return date must be earlier than the current return date
+            and cannot be before today.
+          </p>
+          <DateField
+            id="revision-override-date"
+            label="Bring the revision back on"
+            value={overrideDate}
+            onChange={(value) => {
+              setOverrideDate(value);
+              setDateError(null);
+            }}
+            hint={`Current return date: ${
+              schedule.deferredUntil ? dateLabel(schedule.deferredUntil) : 'not deferred'
+            }.`}
+            error={dateError ?? undefined}
+            disabled={busy !== null}
+          />
+          <div className="planner-form-row">
+            <div className="form-field">
+              <label htmlFor="revision-override-reason">Reason</label>
+              <select
+                id="revision-override-reason"
+                value={overrideReason}
+                onChange={(event) =>
+                  setOverrideReason(event.target.value as RevisionDeferralReason)
+                }
+                disabled={busy !== null}
+              >
+                {Object.entries(DEFERRAL_REASONS).map(([value, label]) => (
+                  <option value={value} key={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-field">
+              <label htmlFor="revision-override-notes">Notes (optional)</label>
+              <input
+                id="revision-override-notes"
+                value={overrideNotes}
+                maxLength={2000}
+                onChange={(event) => setOverrideNotes(event.target.value)}
+                disabled={busy !== null}
+              />
+            </div>
+          </div>
+          <div className="form-footer">
+            <button type="submit" className="primary-button" disabled={busy !== null}>
+              {busy === 'override' ? 'Overriding…' : 'Override deferral'}
             </button>
             <button
               type="button"
@@ -621,6 +931,8 @@ export function RevisionTopicDetail({
                   <th scope="col">Was due</th>
                   <th scope="col">Outcome</th>
                   <th scope="col">Interval</th>
+                  <th scope="col">Timing</th>
+                  <th scope="col">Actual time</th>
                   <th scope="col">Mastery</th>
                   <th scope="col">Notes</th>
                 </tr>
@@ -637,6 +949,18 @@ export function RevisionTopicDetail({
                     </td>
                     <td>
                       {entry.intervalBeforeDays} → {entry.intervalAfterDays} days
+                    </td>
+                    <td>
+                      {entry.timingDays === null
+                        ? '—'
+                        : `${entry.timingDays > 0 ? '+' : ''}${entry.timingDays} day${
+                            Math.abs(entry.timingDays) === 1 ? '' : 's'
+                          }`}
+                    </td>
+                    <td>
+                      {entry.actualSeconds === null
+                        ? '—'
+                        : `${(entry.actualSeconds / 60).toFixed(1)} min`}
                     </td>
                     <td>
                       {entry.masteryBefore.toFixed(1)}% → {entry.masteryAfter.toFixed(1)}%

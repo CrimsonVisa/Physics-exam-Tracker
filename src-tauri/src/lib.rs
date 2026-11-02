@@ -14,6 +14,7 @@ mod pyq;
 mod reschedule;
 mod resources;
 mod revision;
+mod revision_plan;
 mod sessions;
 mod settings;
 mod study_analytics;
@@ -789,6 +790,175 @@ fn check_revision_reminder(
 }
 
 #[tauri::command]
+fn get_revision_daily_plan(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::get_daily_plan(connection, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn generate_revision_daily_plan(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::generate_daily_plan(connection, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn rebalance_revision_daily_plan(
+    state: tauri::State<'_, db::AppState>,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::rebalance_daily_plan(connection, Local::now().date_naive())
+    })
+}
+
+#[tauri::command]
+fn get_revision_plan_history(
+    state: tauri::State<'_, db::AppState>,
+    from_date: String,
+    to_date: String,
+) -> Result<Vec<revision_plan::RevisionPlanHistoryEntry>, AppError> {
+    state
+        .with_connection(|connection| revision_plan::plan_history(connection, &from_date, &to_date))
+}
+
+#[tauri::command]
+fn add_revision_plan_item(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::add_revision_plan_item(connection, Local::now().date_naive(), topic_id)
+    })
+}
+
+#[tauri::command]
+fn move_revision_plan_item(
+    state: tauri::State<'_, db::AppState>,
+    plan_item_id: i64,
+    target: String,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::move_revision_plan_item(
+            connection,
+            Local::now().date_naive(),
+            plan_item_id,
+            &target,
+        )
+    })
+}
+
+#[tauri::command]
+fn reorder_revision_plan_items(
+    state: tauri::State<'_, db::AppState>,
+    plan_id: i64,
+    ordered_plan_item_ids: Vec<i64>,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::reorder_revision_plan_items(
+            connection,
+            Local::now().date_naive(),
+            plan_id,
+            &ordered_plan_item_ids,
+        )
+    })
+}
+
+#[tauri::command]
+fn update_revision_plan_estimate(
+    state: tauri::State<'_, db::AppState>,
+    plan_item_id: i64,
+    estimated_minutes: i64,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::update_revision_plan_estimate(
+            connection,
+            Local::now().date_naive(),
+            plan_item_id,
+            estimated_minutes,
+        )
+    })
+}
+
+#[tauri::command]
+fn link_revision_plan_block(
+    state: tauri::State<'_, db::AppState>,
+    plan_item_id: i64,
+    block_id: i64,
+) -> Result<revision_plan::RevisionDailyPlan, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::link_revision_plan_block(
+            connection,
+            Local::now().date_naive(),
+            plan_item_id,
+            block_id,
+        )
+    })
+}
+
+#[tauri::command]
+fn defer_revision(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    new_date: String,
+    reason: String,
+    notes: Option<String>,
+) -> Result<revision_plan::RevisionDeferralResult, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::defer_revision(
+            connection,
+            Local::now().date_naive(),
+            topic_id,
+            &new_date,
+            &reason,
+            notes.as_deref().unwrap_or(""),
+        )
+    })
+}
+
+#[tauri::command]
+fn override_deferred_revision(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    override_date: String,
+    reason: String,
+    notes: Option<String>,
+) -> Result<revision_plan::RevisionDeferralResult, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::override_deferred_revision(
+            connection,
+            Local::now().date_naive(),
+            topic_id,
+            &override_date,
+            &reason,
+            notes.as_deref().unwrap_or(""),
+        )
+    })
+}
+
+#[tauri::command]
+fn get_revision_interval_preview(
+    state: tauri::State<'_, db::AppState>,
+    topic_id: i64,
+    outcome: String,
+    revision_date: Option<String>,
+) -> Result<revision_plan::RevisionIntervalDecision, AppError> {
+    state.with_connection(|connection| {
+        revision_plan::interval_preview(
+            connection,
+            Local::now().date_naive(),
+            topic_id,
+            &outcome,
+            revision_date.as_deref(),
+        )
+    })
+}
+
+#[tauri::command]
 fn get_planner_topics(
     state: tauri::State<'_, db::AppState>,
 ) -> Result<Vec<planner::PlannerTopic>, AppError> {
@@ -992,10 +1162,18 @@ fn start_study_timer(
     state: tauri::State<'_, db::AppState>,
     mode: String,
     topic_id: Option<i64>,
+    plan_item_id: Option<i64>,
 ) -> Result<timer::TimerSnapshot, AppError> {
     state.with_connection(|connection| {
         let now = Utc::now();
-        timer::start(connection, now, Local::now().date_naive(), &mode, topic_id)
+        timer::start_with_plan(
+            connection,
+            now,
+            Local::now().date_naive(),
+            &mode,
+            topic_id,
+            plan_item_id,
+        )
     })
 }
 
@@ -1177,6 +1355,18 @@ pub fn run() {
             complete_revision,
             get_revision_summaries,
             check_revision_reminder,
+            get_revision_daily_plan,
+            generate_revision_daily_plan,
+            rebalance_revision_daily_plan,
+            get_revision_plan_history,
+            add_revision_plan_item,
+            move_revision_plan_item,
+            reorder_revision_plan_items,
+            update_revision_plan_estimate,
+            link_revision_plan_block,
+            defer_revision,
+            override_deferred_revision,
+            get_revision_interval_preview,
             get_planner_topics,
             get_checklist_tasks,
             create_checklist_task,

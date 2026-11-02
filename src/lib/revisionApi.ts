@@ -13,6 +13,7 @@ export type RevisionSettings = {
   maximumIntervalDays: number;
   includeWeekends: boolean;
   dailyRevisionTarget: number;
+  dailyRevisionMinutes: number;
   remindersEnabled: boolean;
   updatedAt: string;
 };
@@ -47,6 +48,7 @@ export type RevisionSchedule = {
   previousOutcome: RevisionOutcome | null;
   masteryEstimate: number;
   notes: string;
+  deferredUntil: string | null;
   updatedAt: string;
 };
 
@@ -81,6 +83,9 @@ export type RevisionHistoryEntry = {
   masteryBefore: number;
   masteryAfter: number;
   createdAt: string;
+  planItemId: number | null;
+  actualSeconds: number | null;
+  timingDays: number | null;
 };
 
 export type RevisionHistoryWithTopic = {
@@ -156,11 +161,139 @@ export type RevisionCalendarItem = {
 export type CompleteRevisionInput = {
   outcome: RevisionOutcome;
   notes: string;
+  planItemId?: number | null;
 };
 
 export type RevisionCompletion = {
   state: RevisionTopicState;
   history: RevisionHistoryEntry;
+  planItemId: number | null;
+};
+
+export type RevisionDeferralReason = 'time' | 'difficulty' | 'energy' | 'life' | 'other';
+
+export type RevisionPlanBlockSnapshot = {
+  id: number | null;
+  title: string | null;
+  calendarDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+};
+
+export type RevisionPlanMembership = {
+  dailyPlanId: number;
+  planItemId: number;
+  topic: RevisionTopic;
+  position: number;
+  estimatedMinutes: number;
+  lane: RevisionLane;
+  triageScore: number;
+  membershipStatus: 'planned' | 'in_progress' | 'completed';
+  itemStatus: 'planned' | 'in_progress' | 'completed' | 'backlog' | 'deferred' | 'removed';
+  actualSeconds: number;
+  remainingEstimateMinutes: number;
+  carriedFromDailyPlanId: number | null;
+  plannedBlock: RevisionPlanBlockSnapshot;
+};
+
+export type RevisionBacklogItem = {
+  planItemId: number;
+  topic: RevisionTopic;
+  status: string;
+  estimatedMinutes: number;
+  lane: RevisionLane;
+  triageScore: number;
+  sourceDueDate: string;
+  actualSeconds: number;
+  remainingEstimateMinutes: number;
+  deferredUntil: string | null;
+};
+
+export type RevisionDeferredItem = {
+  topic: RevisionTopic;
+  planItemId: number | null;
+  originalDueDate: string;
+  previousDueDate: string;
+  deferredUntil: string;
+  deferralCount: number;
+  latestReason: RevisionDeferralReason;
+  latestNotes: string;
+  latestOccurredOn: string;
+};
+
+export type RevisionUnscheduledUrgent = {
+  topic: RevisionTopic;
+  estimateMinutes: number;
+  reason: string;
+  lane: RevisionLane;
+  triageScore: number;
+};
+
+export type RevisionDailyPlan = {
+  today: string;
+  planId: number | null;
+  planDate: string | null;
+  version: number | null;
+  status: string | null;
+  needsGeneration: boolean;
+  effectiveBudgetMinutes: number;
+  maxTopics: number;
+  plannedMinutes: number;
+  completedMinutes: number;
+  actualMinutesToday: number;
+  remainingWorkMinutes: number;
+  remainingDailyBudgetMinutes: number;
+  overBudget: boolean;
+  overLimit: boolean;
+  scheduled: RevisionPlanMembership[];
+  completed: RevisionPlanMembership[];
+  backlog: RevisionBacklogItem[];
+  deferred: RevisionDeferredItem[];
+  unscheduledUrgent: RevisionUnscheduledUrgent[];
+};
+
+export type RevisionPlanHistoryEntry = {
+  planId: number;
+  planDate: string;
+  version: number;
+  status: string;
+  effectiveBudgetMinutes: number;
+  maxTopics: number;
+  plannedMinutes: number;
+  completedMinutes: number;
+  createdAt: string;
+  lastRebalancedAt: string | null;
+  memberships: RevisionPlanMembership[];
+};
+
+export type RevisionDeferralEvent = {
+  id: number;
+  topicId: number;
+  planItemId: number | null;
+  eventKind: 'defer' | 'override';
+  overriddenDeferralId: number | null;
+  previousDueDate: string;
+  newDueDate: string;
+  occurredOn: string;
+  reason: RevisionDeferralReason;
+  notes: string;
+  createdAt: string;
+};
+
+export type RevisionDeferralResult = {
+  plan: RevisionDailyPlan;
+  event: RevisionDeferralEvent;
+  schedule: RevisionSchedule;
+};
+
+export type RevisionIntervalDecision = {
+  intervalBeforeDays: number;
+  intervalAfterDays: number;
+  timingDays: number;
+  timingFactor: number;
+  evidenceStatus: RevisionEvidenceStatus;
+  evidenceFactor: number;
+  reasons: string[];
 };
 
 export type RevisionReminder = {
@@ -218,4 +351,96 @@ export function getRevisionSummaries(): Promise<RevisionSummary[]> {
 
 export function checkRevisionReminder(): Promise<RevisionReminder | null> {
   return invoke<RevisionReminder | null>('check_revision_reminder');
+}
+
+export function getRevisionDailyPlan(): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('get_revision_daily_plan');
+}
+
+export function generateRevisionDailyPlan(): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('generate_revision_daily_plan');
+}
+
+export function rebalanceRevisionDailyPlan(): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('rebalance_revision_daily_plan');
+}
+
+export function getRevisionPlanHistory(
+  fromDate: string,
+  toDate: string,
+): Promise<RevisionPlanHistoryEntry[]> {
+  return invoke<RevisionPlanHistoryEntry[]>('get_revision_plan_history', { fromDate, toDate });
+}
+
+export function addRevisionPlanItem(topicId: number): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('add_revision_plan_item', { topicId });
+}
+
+export function moveRevisionPlanItem(
+  planItemId: number,
+  target: 'backlog' | 'removed',
+): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('move_revision_plan_item', { planItemId, target });
+}
+
+export function reorderRevisionPlanItems(
+  planId: number,
+  orderedPlanItemIds: number[],
+): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('reorder_revision_plan_items', {
+    planId,
+    orderedPlanItemIds,
+  });
+}
+
+export function updateRevisionPlanEstimate(
+  planItemId: number,
+  estimatedMinutes: number,
+): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('update_revision_plan_estimate', {
+    planItemId,
+    estimatedMinutes,
+  });
+}
+
+export function linkRevisionPlanBlock(
+  planItemId: number,
+  blockId: number,
+): Promise<RevisionDailyPlan> {
+  return invoke<RevisionDailyPlan>('link_revision_plan_block', { planItemId, blockId });
+}
+
+export function deferRevision(
+  topicId: number,
+  newDate: string,
+  reason: RevisionDeferralReason,
+  notes: string,
+): Promise<RevisionDeferralResult> {
+  return invoke<RevisionDeferralResult>('defer_revision', { topicId, newDate, reason, notes });
+}
+
+export function overrideDeferredRevision(
+  topicId: number,
+  overrideDate: string,
+  reason: RevisionDeferralReason,
+  notes: string,
+): Promise<RevisionDeferralResult> {
+  return invoke<RevisionDeferralResult>('override_deferred_revision', {
+    topicId,
+    overrideDate,
+    reason,
+    notes,
+  });
+}
+
+export function getRevisionIntervalPreview(
+  topicId: number,
+  outcome: RevisionOutcome,
+  revisionDate?: string,
+): Promise<RevisionIntervalDecision> {
+  return invoke<RevisionIntervalDecision>('get_revision_interval_preview', {
+    topicId,
+    outcome,
+    revisionDate: revisionDate ?? null,
+  });
 }

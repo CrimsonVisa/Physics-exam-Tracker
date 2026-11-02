@@ -18,6 +18,7 @@ type SettingsForm = {
   maximumIntervalDays: string;
   includeWeekends: boolean;
   dailyRevisionTarget: string;
+  dailyRevisionMinutes: string;
   remindersEnabled: boolean;
 };
 
@@ -29,7 +30,8 @@ type SettingsField =
   | 'growthMultiplier'
   | 'minimumIntervalDays'
   | 'maximumIntervalDays'
-  | 'dailyRevisionTarget';
+  | 'dailyRevisionTarget'
+  | 'dailyRevisionMinutes';
 
 type RevisionSettingsPanelProps = {
   settings: RevisionSettings;
@@ -47,6 +49,7 @@ function formFromSettings(settings: RevisionSettings): SettingsForm {
     maximumIntervalDays: String(settings.maximumIntervalDays),
     includeWeekends: settings.includeWeekends,
     dailyRevisionTarget: String(settings.dailyRevisionTarget),
+    dailyRevisionMinutes: String(settings.dailyRevisionMinutes),
     remindersEnabled: settings.remindersEnabled,
   };
 }
@@ -108,6 +111,7 @@ export function RevisionSettingsPanel({ settings, onSaved }: RevisionSettingsPan
       ['minimumIntervalDays', form.minimumIntervalDays],
       ['maximumIntervalDays', form.maximumIntervalDays],
       ['dailyRevisionTarget', form.dailyRevisionTarget],
+      ['dailyRevisionMinutes', form.dailyRevisionMinutes],
     ];
     const parsed: Partial<Record<SettingsField, number>> = {};
 
@@ -118,6 +122,13 @@ export function RevisionSettingsPanel({ settings, onSaved }: RevisionSettingsPan
       } else {
         parsed[field] = number;
       }
+    }
+
+    if (
+      parsed.dailyRevisionMinutes !== undefined &&
+      (parsed.dailyRevisionMinutes < 5 || parsed.dailyRevisionMinutes > 1440)
+    ) {
+      nextErrors.dailyRevisionMinutes = 'Daily revision minutes must be from 5 to 1440.';
     }
 
     const growth = Number(form.growthMultiplier.trim());
@@ -141,6 +152,7 @@ export function RevisionSettingsPanel({ settings, onSaved }: RevisionSettingsPan
       maximumIntervalDays: parsed.maximumIntervalDays!,
       includeWeekends: form.includeWeekends,
       dailyRevisionTarget: parsed.dailyRevisionTarget!,
+      dailyRevisionMinutes: parsed.dailyRevisionMinutes!,
       remindersEnabled: form.remindersEnabled,
     };
 
@@ -187,6 +199,7 @@ export function RevisionSettingsPanel({ settings, onSaved }: RevisionSettingsPan
           'minimumIntervalDays',
           'maximumIntervalDays',
           'dailyRevisionTarget',
+          'dailyRevisionMinutes',
         ].includes(field)
       ) {
         setErrors({ [field]: commandError.message });
@@ -308,6 +321,26 @@ export function RevisionSettingsPanel({ settings, onSaved }: RevisionSettingsPan
             </p>
           )}
         </div>
+
+        <div className={`form-field${errors.dailyRevisionMinutes ? ' form-field-invalid' : ''}`}>
+          <label htmlFor="revision-daily-minutes">Daily revision minutes</label>
+          <input
+            id="revision-daily-minutes"
+            type="number"
+            min={5}
+            max={1440}
+            step={5}
+            value={form.dailyRevisionMinutes}
+            onChange={(event) => handleField('dailyRevisionMinutes', event.target.value)}
+            aria-invalid={errors.dailyRevisionMinutes ? true : undefined}
+            disabled={isSaving}
+          />
+          {errors.dailyRevisionMinutes && (
+            <p className="field-error" role="alert">
+              {errors.dailyRevisionMinutes}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="revision-settings-checks">
@@ -338,10 +371,11 @@ export function RevisionSettingsPanel({ settings, onSaved }: RevisionSettingsPan
       </div>
 
       <p className="field-hint">
-        Good and Easy outcomes grow from the current interval by the multiplier. Again and Difficult
-        reset to their configured initial intervals. All results are clamped between the minimum and
-        maximum. Changing the rules does not move existing due dates until the next completed
-        revision.
+        Good and Easy outcomes grow from the current interval by the multiplier, adjusted slightly
+        for timing and weak PYQ evidence. Again and Difficult reset to their configured initial
+        intervals. All results are clamped between the minimum and maximum. The daily revision
+        budget is also capped by the overall daily study target. Changing the rules does not move
+        existing due dates until the next completed revision.
       </p>
 
       <div className="form-footer">

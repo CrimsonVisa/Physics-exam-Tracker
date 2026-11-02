@@ -42,6 +42,7 @@ export type TimerState = {
   lastEventAt: string | null;
   lastEventDurationMs: number;
   lastCompletedSessionId: number | null;
+  revisionPlanItemId: number | null;
   recovery: TimerRecovery | null;
 };
 
@@ -59,8 +60,15 @@ export function updateTimerSettings(settings: TimerSettingsInput): Promise<Timer
   return invoke<TimerSnapshot>('update_timer_settings', { settings });
 }
 
-export function startStudyTimer(mode: TimerMode, topicId: number | null): Promise<TimerSnapshot> {
-  return invoke<TimerSnapshot>('start_study_timer', { mode, topicId });
+export function startStudyTimer(
+  mode: TimerMode,
+  topicId: number | null,
+  planItemId: number | null = null,
+): Promise<TimerSnapshot> {
+  return invoke<TimerSnapshot>(
+    'start_study_timer',
+    planItemId === null ? { mode, topicId } : { mode, topicId, planItemId },
+  );
 }
 
 export function pauseStudyTimer(): Promise<TimerSnapshot> {

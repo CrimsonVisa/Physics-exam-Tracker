@@ -1,21 +1,38 @@
 import { useEffect, useState } from 'react';
+import { RevisionDailyPlanCard } from '../components/RevisionDailyPlanCard';
 import { RevisionSettingsPanel } from '../components/RevisionSettingsPanel';
 import { RevisionTopicDetail } from '../components/RevisionTopicDetail';
 import { toCommandError } from '../lib/commandError';
-import { formatDateLong } from '../lib/dateOnly';
+import { addDaysDateOnly, formatDateLong } from '../lib/dateOnly';
 import type { PlannerTopic } from '../lib/plannerApi';
 import {
+  addRevisionPlanItem,
+  deferRevision,
+  generateRevisionDailyPlan,
+  getRevisionDailyPlan,
   getRevisionDashboard,
+  getRevisionPlanHistory,
+  linkRevisionPlanBlock,
+  moveRevisionPlanItem,
+  overrideDeferredRevision,
+  rebalanceRevisionDailyPlan,
+  reorderRevisionPlanItems,
   scheduleRevisionTopic,
+  updateRevisionPlanEstimate,
+  type RevisionDailyPlan,
   type RevisionDashboard,
+  type RevisionDeferralReason,
   type RevisionEvidenceStatus,
   type RevisionHistoryWithTopic,
   type RevisionLane,
+  type RevisionPlanHistoryEntry,
+  type RevisionPlanMembership,
   type RevisionRecommendation,
   type RevisionSettings,
   type RevisionTopicState,
 } from '../lib/revisionApi';
 import { OUTCOME_LABELS } from '../lib/revisionScheduling';
+import { startStudyTimer } from '../lib/timerApi';
 
 type RevisionFilter = {
   query: string;
@@ -261,6 +278,19 @@ export default function RevisionScreen({ today }: { today: string }) {
     message: string;
   } | null>(null);
   const [schedulingTopicId, setSchedulingTopicId] = useState<number | null>(null);
+  const [selectedPlanItemId, setSelectedPlanItemId] = useState<number | null>(null);
+  const [dailyPlan, setDailyPlan] = useState<RevisionDailyPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(true);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planBusy, setPlanBusy] = useState<string | null>(null);
+  const [planFeedback, setPlanFeedback] = useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [planHistory, setPlanHistory] = useState<RevisionPlanHistoryEntry[]>([]);
+  const [planHistoryLoading, setPlanHistoryLoading] = useState(false);
+  const [planHistoryLoaded, setPlanHistoryLoaded] = useState(false);
+  const [planHistoryError, setPlanHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -286,15 +316,219 @@ export default function RevisionScreen({ today }: { today: string }) {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [reloadKey, today]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getRevisionDailyPlan()
+      .then((loaded) => {
+        if (!cancelled) {
+          setDailyPlan(loaded);
+          setPlanError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setPlanError(toCommandError(error).message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPlanLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey, today]);
 
   function reload() {
     setReloadKey((key) => key + 1);
   }
 
-  function openTopic(topicId: number) {
+  function openTopic(topicId: number, planItemId: number | null = null) {
     setSelectedTopicId(topicId);
+    setSelectedPlanItemId(planItemId);
     setFeedback(null);
+  }
+
+  async function runPlanAction(
+    key: string,
+    action: () => Promise<RevisionDailyPlan>,
+    successMessage?: string,
+  ) {
+    if (planBusy !== null) {
+      return;
+    }
+    setPlanBusy(key);
+    setPlanFeedback(null);
+    try {
+      const next = await action();
+      setDailyPlan(next);
+      if (successMessage) {
+        setPlanFeedback({ tone: 'success', message: successMessage });
+      }
+    } catch (error: unknown) {
+      setPlanFeedback({ tone: 'error', message: toCommandError(error).message });
+    } finally {
+      setPlanBusy(null);
+    }
+  }
+
+  function handleGeneratePlan() {
+    void runPlanAction(
+      'generate',
+      generateRevisionDailyPlan,
+      "Today's revision plan was generated. You can reorder, rebalance, or adjust it explicitly.",
+    );
+  }
+
+  function handleRebalancePlan() {
+    void runPlanAction(
+      'rebalance',
+      rebalanceRevisionDailyPlan,
+      'Remaining work was rebalanced against the revision budget and topic limit.',
+    );
+  }
+
+  function handleAddPlanItem(topicId: number) {
+    void runPlanAction(
+      `add-${topicId}`,
+      () => addRevisionPlanItem(topicId),
+      'Topic added explicitly. Over-budget and over-limit additions are allowed but flagged.',
+    );
+  }
+
+  function handleMovePlanItem(planItemId: number, target: 'backlog' | 'removed') {
+    void runPlanAction(
+      `move-${planItemId}`,
+      () => moveRevisionPlanItem(planItemId, target),
+      target === 'removed'
+        ? "Topic removed from today's plan. The work item is retained as removed history."
+        : "Topic moved to the backlog and is no longer part of today's workload.",
+    );
+  }
+
+  function handleReorderPlanItems(orderedPlanItemIds: number[]) {
+    if (!dailyPlan?.planId) {
+      return;
+    }
+    void runPlanAction(
+      'reorder',
+      () => reorderRevisionPlanItems(dailyPlan.planId as number, orderedPlanItemIds),
+      'Plan order saved as a new plan version.',
+    );
+  }
+
+  function handlePlanEstimate(planItemId: number, estimatedMinutes: number) {
+    void runPlanAction(
+      `estimate-${planItemId}`,
+      () => updateRevisionPlanEstimate(planItemId, estimatedMinutes),
+      'Estimate updated as a new plan version.',
+    );
+  }
+
+  function handleLinkPlanBlock(planItemId: number, blockId: number) {
+    void runPlanAction(
+      `block-${planItemId}`,
+      () => linkRevisionPlanBlock(planItemId, blockId),
+      'Planner block linked. The membership keeps an immutable block snapshot.',
+    );
+  }
+
+  function handleStartPlanTimer(item: RevisionPlanMembership) {
+    if (planBusy !== null) {
+      return;
+    }
+    setPlanBusy(`timer-${item.planItemId}`);
+    setPlanFeedback(null);
+    startStudyTimer('focus', item.topic.id, item.planItemId)
+      .then(() => {
+        setPlanFeedback({
+          tone: 'success',
+          message: `Focus timer started for ${item.topic.code}. Finish the timer on the Timer screen to record actual revision time.`,
+        });
+      })
+      .catch((error: unknown) => {
+        setPlanFeedback({ tone: 'error', message: toCommandError(error).message });
+      })
+      .finally(() => {
+        setPlanBusy(null);
+      });
+  }
+
+  async function handleDeferPlanItem(
+    topicId: number,
+    newDate: string,
+    reason: RevisionDeferralReason,
+    notes: string,
+  ) {
+    if (planBusy !== null) {
+      return;
+    }
+    setPlanBusy(`defer-${topicId}`);
+    setPlanFeedback(null);
+    try {
+      const result = await deferRevision(topicId, newDate, reason, notes);
+      setDailyPlan(result.plan);
+      setPlanFeedback({
+        tone: 'success',
+        message: `Revision deferred until ${dateLabel(newDate)}. Deferrals never count as completed work.`,
+      });
+      reload();
+    } catch (error: unknown) {
+      setPlanFeedback({ tone: 'error', message: toCommandError(error).message });
+    } finally {
+      setPlanBusy(null);
+    }
+  }
+
+  async function handleOverrideDeferral(
+    topicId: number,
+    overrideDate: string,
+    reason: RevisionDeferralReason,
+    notes: string,
+  ) {
+    if (planBusy !== null) {
+      return;
+    }
+    setPlanBusy(`override-${topicId}`);
+    setPlanFeedback(null);
+    try {
+      const result = await overrideDeferredRevision(topicId, overrideDate, reason, notes);
+      setDailyPlan(result.plan);
+      setPlanFeedback({
+        tone: 'success',
+        message: `Deferral overridden. The topic is eligible again from ${dateLabel(
+          overrideDate,
+        )}.`,
+      });
+      reload();
+    } catch (error: unknown) {
+      setPlanFeedback({ tone: 'error', message: toCommandError(error).message });
+    } finally {
+      setPlanBusy(null);
+    }
+  }
+
+  async function loadPlanHistory() {
+    if (planHistoryLoading) {
+      return;
+    }
+    setPlanHistoryLoading(true);
+    setPlanHistoryError(null);
+    try {
+      const fromDate = addDaysDateOnly(today, -30) ?? today;
+      const history = await getRevisionPlanHistory(fromDate, today);
+      setPlanHistory(history);
+      setPlanHistoryLoaded(true);
+    } catch (error: unknown) {
+      setPlanHistoryError(toCommandError(error).message);
+    } finally {
+      setPlanHistoryLoading(false);
+    }
   }
 
   async function handleSchedule(topicId: number) {
@@ -375,6 +609,8 @@ export default function RevisionScreen({ today }: { today: string }) {
           100,
       )
     : 0;
+  const dashboardStale = dashboard !== null && dashboard.today !== today;
+  const planStale = dailyPlan !== null && dailyPlan.today !== today;
 
   return (
     <div className="page-container revision-page">
@@ -387,7 +623,7 @@ export default function RevisionScreen({ today }: { today: string }) {
         </p>
       </header>
 
-      {isLoading && (
+      {(isLoading || (!loadError && dashboardStale)) && (
         <section className="state-card" role="status" aria-live="polite">
           <p className="state-title">Loading revision schedule.</p>
           <p className="state-copy">
@@ -414,7 +650,7 @@ export default function RevisionScreen({ today }: { today: string }) {
         </section>
       )}
 
-      {!isLoading && !loadError && dashboard && (
+      {!isLoading && !dashboardStale && !loadError && dashboard && (
         <>
           <section className="revision-stats" aria-label="Revision summary">
             <div className="revision-stat-card revision-stat-overdue">
@@ -457,6 +693,58 @@ export default function RevisionScreen({ today }: { today: string }) {
               <span style={{ width: `${targetProgress}%` }} />
             </div>
           </div>
+
+          {(planLoading || (!planError && planStale)) && (
+            <section className="state-card" role="status" aria-live="polite">
+              <p className="state-title">Loading today&apos;s revision plan.</p>
+              <p className="state-copy">
+                Reading plan versions, deferrals, and actual revision time.
+              </p>
+            </section>
+          )}
+
+          {!planLoading && planError && (
+            <section className="state-card state-card-error" role="alert">
+              <p className="state-title">Today&apos;s revision plan could not be loaded</p>
+              <p className="state-copy">{planError}</p>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setPlanLoading(true);
+                  setPlanError(null);
+                  reload();
+                }}
+              >
+                Retry plan
+              </button>
+            </section>
+          )}
+
+          {!planLoading && !planStale && !planError && dailyPlan && (
+            <RevisionDailyPlanCard
+              plan={dailyPlan}
+              today={today}
+              busy={planBusy}
+              feedback={planFeedback}
+              plannerTopics={plannerTopics}
+              onGenerate={handleGeneratePlan}
+              onRebalance={handleRebalancePlan}
+              onAdd={handleAddPlanItem}
+              onMove={handleMovePlanItem}
+              onReorder={handleReorderPlanItems}
+              onEstimate={handlePlanEstimate}
+              onStartTimer={handleStartPlanTimer}
+              onLinkBlock={handleLinkPlanBlock}
+              onDefer={(topicId, newDate, reason, notes) =>
+                void handleDeferPlanItem(topicId, newDate, reason, notes)
+              }
+              onOverride={(topicId, overrideDate, reason, notes) =>
+                void handleOverrideDeferral(topicId, overrideDate, reason, notes)
+              }
+              onOpenTopic={openTopic}
+            />
+          )}
 
           {feedback && (
             <p
@@ -541,12 +829,90 @@ export default function RevisionScreen({ today }: { today: string }) {
                   <RecentRevision
                     key={`recent-${item.history.id}`}
                     item={item}
-                    onOpen={openTopic}
+                    onOpen={(topicId) => openTopic(topicId)}
                   />
                 ))}
               </ul>
             )}
           </section>
+
+          <details className="revision-plan-history-disclosure">
+            <summary>Revision plan history and workload versions</summary>
+            <p className="settings-lede">
+              Every structural change creates a new immutable plan version. Completed work stays
+              attached to the version where it was completed, and actual minutes are attributed to
+              the session date.
+            </p>
+            <div className="form-footer">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void loadPlanHistory()}
+                disabled={planHistoryLoading}
+              >
+                {planHistoryLoading
+                  ? 'Loading history…'
+                  : planHistoryLoaded
+                    ? 'Refresh last 30 days'
+                    : 'Load last 30 days'}
+              </button>
+            </div>
+            {planHistoryError && (
+              <p className="save-feedback save-feedback-error" role="alert">
+                {planHistoryError}
+              </p>
+            )}
+            {planHistoryLoaded && planHistory.length === 0 && (
+              <p className="revision-empty">No revision plan versions were saved in this range.</p>
+            )}
+            {planHistory.length > 0 && (
+              <div className="revision-plan-history-list">
+                {planHistory.map((plan) => (
+                  <article
+                    key={`plan-history-${plan.planId}`}
+                    className="revision-plan-history-item"
+                  >
+                    <div className="revision-plan-history-heading">
+                      <div>
+                        <h3>
+                          {dateLabel(plan.planDate)} · version {plan.version}
+                        </h3>
+                        <p className="revision-plan-meta">
+                          {plan.status} · {plan.plannedMinutes} planned min ·{' '}
+                          {plan.completedMinutes.toFixed(1)} completed min · budget{' '}
+                          {plan.effectiveBudgetMinutes} min · {plan.maxTopics} topics
+                        </p>
+                      </div>
+                      <span className={`revision-badge revision-badge-${plan.status}`}>
+                        {plan.status}
+                      </span>
+                    </div>
+                    <details>
+                      <summary>Memberships ({plan.memberships.length})</summary>
+                      {plan.memberships.length === 0 ? (
+                        <p className="revision-empty">This version contains no topics.</p>
+                      ) : (
+                        <ul className="revision-plan-history-memberships">
+                          {plan.memberships.map((item) => (
+                            <li key={`history-member-${plan.planId}-${item.planItemId}`}>
+                              <span>
+                                {item.topic.code} · {item.topic.title}
+                              </span>
+                              <span>
+                                {item.membershipStatus.replaceAll('_', ' ')} ·{' '}
+                                {(item.actualSeconds / 60).toFixed(1)} actual min ·{' '}
+                                {item.remainingEstimateMinutes.toFixed(1)} remaining
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </details>
+                  </article>
+                ))}
+              </div>
+            )}
+          </details>
 
           <details className="revision-settings-disclosure">
             <summary>Revision settings and algorithm rules</summary>
@@ -773,8 +1139,12 @@ export default function RevisionScreen({ today }: { today: string }) {
               settings={dashboard.settings}
               today={today}
               plannerTopics={plannerTopics}
+              planItemId={selectedPlanItemId}
               onChanged={reload}
-              onClose={() => setSelectedTopicId(null)}
+              onClose={() => {
+                setSelectedTopicId(null);
+                setSelectedPlanItemId(null);
+              }}
               readOnly={selectedState.topic.archived}
             />
           )}

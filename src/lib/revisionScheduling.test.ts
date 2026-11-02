@@ -12,6 +12,7 @@ const SETTINGS: RevisionSettings = {
   maximumIntervalDays: 3650,
   includeWeekends: true,
   dailyRevisionTarget: 5,
+  dailyRevisionMinutes: 90,
   remindersEnabled: false,
   updatedAt: '2026-10-30T10:00:00.000Z',
 };

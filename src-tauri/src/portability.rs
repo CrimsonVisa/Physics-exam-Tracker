@@ -14,9 +14,9 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{backup, db, error::AppError};
+use crate::{backup, date_only, db, error::AppError};
 
-pub const JSON_EXPORT_FORMAT_VERSION: u32 = 2;
+pub const JSON_EXPORT_FORMAT_VERSION: u32 = 3;
 pub const MIN_JSON_IMPORT_FORMAT_VERSION: u32 = 1;
 pub const MIN_JSON_IMPORT_SCHEMA_VERSION: i64 = 8;
 pub const MAX_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
@@ -54,7 +54,40 @@ const V2_TABLES: [&str; 20] = [
     "resource_discovery_runs",
 ];
 
-const CORE_DELETE_ORDER: [&str; 16] = [
+const V3_TABLES: [&str; 25] = [
+    "settings",
+    "syllabus_sources",
+    "syllabus_sections",
+    "syllabus_topics",
+    "syllabus_progress",
+    "timer_settings",
+    "study_sessions",
+    "checklist_tasks",
+    "planned_study_blocks",
+    "pyq_attempts",
+    "mock_tests",
+    "revision_settings",
+    "revision_schedules",
+    "revision_history",
+    "revision_plan_items",
+    "timer_state",
+    "revision_daily_plans",
+    "revision_daily_plan_items",
+    "revision_deferrals",
+    "revision_session_links",
+    "dashboard_sections",
+    "study_resources",
+    "resource_progress",
+    "resource_local_files",
+    "resource_discovery_runs",
+];
+
+const CORE_DELETE_ORDER: [&str; 21] = [
+    "revision_session_links",
+    "revision_deferrals",
+    "revision_daily_plan_items",
+    "revision_daily_plans",
+    "revision_plan_items",
     "dashboard_sections",
     "revision_history",
     "revision_schedules",
@@ -73,7 +106,40 @@ const CORE_DELETE_ORDER: [&str; 16] = [
     "settings",
 ];
 
-const V2_DELETE_ORDER: [&str; 20] = [
+const V2_DELETE_ORDER: [&str; 25] = [
+    "revision_session_links",
+    "revision_deferrals",
+    "revision_daily_plan_items",
+    "revision_daily_plans",
+    "revision_plan_items",
+    "resource_local_files",
+    "resource_progress",
+    "resource_discovery_runs",
+    "study_resources",
+    "dashboard_sections",
+    "revision_history",
+    "revision_schedules",
+    "revision_settings",
+    "mock_tests",
+    "pyq_attempts",
+    "planned_study_blocks",
+    "checklist_tasks",
+    "study_sessions",
+    "timer_state",
+    "timer_settings",
+    "syllabus_progress",
+    "syllabus_topics",
+    "syllabus_sections",
+    "syllabus_sources",
+    "settings",
+];
+
+const V3_DELETE_ORDER: [&str; 25] = [
+    "revision_session_links",
+    "revision_deferrals",
+    "revision_daily_plan_items",
+    "revision_daily_plans",
+    "revision_plan_items",
     "resource_local_files",
     "resource_progress",
     "resource_discovery_runs",
@@ -97,7 +163,9 @@ const V2_DELETE_ORDER: [&str; 20] = [
 ];
 
 fn tables_for_format(format_version: u32) -> &'static [&'static str] {
-    if format_version >= 2 {
+    if format_version >= 3 {
+        &V3_TABLES
+    } else if format_version >= 2 {
         &V2_TABLES
     } else {
         &CORE_TABLES
@@ -105,7 +173,9 @@ fn tables_for_format(format_version: u32) -> &'static [&'static str] {
 }
 
 fn delete_order_for_format(format_version: u32) -> &'static [&'static str] {
-    if format_version >= 2 {
+    if format_version >= 3 {
+        &V3_DELETE_ORDER
+    } else if format_version >= 2 {
         &V2_DELETE_ORDER
     } else {
         &CORE_DELETE_ORDER
@@ -301,7 +371,7 @@ pub fn export_csv_datasets(
     })
 }
 
-fn csv_datasets() -> [(&'static str, &'static str); 10] {
+fn csv_datasets() -> [(&'static str, &'static str); 15] {
     [
         (
             "syllabus_topics_progress.csv",
@@ -467,6 +537,7 @@ fn csv_datasets() -> [(&'static str, &'static str); 10] {
                 r.previous_outcome,
                 r.mastery_estimate,
                 r.notes,
+                r.deferred_until,
                 r.created_at,
                 r.updated_at
              FROM revision_schedules r
@@ -492,6 +563,100 @@ fn csv_datasets() -> [(&'static str, &'static str); 10] {
              FROM revision_history h
              JOIN syllabus_topics t ON t.id = h.topic_id
              ORDER BY h.revision_date, h.id",
+        ),
+        (
+            "revision_plan_items.csv",
+            "SELECT
+                rpi.id,
+                rpi.topic_id,
+                t.code AS topic_code,
+                t.title AS topic_title,
+                rpi.status,
+                rpi.estimated_minutes,
+                rpi.triage_score,
+                rpi.lane,
+                rpi.source_due_date,
+                rpi.planned_block_id,
+                rpi.revision_history_id,
+                rpi.removed_at,
+                rpi.created_at,
+                rpi.updated_at
+             FROM revision_plan_items rpi
+             JOIN syllabus_topics t ON t.id = rpi.topic_id
+             ORDER BY rpi.id",
+        ),
+        (
+            "revision_daily_plans.csv",
+            "SELECT
+                id,
+                plan_date,
+                version,
+                effective_budget_minutes,
+                max_topics,
+                planned_minutes,
+                completed_minutes,
+                status,
+                created_at,
+                last_rebalanced_at,
+                updated_at
+             FROM revision_daily_plans
+             ORDER BY plan_date, version",
+        ),
+        (
+            "revision_daily_plan_items.csv",
+            "SELECT
+                dpi.daily_plan_id,
+                dpi.plan_item_id,
+                dp.plan_date,
+                dp.version,
+                dpi.position,
+                dpi.estimated_minutes,
+                dpi.lane,
+                dpi.triage_score,
+                dpi.membership_status,
+                dpi.planned_block_id,
+                dpi.planned_block_title,
+                dpi.planned_block_date,
+                dpi.planned_block_start_time,
+                dpi.planned_block_end_time,
+                dpi.carried_from_daily_plan_id,
+                dpi.created_at,
+                dpi.updated_at
+             FROM revision_daily_plan_items dpi
+             JOIN revision_daily_plans dp ON dp.id = dpi.daily_plan_id
+             ORDER BY dpi.daily_plan_id, dpi.position, dpi.plan_item_id",
+        ),
+        (
+            "revision_deferrals.csv",
+            "SELECT
+                d.id,
+                d.topic_id,
+                t.code AS topic_code,
+                d.plan_item_id,
+                d.event_kind,
+                d.overridden_deferral_id,
+                d.previous_due_date,
+                d.new_due_date,
+                d.occurred_on,
+                d.reason,
+                d.notes,
+                d.created_at
+             FROM revision_deferrals d
+             JOIN syllabus_topics t ON t.id = d.topic_id
+             ORDER BY d.occurred_on, d.id",
+        ),
+        (
+            "revision_session_links.csv",
+            "SELECT
+                rsl.plan_item_id,
+                rsl.study_session_id,
+                ss.session_date,
+                ss.duration_seconds,
+                ss.source,
+                rsl.created_at
+             FROM revision_session_links rsl
+             JOIN study_sessions ss ON ss.id = rsl.study_session_id
+             ORDER BY ss.session_date, rsl.study_session_id",
         ),
         (
             "settings.csv",
@@ -623,7 +788,7 @@ pub fn export_json(
     let database_id = backup::ensure_database_identifier(connection, None)?;
     let mut tables = BTreeMap::new();
     let mut record_counts = BTreeMap::new();
-    for table in V2_TABLES {
+    for table in V3_TABLES {
         let rows = table_to_json(connection, table)?;
         record_counts.insert(table.to_owned(), rows.len() as i64);
         tables.insert(table.to_owned(), rows);
@@ -841,6 +1006,22 @@ pub fn preview_json_import(
             .to_owned(),
         "A verified safety backup of the current database is created before import.".to_owned(),
     ];
+    if envelope.format_version < 3
+        && [
+            "revision_plan_items",
+            "revision_daily_plans",
+            "revision_daily_plan_items",
+            "revision_deferrals",
+            "revision_session_links",
+        ]
+        .iter()
+        .any(|table| existing_counts.get(*table).copied().unwrap_or(0) > 0)
+    {
+        warnings.push(
+            "This legacy format does not describe daily revision plans or deferrals. Merge preserves local plan history; Replace clears it because plan IDs cannot be reconstructed."
+                .to_owned(),
+        );
+    }
     if format_includes_resources(envelope.format_version) {
         let invalid_local = invalid_local_file_rows(&envelope.tables["resource_local_files"]);
         if invalid_local > 0 {
@@ -907,14 +1088,16 @@ pub fn preview_json_import(
         merge_supported,
         replacement_supported: true,
         merge_description: if format_includes_resources(envelope.format_version) {
-            "Merge appends study history under new local IDs, matches syllabus topics by stable code, matches resources by resource key, preserves existing resource progress/notes/local PDF references, and keeps current settings, timer state, revision rules, and dashboard layout.".to_owned()
+            "Merge appends study history under new local IDs, matches syllabus topics by stable code, matches resources by resource key, preserves existing resource progress/notes/local PDF references, keeps current settings, timer state, revision rules, dashboard layout, and local revision plan history. Daily plan versions, deferrals, and session links from the export are not merged because their IDs are installation-specific; use Replace for exact plan history.".to_owned()
         } else {
-            "Merge appends study history under new local IDs, matches syllabus topics by stable code, skips conflicting progress/schedules/import-key rows, and keeps the current settings, timer state, revision rules, and dashboard layout. This format version has no resource tables.".to_owned()
+            "Merge appends study history under new local IDs, matches syllabus topics by stable code, skips conflicting progress/schedules/import-key rows, keeps the current settings, timer state, revision rules, dashboard layout, and local revision plan history, and does not merge exported plan versions. This format version has no resource tables.".to_owned()
         },
-        replacement_description: if format_includes_resources(envelope.format_version) {
-            "Replace removes current core records, resources, study progress, and local-file references, then inserts the validated export in foreign-key order. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
+        replacement_description: if envelope.format_version >= 3 {
+            "Replace removes current core records, revision plan versions/deferrals/session links, resources, study progress, and local-file references, then inserts the validated export in foreign-key order. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
+        } else if format_includes_resources(envelope.format_version) {
+            "Replace removes current core records, revision plan versions/deferrals/session links, resources, study progress, and local-file references, then inserts the validated legacy export in foreign-key order. Legacy formats cannot reconstruct daily plan history, so it is cleared. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
         } else {
-            "Replace removes all current core user records and inserts the validated core export, preserving exported IDs and relationships. Resource metadata is not touched by this legacy format. Current backup settings and the local database identifier are kept.".to_owned()
+            "Replace removes all current core user records and revision plan versions/deferrals/session links, then inserts the validated core export, preserving exported IDs and relationships. Resource metadata is not touched by this legacy format. Current backup settings and the local database identifier are kept.".to_owned()
         },
     })
 }
@@ -946,7 +1129,7 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
             "This JSON export format version is not supported.",
         ));
     }
-    if format_includes_resources(envelope.format_version) {
+    if envelope.format_version >= 3 {
         if envelope.schema_version != db::LATEST_SCHEMA_VERSION {
             return Err(AppError::import_failed(format!(
                 "JSON format version {} requires schema version {}; this export uses schema {}.",
@@ -954,6 +1137,12 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
                 db::LATEST_SCHEMA_VERSION,
                 envelope.schema_version
             )));
+        }
+    } else if envelope.format_version == 2 {
+        if envelope.schema_version != 10 {
+            return Err(AppError::import_failed(
+                "JSON format version 2 requires schema version 10.",
+            ));
         }
     } else if !(MIN_JSON_IMPORT_SCHEMA_VERSION..=db::LATEST_SCHEMA_VERSION)
         .contains(&envelope.schema_version)
@@ -1033,8 +1222,27 @@ fn validate_envelope_with_temporary_database(
     })?;
     let tables = tables_for_format(envelope.format_version);
     for table in tables {
-        validate_table_rows(&transaction, table, &envelope.tables[*table])?;
+        validate_table_rows(
+            &transaction,
+            table,
+            &envelope.tables[*table],
+            envelope.format_version >= 3,
+        )?;
     }
+    transaction
+        .execute_batch(
+            "DROP TRIGGER IF EXISTS revision_history_no_update;
+             DROP TRIGGER IF EXISTS revision_history_no_delete;
+             DROP TRIGGER IF EXISTS revision_deferrals_no_update;
+             DROP TRIGGER IF EXISTS revision_deferrals_no_delete;
+             DROP TRIGGER IF EXISTS revision_daily_plan_items_insert_active;
+             DROP TRIGGER IF EXISTS revision_daily_plan_items_no_delete;
+             DROP TRIGGER IF EXISTS revision_daily_plans_no_delete;
+             DROP TRIGGER IF EXISTS revision_plan_items_completed_no_delete;",
+        )
+        .map_err(|error| {
+            AppError::database("JSON validation protection could not be prepared", error)
+        })?;
     for table in delete_order_for_format(envelope.format_version) {
         transaction
             .execute(&format!("DELETE FROM {table}"), [])
@@ -1126,6 +1334,7 @@ fn validate_table_rows(
     connection: &Connection,
     table: &str,
     rows: &[Value],
+    require_complete_rows: bool,
 ) -> Result<(), AppError> {
     let columns = table_columns(connection, table)?;
     let allowed = columns.iter().collect::<HashSet<_>>();
@@ -1133,7 +1342,7 @@ fn validate_table_rows(
         let object = row
             .as_object()
             .ok_or_else(|| AppError::import_failed("A JSON export row is not an object."))?;
-        if object.len() != columns.len() {
+        if require_complete_rows && object.len() != columns.len() {
             return Err(AppError::import_failed(format!(
                 "A record in table {table} does not contain every exported field."
             )));
@@ -1143,6 +1352,19 @@ fn validate_table_rows(
                 return Err(AppError::import_failed(format!(
                     "A record in table {table} contains an unknown field."
                 )));
+            }
+        }
+        if table == "revision_deferrals" {
+            for field in ["previous_due_date", "new_due_date", "occurred_on"] {
+                let valid = object
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| date_only::parse_date_only(value).is_some());
+                if !valid {
+                    return Err(AppError::import_failed(format!(
+                        "A revision deferral contains an invalid {field} date."
+                    )));
+                }
             }
         }
     }
@@ -1188,7 +1410,27 @@ fn insert_rows(
     rows: &[Value],
     ignore_conflicts: bool,
 ) -> Result<usize, AppError> {
-    let columns = table_columns(transaction, table)?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let table_columns = table_columns(transaction, table)?;
+    let mut columns = Vec::new();
+    for column in table_columns {
+        let present = rows.iter().all(|row| row.get(&column).is_some());
+        let absent = rows.iter().all(|row| row.get(&column).is_none());
+        if present {
+            columns.push(column);
+        } else if !absent {
+            return Err(AppError::import_failed(format!(
+                "A record in table {table} uses an inconsistent set of fields."
+            )));
+        }
+    }
+    if columns.is_empty() {
+        return Err(AppError::import_failed(format!(
+            "A record in table {table} does not contain any known fields."
+        )));
+    }
     let insert = if ignore_conflicts {
         "INSERT OR IGNORE"
     } else {
@@ -1780,7 +2022,13 @@ fn replace_from_json(
     transaction
         .execute_batch(
             "DROP TRIGGER IF EXISTS revision_history_no_update;
-             DROP TRIGGER IF EXISTS revision_history_no_delete;",
+             DROP TRIGGER IF EXISTS revision_history_no_delete;
+             DROP TRIGGER IF EXISTS revision_deferrals_no_update;
+             DROP TRIGGER IF EXISTS revision_deferrals_no_delete;
+             DROP TRIGGER IF EXISTS revision_daily_plan_items_insert_active;
+             DROP TRIGGER IF EXISTS revision_daily_plan_items_no_delete;
+             DROP TRIGGER IF EXISTS revision_daily_plans_no_delete;
+             DROP TRIGGER IF EXISTS revision_plan_items_completed_no_delete;",
         )
         .map_err(|error| {
             AppError::database("Revision-history protection could not be prepared", error)
@@ -1825,6 +2073,41 @@ fn replace_from_json(
              BEFORE DELETE ON revision_history
              BEGIN
                  SELECT RAISE(ABORT, 'revision history is append-only');
+             END;
+             CREATE TRIGGER revision_deferrals_no_update
+             BEFORE UPDATE ON revision_deferrals
+             BEGIN
+                 SELECT RAISE(ABORT, 'revision deferrals are append-only');
+             END;
+             CREATE TRIGGER revision_deferrals_no_delete
+             BEFORE DELETE ON revision_deferrals
+             BEGIN
+                 SELECT RAISE(ABORT, 'revision deferrals are append-only');
+             END;
+             CREATE TRIGGER revision_daily_plan_items_insert_active
+             BEFORE INSERT ON revision_daily_plan_items
+             WHEN (
+                 SELECT status FROM revision_daily_plans
+                 WHERE id = NEW.daily_plan_id
+             ) <> 'active'
+             BEGIN
+                 SELECT RAISE(ABORT, 'daily plan memberships require an active plan');
+             END;
+             CREATE TRIGGER revision_daily_plan_items_no_delete
+             BEFORE DELETE ON revision_daily_plan_items
+             BEGIN
+                 SELECT RAISE(ABORT, 'daily plan memberships are immutable');
+             END;
+             CREATE TRIGGER revision_daily_plans_no_delete
+             BEFORE DELETE ON revision_daily_plans
+             BEGIN
+                 SELECT RAISE(ABORT, 'daily plan versions are immutable');
+             END;
+             CREATE TRIGGER revision_plan_items_completed_no_delete
+             BEFORE DELETE ON revision_plan_items
+             WHEN OLD.status = 'completed'
+             BEGIN
+                 SELECT RAISE(ABORT, 'completed revision work items cannot be deleted');
              END;",
         )
         .map_err(|error| {
@@ -2123,6 +2406,27 @@ fn merge_from_json(
             .imported += 1;
     }
 
+    if envelope.format_version >= 3 {
+        let lifecycle_tables = [
+            "revision_plan_items",
+            "revision_daily_plans",
+            "revision_daily_plan_items",
+            "revision_deferrals",
+            "revision_session_links",
+        ];
+        for table in lifecycle_tables {
+            let rows = envelope.tables[table].len() as i64;
+            per_table
+                .get_mut(table)
+                .expect("table result exists")
+                .skipped = rows;
+        }
+        warnings.push(
+            "Daily revision plan versions, deferrals, and revision session links are not merged because plan IDs are installation-specific. Use Replace to restore them exactly; existing local plan history is preserved."
+                .to_owned(),
+        );
+    }
+
     if format_includes_resources(envelope.format_version) {
         merge_resources(&transaction, envelope, per_table, &mut warnings)?;
     }
@@ -2389,7 +2693,10 @@ fn insert_merge_row(
         .ok_or_else(|| AppError::import_failed("A JSON export row is not an object."))?;
     let columns = table_columns(transaction, table)?
         .into_iter()
-        .filter(|column| !omitted.contains(&column.as_str()))
+        .filter(|column| {
+            !omitted.contains(&column.as_str())
+                && (object.contains_key(column) || overrides.contains_key(column.as_str()))
+        })
         .collect::<Vec<_>>();
     let placeholders = (1..=columns.len())
         .map(|index| format!("?{index}"))
@@ -2462,12 +2769,15 @@ fn map_nullable_topic(
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
+    use chrono::{Duration, NaiveDate, TimeZone, Utc};
     use rusqlite::Connection;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{mock_tests, planner, pyq, resources, revision, sessions, settings, syllabus};
+    use crate::{
+        mock_tests, planner, pyq, resources, revision, revision_plan, sessions, settings, syllabus,
+        timer,
+    };
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).expect("test date should be valid")
@@ -2479,6 +2789,24 @@ mod tests {
             db::open_database(&path, date(2026, 10, 30)).expect("database should open");
         syllabus::seed(&mut connection).expect("syllabus should seed");
         connection
+    }
+
+    fn trim_legacy_tables(value: &mut Value, format_version: u32) {
+        let allowed = tables_for_format(format_version);
+        let extra = value["tables"]
+            .as_object()
+            .expect("tables should be an object")
+            .keys()
+            .filter(|table| !allowed.contains(&table.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        for table in extra {
+            value["tables"].as_object_mut().unwrap().remove(&table);
+            value["recordCounts"]
+                .as_object_mut()
+                .unwrap()
+                .remove(&table);
+        }
     }
 
     fn topic_id(connection: &Connection, code: &str) -> i64 {
@@ -2690,6 +3018,7 @@ mod tests {
             connection,
             topic,
             revision::CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "good".to_owned(),
                 notes: "Portable revision".to_owned(),
             },
@@ -2718,11 +3047,11 @@ mod tests {
         let bytes = fs::read(&path).expect("JSON export should be readable");
         let envelope: JsonExportEnvelope =
             serde_json::from_slice(&bytes).expect("JSON should parse");
-        assert_eq!(envelope.format_version, 2);
-        assert_eq!(envelope.schema_version, 10);
+        assert_eq!(envelope.format_version, 3);
+        assert_eq!(envelope.schema_version, 11);
         assert_eq!(envelope.application_version, "1.2.0");
         assert_eq!(envelope.import_batch_id.as_deref().map(str::len), Some(32));
-        assert_eq!(envelope.tables.keys().count(), 20);
+        assert_eq!(envelope.tables.keys().count(), 25);
         assert_eq!(envelope.record_counts["study_sessions"], 1);
         assert_eq!(envelope.record_counts["revision_history"], 1);
         assert_eq!(envelope.record_counts["study_resources"], 1);
@@ -2735,8 +3064,20 @@ mod tests {
 
         let csv =
             export_csv_datasets(&connection, export_dir.path()).expect("CSV export should succeed");
-        assert_eq!(csv.files.len(), 10);
+        assert_eq!(csv.files.len(), 15);
         let csv_dir = export_dir.path().join(&csv.folder_name);
+        for file in [
+            "revision_plan_items.csv",
+            "revision_daily_plans.csv",
+            "revision_daily_plan_items.csv",
+            "revision_deferrals.csv",
+            "revision_session_links.csv",
+        ] {
+            assert!(
+                csv_dir.join(file).is_file(),
+                "the new lifecycle dataset {file} should be exported"
+            );
+        }
         let session_csv = csv_dir.join("study_sessions.csv");
         let content = fs::read_to_string(&session_csv).expect("CSV should be readable");
         assert!(content.starts_with(CSV_BOM));
@@ -3022,7 +3363,7 @@ mod tests {
         let export_path = export_dir.path().join(&exported.file_name);
         let envelope: JsonExportEnvelope =
             serde_json::from_slice(&fs::read(&export_path).unwrap()).expect("export should parse");
-        assert_eq!(envelope.format_version, 2);
+        assert_eq!(envelope.format_version, 3);
         assert_eq!(envelope.record_counts["resource_discovery_runs"], 1);
         assert_eq!(
             envelope.tables["study_resources"][0]["original_url"],
@@ -3290,13 +3631,7 @@ mod tests {
 
         let mut legacy: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
         legacy["formatVersion"] = Value::from(1);
-        for table in RESOURCE_TABLES {
-            legacy["tables"].as_object_mut().unwrap().remove(table);
-            legacy["recordCounts"]
-                .as_object_mut()
-                .unwrap()
-                .remove(table);
-        }
+        trim_legacy_tables(&mut legacy, 1);
         let legacy_path = export_dir.path().join("legacy-v1.json");
         fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
 
@@ -3329,6 +3664,307 @@ mod tests {
     }
 
     #[test]
+    fn format_three_replacement_restores_versioned_revision_lifecycle_data() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let day = date(2026, 10, 30);
+        let mut source_db = database(&source, "source.sqlite3");
+        let first = topic_id(&source_db, "MMP-C01");
+        let second = topic_id(&source_db, "MMP-C02");
+        revision::schedule_topic(&mut source_db, first, "2026-10-30", day)
+            .expect("first topic should schedule");
+        let generated =
+            revision_plan::generate_daily_plan(&mut source_db, day).expect("plan should generate");
+        let item = generated.scheduled[0].plan_item_id;
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 30, 9, 0, 0)
+            .single()
+            .expect("start should be valid");
+        timer::start_with_plan(&mut source_db, start, day, "focus", Some(first), Some(item))
+            .expect("timer should start");
+        for second in (10..300).step_by(10) {
+            timer::heartbeat(&mut source_db, start + Duration::seconds(second))
+                .expect("heartbeat should succeed");
+        }
+        timer::finish(&mut source_db, start + Duration::minutes(5)).expect("timer should finish");
+        revision::complete(
+            &mut source_db,
+            first,
+            revision::CompleteRevisionInput {
+                plan_item_id: Some(item),
+                outcome: "good".to_owned(),
+                notes: "Linked completion".to_owned(),
+            },
+            day,
+        )
+        .expect("revision should complete");
+        revision::schedule_topic(&mut source_db, second, "2026-10-30", day)
+            .expect("second topic should schedule");
+        let extended = revision_plan::add_revision_plan_item(&mut source_db, day, second)
+            .expect("second topic should join the plan");
+        let second_item = extended
+            .scheduled
+            .iter()
+            .find(|item| item.topic.id == second)
+            .expect("second plan item should exist")
+            .plan_item_id;
+        let second_start = Utc
+            .with_ymd_and_hms(2026, 10, 30, 10, 0, 0)
+            .single()
+            .expect("second start should be valid");
+        timer::start_with_plan(
+            &mut source_db,
+            second_start,
+            day,
+            "focus",
+            Some(second),
+            Some(second_item),
+        )
+        .expect("second timer should start");
+        revision_plan::defer_revision(
+            &mut source_db,
+            day,
+            second,
+            "2026-11-10",
+            "time",
+            "deferred for the test",
+        )
+        .expect("deferral should save");
+
+        let counts = |connection: &Connection| -> (i64, i64, i64) {
+            (
+                connection
+                    .query_row("SELECT count(*) FROM revision_daily_plans", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap(),
+                connection
+                    .query_row("SELECT count(*) FROM revision_deferrals", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap(),
+                connection
+                    .query_row("SELECT count(*) FROM revision_session_links", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap(),
+            )
+        };
+        let expected = counts(&source_db);
+        assert_eq!(expected.0, 3);
+        assert_eq!(expected.1, 1);
+        assert_eq!(expected.2, 1);
+
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let mut target_db = database(&target, "target.sqlite3");
+        let target_topic = topic_id(&target_db, "MMP-C03");
+        revision::schedule_topic(&mut target_db, target_topic, "2026-10-30", day)
+            .expect("target topic should schedule");
+        revision_plan::generate_daily_plan(&mut target_db, day)
+            .expect("target plan should generate");
+        revision_plan::defer_revision(
+            &mut target_db,
+            day,
+            target_topic,
+            "2026-11-05",
+            "life",
+            "existing target deferral",
+        )
+        .expect("target deferral should save");
+        let preview = preview_json_import(&target_db, &export_path).expect("preview should load");
+        assert_eq!(preview.format_version, 3);
+
+        apply_json_import(
+            &mut target_db,
+            &export_path,
+            JsonImportStrategy::Replace,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("format 3 replacement should restore lifecycle data");
+
+        assert_eq!(counts(&target_db), expected);
+        let timer_plan_item: Option<i64> = target_db
+            .query_row(
+                "SELECT revision_plan_item_id FROM timer_state WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("imported timer state should load");
+        assert!(
+            timer_plan_item.is_some(),
+            "the running timer should keep its imported plan-item link"
+        );
+        let deferral_id: i64 = target_db
+            .query_row("SELECT id FROM revision_deferrals LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .expect("deferral should import");
+        assert!(
+            target_db
+                .execute(
+                    "UPDATE revision_deferrals SET notes = 'changed' WHERE id = ?1",
+                    [deferral_id],
+                )
+                .is_err(),
+            "deferral triggers should be restored"
+        );
+        let trigger_count: i64 = target_db
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'trigger'
+                 AND name IN (
+                    'revision_daily_plan_items_insert_active',
+                    'revision_daily_plan_items_no_delete',
+                    'revision_daily_plans_no_delete',
+                    'revision_deferrals_no_update',
+                    'revision_deferrals_no_delete',
+                    'revision_plan_items_completed_no_delete'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .expect("triggers should be queryable");
+        assert_eq!(trigger_count, 6);
+    }
+
+    #[test]
+    fn format_three_import_rejects_malformed_deferral_dates() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let mut source_db = database(&source, "source.sqlite3");
+        let topic = topic_id(&source_db, "MMP-C01");
+        revision::schedule_topic(&mut source_db, topic, "2026-10-30", date(2026, 10, 30))
+            .expect("topic should schedule");
+        revision_plan::generate_daily_plan(&mut source_db, date(2026, 10, 30))
+            .expect("plan should generate");
+        revision_plan::defer_revision(
+            &mut source_db,
+            date(2026, 10, 30),
+            topic,
+            "2026-11-10",
+            "time",
+            "fixture",
+        )
+        .expect("deferral should save");
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+        let original: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        let target_db = database(&target, "target.sqlite3");
+
+        for (index, (field, invalid)) in [
+            ("previous_due_date", "not-a-date"),
+            ("previous_due_date", "2026-02-30"),
+            ("new_due_date", "not-a-date"),
+            ("new_due_date", "2026-02-30"),
+            ("occurred_on", "not-a-date"),
+            ("occurred_on", "2026-02-30"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut malformed = original.clone();
+            malformed["tables"]["revision_deferrals"][0][field] = Value::String(invalid.to_owned());
+            let path = export_dir.path().join(format!("malformed-{index}.json"));
+            fs::write(&path, serde_json::to_vec_pretty(&malformed).unwrap()).unwrap();
+            let error = preview_json_import(&target_db, &path)
+                .expect_err("malformed deferral dates should be rejected");
+            assert_eq!(
+                error.code, "import_failed",
+                "field {field}, value {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_schema_ten_import_uses_defaults_for_new_lifecycle_columns() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let mut source_db = database(&source, "source.sqlite3");
+        populate_source(&mut source_db);
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let mut legacy: Value = serde_json::from_slice(&fs::read(&export_path).unwrap()).unwrap();
+        legacy["formatVersion"] = Value::from(2);
+        legacy["schemaVersion"] = Value::from(10);
+        trim_legacy_tables(&mut legacy, 2);
+        for (table, column) in [
+            ("revision_settings", "daily_revision_minutes"),
+            ("revision_schedules", "deferred_until"),
+            ("timer_state", "revision_plan_item_id"),
+        ] {
+            for row in legacy["tables"][table]
+                .as_array_mut()
+                .expect("table rows should be an array")
+            {
+                row.as_object_mut()
+                    .expect("row should be an object")
+                    .remove(column);
+            }
+        }
+        let legacy_path = export_dir.path().join("legacy-v2.json");
+        fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let mut target_db = database(&target, "target.sqlite3");
+        let target_topic = topic_id(&target_db, "MMP-C03");
+        revision::schedule_topic(
+            &mut target_db,
+            target_topic,
+            "2026-10-30",
+            date(2026, 10, 30),
+        )
+        .expect("target topic should schedule");
+        revision_plan::generate_daily_plan(&mut target_db, date(2026, 10, 30))
+            .expect("target plan should generate");
+        let preview =
+            preview_json_import(&target_db, &legacy_path).expect("v2 preview should load");
+        assert_eq!(preview.format_version, 2);
+        assert_eq!(preview.schema_version, 10);
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("legacy format does not describe"))
+        );
+        apply_json_import(
+            &mut target_db,
+            &legacy_path,
+            JsonImportStrategy::Replace,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("v2 replace should succeed");
+
+        let daily_minutes: i64 = target_db
+            .query_row(
+                "SELECT daily_revision_minutes FROM revision_settings WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy revision settings should import");
+        assert_eq!(daily_minutes, 90);
+        let plan_item: Option<i64> = target_db
+            .query_row(
+                "SELECT revision_plan_item_id FROM timer_state WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy timer state should import");
+        assert_eq!(plan_item, None);
+        let plan_count: i64 = target_db
+            .query_row("SELECT count(*) FROM revision_daily_plans", [], |row| {
+                row.get(0)
+            })
+            .expect("plan count should be readable");
+        assert_eq!(plan_count, 0);
+    }
+
+    #[test]
     fn invalid_json_format_newer_schema_and_duplicate_ids_are_rejected() {
         let target = tempfile::tempdir().expect("target temp");
         let export_dir = tempfile::tempdir().expect("export temp");
@@ -3352,10 +3988,7 @@ mod tests {
         older["formatVersion"] = Value::from(1);
         older["schemaVersion"] = Value::from(8);
         older.as_object_mut().unwrap().remove("importBatchId");
-        for table in RESOURCE_TABLES {
-            older["tables"].as_object_mut().unwrap().remove(table);
-            older["recordCounts"].as_object_mut().unwrap().remove(table);
-        }
+        trim_legacy_tables(&mut older, 1);
         let older_path = export_dir.path().join("older.json");
         fs::write(&older_path, serde_json::to_vec_pretty(&older).unwrap()).unwrap();
         let older_preview =

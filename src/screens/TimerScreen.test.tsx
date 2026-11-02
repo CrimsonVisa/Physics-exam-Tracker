@@ -68,6 +68,7 @@ function makeSnapshot(
       lastEventAt: null,
       lastEventDurationMs: 0,
       lastCompletedSessionId: null,
+      revisionPlanItemId: null,
       recovery: null,
       ...state,
     },

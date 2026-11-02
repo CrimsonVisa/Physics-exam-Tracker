@@ -6,7 +6,8 @@ An offline-first Windows desktop study tracker for CSIR-UGC NET Physical Science
 official-source Physical Sciences syllabus tracker, persisted study timer, study-session history, dated
 checklist tasks, planned study blocks, month/week/day calendar, previous-year question (PYQ) bank,
 mock-test history, CSV import workflows, outcome analytics, configurable spaced-repetition revision
-scheduler, study trends, topic intelligence, preparation timeline, SQLite-backed dashboard
+scheduler with versioned daily revision plans and explicit deferrals, study trends, topic intelligence,
+preparation timeline, SQLite-backed dashboard
 customization, verified full-database backup and restore, automatic backup retention, repeat-safe JSON
 imports, per-dataset CSV export, complete versioned JSON portability, and a Study Resources catalogue
 with manual source refresh and an optional local PDF library are implemented. The syllabus
@@ -176,7 +177,7 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-10), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+11), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
@@ -190,9 +191,11 @@ backup configuration tables without changing any study record, and creates the i
 backup manifests. Upgrading a version-8 database adds import-batch provenance for repeat-safe JSON
 merges without changing any study record. Upgrading a version-9 database adds the resource catalogue,
 independent resource-study progress, local PDF records, and discovery-run history without changing
-settings, syllabus progress, sessions, planner records, PYQs, mocks, or revision history. Every upgrade
-from an existing database first creates a verified pre-migration snapshot; if that snapshot fails, the
-upgrade is aborted.
+settings, syllabus progress, sessions, planner records, PYQs, mocks, or revision history. Upgrading a
+version-10 database adds daily revision plans, versioned plan memberships, append-only deferrals,
+work-item/session links, the daily revision budget, and timer plan-item context without changing
+existing revision schedules or history. Every upgrade from an existing database first creates a
+verified pre-migration snapshot; if that snapshot fails, the upgrade is aborted.
 
 The initial single-row settings record uses:
 
@@ -547,6 +550,23 @@ Migration `0006_revision_scheduler.sql` adds:
 History update and delete triggers reject mutation at the database level. Scheduling rows can change,
 but completed outcomes are never deleted when a topic is rescheduled, suspended, or reactivated.
 
+Migration `0011_revision_lifecycle.sql` adds the workload layer:
+
+- `revision_plan_items` — one current work item per active topic. An item can be planned, in progress,
+  completed, deferred, in the backlog, or removed, and it is linked to its completion history row.
+- `revision_daily_plans` — immutable versioned daily plan headers for a date, budget, topic limit,
+  planned/completed minutes, and active/superseded/closed status.
+- `revision_daily_plan_items` — immutable membership snapshots for each plan version, including the
+  triage lane/score, estimate, block snapshot, and carried-from version.
+- `revision_deferrals` — append-only defer and override events with reason, notes, original due date,
+  new return date, and event date.
+- `revision_session_links` — links completed focus-timer sessions to revision work items. Actual time
+  is attributed to the session date; completed minutes count only same-date completions.
+
+Plan membership snapshots do not reference `planned_study_blocks` by foreign key. The work item keeps a
+nullable block link with `ON DELETE SET NULL`, while membership retains the block title and time
+snapshot so deleting or editing a planner block never rewrites historical plans.
+
 ### Default algorithm
 
 The defaults are **not** claimed to be scientifically optimal and can be edited:
@@ -562,7 +582,10 @@ The deterministic rules are:
 
 - Again and Difficult reset to their configured initial interval.
 - Good and Easy grow from the current interval by the configured growth multiplier, while never going
-  below their configured initial interval.
+  below their configured initial interval. Growth is adjusted by timing: completing up to 14 days
+  earlier reduces the candidate to a 0.85 factor and completing up to 14 days later raises it to 1.15.
+- Weak recent PYQ evidence reduces Good/Easy growth by a 0.8 factor. Again/Difficult do not receive
+  timing or evidence factors, so failed recall is never extended by a late or weak signal.
 - The result is clamped between the configured minimum and maximum.
 - When weekends are excluded, a next date landing on Saturday or Sunday moves to Monday.
 - The date is calculated with real calendar arithmetic, including leap years, month/year transitions,
@@ -571,16 +594,48 @@ The deterministic rules are:
 The default growth multiplier is `1.5`, the minimum interval is 1 day, and the maximum is 3,650 days.
 The mastery estimate is a transparent planning estimate, not an official score: Again/Difficult/Good/
 Easy contribute 0/35/70/95 points; subsequent outcomes use a 70% previous + 30% new blended value.
-Revision completion never changes syllabus status, syllabus confidence, or study time.
+Revision completion never changes syllabus status, syllabus confidence, or study time. Deferral count
+is retained for planning and tie-breaking but is deliberately excluded from the Stage 3.2a triage score.
+
+### Daily workload planning
+
+Today's plan is never generated implicitly. The Revision screen shows the recommended queue, then the
+user explicitly generates a dated plan. Generation:
+
+- uses a default 90-minute revision budget, capped by the overall daily study target;
+- uses the configured daily revision topic maximum (five by default);
+- fills backlog/overdue work first, then scheduled reviews, then maintain topics only when capacity
+  remains;
+- preserves multi-day in-progress work and copies completed memberships into the new active version;
+- estimates duration from the median of recent linked revision sessions, then topic sessions, then
+  global timer sessions, rounded to five minutes and bounded to 10–120 minutes.
+
+Every structural change — generation, manual add, remove, backlog move, reorder, estimate change,
+block link, deferral, or rebalance — creates a new plan version. Old versions are immutable and can be
+expanded from the plan-history disclosure. Completed work remains attached to the version where it was
+completed. Manual additions may exceed the budget or topic limit; the UI shows one combined warning
+instead of blocking the action.
+
+Deferrals require a later return date, a reason, and optional notes. A deferred topic is unavailable
+until its return date, cannot be completed early, and never counts as completed or mastered. A later
+override is a second explicit append-only event that can only bring the return date earlier.
+Actual focus time is linked when a timer started from a plan item finishes. Completing a topic that
+belongs to today's active plan links the outcome to that membership even when the topic was opened
+from a queue instead of the plan card. In-progress remaining estimates subtract all actual time already
+spent, while daily completed minutes only include sessions whose session date equals the completion
+date. Prior-day minutes are never reattributed to a later outcome date. Plan-history summaries derive
+completed minutes from those same-date linked sessions, so a timer that finishes after a plan version
+has been superseded still leaves the historical summary consistent with its membership and sessions.
 
 ### Workflow and integration
 
 Every syllabus topic is listed in the revision screen even before it is scheduled. Users can create a
 schedule, start a revision, record Again/Difficult/Good/Easy with notes, cancel without a write,
-manually reschedule, suspend/reactivate, and view the complete per-topic history. Starting a revision is
-not persisted as a separate session; only a completed outcome is written, in one transaction with its
-schedule update. Revision duration is not recorded as study time and no study session is created
-automatically.
+defer or override a deferral, manually reschedule, suspend/reactivate, and view the complete per-topic
+history. Starting a revision is not persisted as a separate session; only a completed outcome is
+written, in one transaction with its schedule update and any explicit plan-item link. Revision duration
+is not recorded as study time unless the user starts a focus timer from a plan item; that timer session
+is then linked to the work item on completion.
 
 The syllabus screen shows each topic's revision state and next due date. The calendar shows active
 revision dates as a separate calendar-item type; one schedule row per topic prevents duplicate calendar
@@ -812,7 +867,7 @@ reported safely.
 
 Local PDF bytes are never stored in SQLite. The full SQLite backup includes the resource catalogue,
 study progress, and local-copy records (but not the PDF files themselves), so keep the chosen PDF
-folder alongside backups if you need the files. JSON format 2 includes the resource catalogue,
+folder alongside backups if you need the files. JSON formats 2 and 3 include the resource catalogue,
 resource study progress/notes, local-file metadata, and discovery history. Local PDF paths are
 references, not file contents; after importing or restoring on another computer, missing or changed
 files are reported as unavailable and can be re-linked without losing the resource or progress.
@@ -907,7 +962,7 @@ newer schemas are never downgraded.
 
 ### CSV dataset export
 
-Export creates a timestamped folder containing ten UTF-8 files with a BOM and CRLF rows:
+Export creates a timestamped folder containing fifteen UTF-8 files with a BOM and CRLF rows:
 
 - `syllabus_topics_progress.csv`
 - `study_sessions.csv`
@@ -917,6 +972,11 @@ Export creates a timestamped folder containing ten UTF-8 files with a BOM and CR
 - `mock_tests.csv`
 - `revision_schedules.csv`
 - `revision_history.csv`
+- `revision_plan_items.csv`
+- `revision_daily_plans.csv`
+- `revision_daily_plan_items.csv`
+- `revision_deferrals.csv`
+- `revision_session_links.csv`
 - `settings.csv`
 - `dashboard_layout.csv`
 
@@ -926,27 +986,30 @@ according to CSV rules. Export queries are read-only.
 
 ### Complete JSON export and validated import
 
-The complete JSON format is versioned. **Format 2** records application version, schema version, export
-timestamp, database identifier, a unique `importBatchId`, per-table record counts, and all 20 user
+The complete JSON format is versioned. **Format 3** records application version, schema version, export
+timestamp, database identifier, a unique `importBatchId`, per-table record counts, and all 25 user
 tables: settings, syllabus sources/sections/topics/progress, timer settings/state, sessions, tasks,
-blocks, PYQs, mocks, revision settings/schedules/history, dashboard sections, study resources,
-resource study progress, local-file metadata, and discovery history. Safe backup preferences are
-included without machine-specific destination paths. The serialized file is parsed and inserted into a
-temporary migrated database before success is reported.
+blocks, PYQs, mocks, revision settings/schedules/history, revision work items/daily plans/memberships/
+deferrals/session links, dashboard sections, study resources, resource study progress, local-file
+metadata, and discovery history. Safe backup preferences are included without machine-specific
+destination paths. The serialized file is parsed and inserted into a temporary migrated database before
+success is reported.
 
 Format 1 exports from versions 1.0.0 and 1.1.0 remain importable; they contain the original 16 core
-tables and do not modify the resource catalogue. Format 2 requires schema 10.
+tables and do not modify the resource catalogue. Format 2 exports from schema 10 remain importable and
+are expanded with default values for the new daily-plan columns. Format 3 requires schema 11.
 
 Migration `0009_json_import_batches.sql` adds `json_import_batches`. Successful imports record the
 batch identifier and result counts there. Preview detects an export that was already merged and
 disables merge, preventing duplicate sessions and tasks. Complete replacement remains an explicit
 opt-in and can intentionally reapply a file.
 
-Format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10. The whole file is validated in
-a temporary schema-10 database before taking a safety backup or writing current data. Duplicate
-primary keys, duplicate resource keys, orphaned progress/local-file references, missing fields,
-unknown fields, malformed JSON, incompatible format/schema versions, and relationship violations
-reject the entire file.
+Format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10; format 3 requires schema 11.
+The whole file is validated in a temporary current-schema database before taking a safety backup or
+writing current data. Older formats may omit columns added later; SQLite defaults and nullable columns
+fill those values. Duplicate primary keys, duplicate resource keys, orphaned progress/local-file
+references, missing fields, unknown fields, malformed JSON, incompatible format/schema versions, and
+relationship violations reject the entire file.
 
 Two explicit strategies are available:
 
@@ -954,11 +1017,16 @@ Two explicit strategies are available:
   history under new local IDs; maps syllabus topics by stable code; matches resources by stable
   `resource_key`; preserves existing resource study status, personal notes, and local PDF references;
   skips matching progress/schedules/settings/timer state/revision rules/dashboard layout; rejects rows
-  whose required topic or resource is unavailable.
-- **Replace:** after the safety backup, removes current core records and, for format 2, resource
-  records in foreign-key-safe order; inserts the complete validated export with exported IDs and
-  relationships; restores append-only history triggers; verifies foreign keys and exact counts; then
-  commits. Local PDF references are imported only when the path exists and its size and SHA-256 match.
+  whose required topic or resource is unavailable. Daily revision plan versions, deferrals, and
+  session links are not merged because their IDs are installation-specific; existing local plan
+  history is preserved and a warning recommends Replace when the full plan history is needed.
+- **Replace:** after the safety backup, removes current core records and, for format 2 or later,
+  resource records in foreign-key-safe order; for format 3 it also replaces revision lifecycle data.
+  It then inserts the complete validated export with exported IDs and relationships, restores
+  append-only history triggers, verifies foreign keys and exact counts, and commits. Format 1 and 2
+  replacements clear the newer revision lifecycle tables because those formats cannot describe plan
+  versions or deferrals; export format 3 preserves them. Local PDF references are imported only when
+  the path exists and its size and SHA-256 match.
   Missing or changed PDFs are skipped, while resource metadata and progress remain. PDF files on disk
   are never deleted. Current backup settings and database identity remain installation-local.
 
@@ -981,15 +1049,15 @@ Backup and export files are personal study data. They are written only to user-s
 removable-drive folders, never sent over the network; explicit UNC network paths are rejected.
 Generated filenames prevent traversal; selected paths must be absolute.
 User-facing errors describe the folder or operation without dumping internal absolute paths. No
-credentials or unrelated machine information are placed in manifests or JSON exports. Format 2 includes
-the local PDF paths you chose for imported files so they can be re-validated; those paths may reveal
+credentials or unrelated machine information are placed in manifests or JSON exports. Formats 2 and 3
+include the local PDF paths you chose for imported files so they can be re-validated; those paths may reveal
 folder names, so treat exports as private data.
 
 Backups and exports are **not encrypted**. Anyone with file access can read them. Keep them in a
 private folder or encrypted removable drive. Restore requires the adjacent manifest, so move or copy
 both files together. Automatic backups run only while the app is running; they are not a background
-Windows service. JSON format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10. Use the
-SQLite backup restore workflow for older database schemas.
+Windows service. JSON format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10; format 3
+requires schema 11. Use the SQLite backup restore workflow for older database schemas.
 
 ## Typography and colour
 
@@ -1070,8 +1138,9 @@ src/                     React frontend and tests
   components/PyqEditor.tsx      PYQ attempt form with topic and outcome fields
   components/MockTestEditor.tsx mock-test form with editable per-part marking
   components/CsvImportPanel.tsx preview, validation report, and transactional import UI
-  components/RevisionSettingsPanel.tsx interval, weekend, target, and reminder settings
-  components/RevisionTopicDetail.tsx revision workflow, history, rescheduling, and block planning
+  components/RevisionSettingsPanel.tsx interval, budget, limit, weekend, and reminder settings
+  components/RevisionDailyPlanCard.tsx daily plan workload, reorder, backlog, deferral, and links
+  components/RevisionTopicDetail.tsx revision workflow, history, rescheduling, deferral, block planning
   components/PreparationDashboard.tsx customizable preparation overview and insights
   components/DashboardCustomizer.tsx SQLite section ordering, visibility, and reset
   components/AnalyticsCharts.tsx lightweight accessible trend and comparison charts
@@ -1101,8 +1170,8 @@ src/                     React frontend and tests
   lib/preparationApi.ts         typed dashboard, study analytics, topic, timeline, and layout wrappers
   lib/backupApi.ts              typed backup, restore, CSV, and JSON portability wrappers
   lib/resourcesApi.ts           typed resource catalogue, discovery, progress, and PDF wrappers
-  lib/revisionApi.ts            typed revision scheduler and reminder command wrappers
-  lib/revisionScheduling.ts     frontend interval-preview mirror of the Rust algorithm
+  lib/revisionApi.ts            typed revision scheduler, daily-plan, deferral, and reminder wrappers
+  lib/revisionScheduling.ts     frontend interval-preview fallback mirror of the Rust algorithm
   lib/csvImportApi.ts           shared import preview/result types
   lib/commandError.ts           shared structured-error decoding
 src-tauri/               Tauri configuration and Rust backend
@@ -1129,6 +1198,7 @@ src-tauri/               Tauri configuration and Rust backend
   src/portability.rs     CSV datasets, complete JSON export, validated merge/replace import
   src/resources.rs       Source-page discovery, resource metadata, study status, and local PDFs
   src/revision.rs        Spaced-repetition scheduling, history, recommendations, and reminders
+  src/revision_plan.rs   Daily plans, workload allocation, deferrals, versioning, and session links
   src/error.rs           Serializable structured command errors
   src/lib.rs             Tauri builder, setup, and typed commands
   src/main.rs            Desktop entry point

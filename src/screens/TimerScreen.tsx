@@ -579,6 +579,16 @@ export default function TimerScreen() {
               </p>
             )}
 
+            {snapshot.state.revisionPlanItemId !== null && (
+              <p className="timer-topic-line">
+                <span>Revision plan</span>
+                <strong>
+                  Linked work item #{snapshot.state.revisionPlanItemId}. Finishing this focus timer
+                  records actual revision time on today&apos;s plan.
+                </strong>
+              </p>
+            )}
+
             {actionError && (
               <p className="save-feedback save-feedback-error" role="alert">
                 {actionError}

@@ -13,7 +13,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::{backup, error::AppError, settings, syllabus, timer};
 
 pub const DATABASE_FILE_NAME: &str = "csir-net-tracker.sqlite3";
-pub const LATEST_SCHEMA_VERSION: i64 = 10;
+pub const LATEST_SCHEMA_VERSION: i64 = 11;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) const MIGRATIONS_SLICE: &[M<'static>] = &[
@@ -31,6 +31,7 @@ pub(crate) const MIGRATIONS_SLICE: &[M<'static>] = &[
     )),
     M::up(include_str!("../migrations/0009_json_import_batches.sql")),
     M::up(include_str!("../migrations/0010_study_resources.sql")),
+    M::up(include_str!("../migrations/0011_revision_lifecycle.sql")),
 ];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -382,7 +383,7 @@ pub(crate) fn test_connection_with_defaults(today: NaiveDate) -> Connection {
 mod tests {
     use super::*;
     use crate::{
-        backup, mock_tests, planner, pyq, revision, sessions,
+        backup, mock_tests, planner, pyq, sessions,
         settings::{Settings, SettingsInput},
     };
 
@@ -406,7 +407,7 @@ mod tests {
     fn migrations_are_versioned_and_repeatable() {
         let mut connection = test_connection();
 
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         let table_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM sqlite_master
@@ -443,7 +444,7 @@ mod tests {
         assert_eq!(table_count, 23);
 
         migrate(&mut connection).expect("a repeated migration should be a no-op");
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
     }
 
     #[test]
@@ -476,7 +477,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -608,7 +609,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 29)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         assert_eq!(
             settings::load(&connection).expect("settings should survive the upgrade"),
             Settings {
@@ -741,7 +742,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         assert_eq!(
             settings::load(&connection)
                 .expect("settings should load")
@@ -961,7 +962,7 @@ mod tests {
         let connection =
             open_database(&path, date(2026, 10, 30)).expect("database should upgrade and open");
 
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         let progress: (String, String) = connection
             .query_row(
                 "SELECT status, notes FROM syllabus_progress LIMIT 1",
@@ -1151,22 +1152,37 @@ mod tests {
                 },
             )
             .expect("mock should save");
-            revision::schedule_topic(&mut connection, topic_id, "2026-10-29", today)
-                .expect("revision should schedule");
-            revision::complete(
-                &mut connection,
-                topic_id,
-                revision::CompleteRevisionInput {
-                    outcome: "good".to_owned(),
-                    notes: "Phase 7 revision".to_owned(),
-                },
-                today,
-            )
-            .expect("revision should complete");
+            connection
+                .execute(
+                    "INSERT INTO revision_schedules (
+                        topic_id, status, last_revision_date, next_revision_date,
+                        current_interval_days, completed_revisions, previous_outcome,
+                        mastery_estimate, notes, created_at, updated_at
+                     ) VALUES (
+                        ?1, 'active', '2026-10-29', '2026-11-06', 8, 1, 'good',
+                        70.0, '', '2026-10-29T10:00:00.000Z',
+                        '2026-10-29T10:00:00.000Z'
+                     )",
+                    [topic_id],
+                )
+                .expect("version six revision schedule should save");
+            connection
+                .execute(
+                    "INSERT INTO revision_history (
+                        topic_id, revision_date, scheduled_for_date, outcome, notes,
+                        interval_before_days, interval_after_days, mastery_before,
+                        mastery_after, created_at
+                     ) VALUES (
+                        ?1, '2026-10-29', '2026-10-29', 'good', 'Phase 7 revision',
+                        5, 8, 0.0, 70.0, '2026-10-29T10:00:00.000Z'
+                     )",
+                    [topic_id],
+                )
+                .expect("version six revision history should save");
         }
 
         let connection = open_database(&path, today).expect("database should upgrade and open");
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
 
         let progress: (String, String) = connection
             .query_row(
@@ -1305,7 +1321,7 @@ mod tests {
 
         let connection =
             open_database(&path, today).expect("version eight database should upgrade");
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
 
         let settings = settings::load(&connection).expect("upgraded settings should load");
         assert_eq!(settings.exam_date, "2027-01-10");
@@ -1396,7 +1412,7 @@ mod tests {
         }
 
         let connection = open_database(&path, today).expect("version nine database should upgrade");
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         assert_eq!(
             connection
                 .query_row("SELECT notes FROM study_sessions", [], |row| {
@@ -1496,7 +1512,7 @@ mod tests {
         }
 
         let connection = open_database(&path, today).expect("database should upgrade");
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         let metadata_id = backup::database_identifier(&connection)
             .expect("identity should load")
             .expect("identity should exist");
@@ -1629,7 +1645,7 @@ mod tests {
                     .expect("restored connection should exist")
             )
             .unwrap(),
-            10
+            11
         );
     }
 

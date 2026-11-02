@@ -53,7 +53,7 @@ fn normalize_category(value: String) -> String {
 
 const SELECT_SCHEDULE_FIELDS: &str = "status, last_revision_date, next_revision_date, \
     current_interval_days, completed_revisions, previous_outcome, mastery_estimate, \
-    notes, updated_at";
+    notes, deferred_until, updated_at";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +67,7 @@ pub struct RevisionSettings {
     pub maximum_interval_days: i64,
     pub include_weekends: bool,
     pub daily_revision_target: i64,
+    pub daily_revision_minutes: i64,
     pub reminders_enabled: bool,
     pub updated_at: String,
 }
@@ -83,6 +84,7 @@ pub struct RevisionSettingsInput {
     pub maximum_interval_days: i64,
     pub include_weekends: bool,
     pub daily_revision_target: i64,
+    pub daily_revision_minutes: i64,
     pub reminders_enabled: bool,
 }
 
@@ -112,6 +114,7 @@ pub struct RevisionSchedule {
     pub previous_outcome: Option<String>,
     pub mastery_estimate: f64,
     pub notes: String,
+    pub deferred_until: Option<String>,
     pub updated_at: String,
 }
 
@@ -152,6 +155,9 @@ pub struct RevisionHistoryEntry {
     pub mastery_before: f64,
     pub mastery_after: f64,
     pub created_at: String,
+    pub plan_item_id: Option<i64>,
+    pub actual_seconds: Option<i64>,
+    pub timing_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -240,6 +246,8 @@ pub struct CompleteRevisionInput {
     pub outcome: String,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub plan_item_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -247,6 +255,7 @@ pub struct CompleteRevisionInput {
 pub struct RevisionCompletion {
     pub state: RevisionTopicState,
     pub history: RevisionHistoryEntry,
+    pub plan_item_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -271,6 +280,7 @@ pub fn load_settings(connection: &Connection) -> Result<RevisionSettings, AppErr
                 maximum_interval_days,
                 include_weekends,
                 daily_revision_target,
+                daily_revision_minutes,
                 reminders_enabled,
                 updated_at
              FROM revision_settings
@@ -287,8 +297,9 @@ pub fn load_settings(connection: &Connection) -> Result<RevisionSettings, AppErr
                     maximum_interval_days: row.get(6)?,
                     include_weekends: row.get::<_, i64>(7)? != 0,
                     daily_revision_target: row.get(8)?,
-                    reminders_enabled: row.get::<_, i64>(9)? != 0,
-                    updated_at: row.get(10)?,
+                    daily_revision_minutes: row.get(9)?,
+                    reminders_enabled: row.get::<_, i64>(10)? != 0,
+                    updated_at: row.get(11)?,
                 })
             },
         )
@@ -321,7 +332,8 @@ pub fn update_settings(
                  maximum_interval_days = ?7,
                  include_weekends = ?8,
                  daily_revision_target = ?9,
-                 reminders_enabled = ?10,
+                 daily_revision_minutes = ?10,
+                 reminders_enabled = ?11,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = 1",
             params![
@@ -334,6 +346,7 @@ pub fn update_settings(
                 input.maximum_interval_days,
                 i64::from(input.include_weekends),
                 input.daily_revision_target,
+                input.daily_revision_minutes,
                 i64::from(input.reminders_enabled),
             ],
         )
@@ -400,6 +413,13 @@ fn validate_settings(input: &RevisionSettingsInput) -> Result<(), AppError> {
         return Err(AppError::validation(
             "dailyRevisionTarget",
             "Daily revision target must be between 1 and 100.",
+        ));
+    }
+
+    if !(5..=1440).contains(&input.daily_revision_minutes) {
+        return Err(AppError::validation(
+            "dailyRevisionMinutes",
+            "Daily revision minutes must be between 5 and 1440.",
         ));
     }
 
@@ -540,20 +560,28 @@ pub fn history(
     let mut statement = connection
         .prepare(
             "SELECT
-                id,
-                topic_id,
-                revision_date,
-                scheduled_for_date,
-                outcome,
-                notes,
-                interval_before_days,
-                interval_after_days,
-                mastery_before,
-                mastery_after,
-                created_at
-             FROM revision_history
-             WHERE topic_id = ?1
-             ORDER BY revision_date DESC, id DESC",
+                h.id,
+                h.topic_id,
+                h.revision_date,
+                h.scheduled_for_date,
+                h.outcome,
+                h.notes,
+                h.interval_before_days,
+                h.interval_after_days,
+                h.mastery_before,
+                h.mastery_after,
+                h.created_at,
+                pi.id,
+                (
+                    SELECT SUM(ss.duration_seconds)
+                    FROM revision_session_links rsl
+                    JOIN study_sessions ss ON ss.id = rsl.study_session_id
+                    WHERE rsl.plan_item_id = pi.id
+                )
+             FROM revision_history h
+             LEFT JOIN revision_plan_items pi ON pi.revision_history_id = h.id
+             WHERE h.topic_id = ?1
+             ORDER BY h.revision_date DESC, h.id DESC",
         )
         .map_err(|error| AppError::database("Revision history could not be prepared", error))?;
 
@@ -750,6 +778,8 @@ pub fn complete(
         ));
     }
     validate_notes(&input.notes)?;
+    let plan_item_id = input.plan_item_id;
+    crate::revision_plan::reconcile_for_revision_outcome(connection, today)?;
 
     let transaction = connection.transaction().map_err(|error| {
         AppError::database(
@@ -765,15 +795,45 @@ pub fn complete(
     if schedule.status == "suspended" {
         return Err(AppError::revision_suspended());
     }
+    let today_text = date_only::format_date_only(today);
+    if schedule
+        .deferred_until
+        .as_deref()
+        .is_some_and(|deferred_until| deferred_until > today_text.as_str())
+    {
+        return Err(AppError::validation(
+            "topicId",
+            "This revision is deferred and cannot be completed before its return date.",
+        ));
+    }
+    let plan_item_id = match plan_item_id {
+        Some(plan_item_id) => Some(plan_item_id),
+        None => match crate::revision_plan::active_plan_item_for_topic(
+            &transaction,
+            topic_id,
+            &today_text,
+        )? {
+            Some(plan_item_id) => Some(plan_item_id),
+            None => crate::revision_plan::pending_work_item_for_topic(&transaction, topic_id)?,
+        },
+    };
 
     let interval_before = schedule.current_interval_days;
     let mastery_before = schedule.mastery_estimate;
-    let interval_after = next_interval_days(&settings, interval_before, &outcome);
+    let scheduled_for_date = parse_date(&schedule.next_revision_date, "scheduledForDate")?;
+    let timing_days = (today - scheduled_for_date).num_days();
+    let evidence_status = evidence_status_for_topic(&transaction, today, topic_id)?;
+    let interval_after = next_interval_days_with_context(
+        &settings,
+        interval_before,
+        &outcome,
+        timing_days,
+        evidence_status,
+    );
     let mastery_after =
         next_mastery_estimate(mastery_before, schedule.completed_revisions, &outcome);
     let next_date = schedule_next_date(today, interval_after, settings.include_weekends)?;
     let next_text = date_only::format_date_only(next_date);
-    let today_text = date_only::format_date_only(today);
 
     transaction
         .execute(
@@ -824,6 +884,13 @@ pub fn complete(
         .map_err(|error| AppError::database("The revision history could not be appended", error))?;
 
     let history_id = transaction.last_insert_rowid();
+    let linked_plan_item = crate::revision_plan::attach_revision_outcome(
+        &transaction,
+        topic_id,
+        history_id,
+        plan_item_id,
+        &today_text,
+    )?;
     let history = load_history_entry(&transaction, history_id)?;
     let updated_schedule =
         load_schedule(&transaction, topic_id)?.ok_or_else(AppError::revision_not_scheduled)?;
@@ -832,7 +899,11 @@ pub fn complete(
         AppError::database("The revision completion could not be committed", error)
     })?;
 
-    Ok(RevisionCompletion { state, history })
+    Ok(RevisionCompletion {
+        state,
+        history,
+        plan_item_id: linked_plan_item,
+    })
 }
 
 pub fn prepare_reminder(
@@ -981,10 +1052,27 @@ pub fn scheduled_outcome_interval(settings: &RevisionSettings, outcome: &str) ->
     }
 }
 
+#[cfg(test)]
 pub fn next_interval_days(
     settings: &RevisionSettings,
     current_interval_days: i64,
     outcome: &str,
+) -> i64 {
+    next_interval_days_with_context(
+        settings,
+        current_interval_days,
+        outcome,
+        0,
+        EvidenceClass::None,
+    )
+}
+
+pub fn next_interval_days_with_context(
+    settings: &RevisionSettings,
+    current_interval_days: i64,
+    outcome: &str,
+    timing_days: i64,
+    evidence_status: EvidenceClass,
 ) -> i64 {
     let base = scheduled_outcome_interval(settings, outcome);
     let candidate = if matches!(outcome, "good" | "easy") {
@@ -994,7 +1082,22 @@ pub fn next_interval_days(
         base
     };
 
-    candidate
+    let adjusted = if matches!(outcome, "good" | "easy") {
+        let timing_factor =
+            (1.0 + 0.15 * (timing_days as f64 / 14.0).clamp(-1.0, 1.0)).clamp(0.85, 1.15);
+        let evidence_factor = if evidence_status == EvidenceClass::Weak {
+            0.8
+        } else {
+            1.0
+        };
+        ((candidate as f64 * timing_factor * evidence_factor).round() as i64)
+            .clamp(1, MAX_INTERVAL_DAYS)
+            .max(base)
+    } else {
+        candidate
+    };
+
+    adjusted
         .clamp(
             settings.minimum_interval_days,
             settings.maximum_interval_days,
@@ -1054,7 +1157,7 @@ pub fn schedule_next_date(
     Ok(adjusted)
 }
 
-fn topic_states(
+pub(crate) fn topic_states(
     connection: &Connection,
     today: NaiveDate,
 ) -> Result<Vec<RevisionTopicState>, AppError> {
@@ -1116,7 +1219,7 @@ fn build_state(
     })
 }
 
-fn load_topics(connection: &Connection) -> Result<Vec<RevisionTopic>, AppError> {
+pub(crate) fn load_topics(connection: &Connection) -> Result<Vec<RevisionTopic>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -1158,7 +1261,9 @@ fn load_topics(connection: &Connection) -> Result<Vec<RevisionTopic>, AppError> 
         .map_err(|error| AppError::database("Revision topics could not be read", error))
 }
 
-fn load_archived_topics(connection: &Connection) -> Result<Vec<RevisionTopic>, AppError> {
+pub(crate) fn load_archived_topics(
+    connection: &Connection,
+) -> Result<Vec<RevisionTopic>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT
@@ -1295,7 +1400,8 @@ fn map_schedule(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Revi
         previous_outcome: row.get(offset + 5)?,
         mastery_estimate: row.get(offset + 6)?,
         notes: row.get(offset + 7)?,
-        updated_at: row.get(offset + 8)?,
+        deferred_until: row.get(offset + 8)?,
+        updated_at: row.get(offset + 9)?,
     })
 }
 
@@ -1356,11 +1462,19 @@ fn recent_history(
                 COALESCE(p.priority, 'Normal'),
                 COALESCE(p.confidence, 3),
                 COALESCE(p.status, 'Not started'),
-                t.category
+                t.category,
+                pi.id,
+                (
+                    SELECT SUM(ss.duration_seconds)
+                    FROM revision_session_links rsl
+                    JOIN study_sessions ss ON ss.id = rsl.study_session_id
+                    WHERE rsl.plan_item_id = pi.id
+                )
              FROM revision_history h
              JOIN syllabus_topics t ON t.id = h.topic_id
              JOIN syllabus_sections s ON s.id = t.section_id
              LEFT JOIN syllabus_progress p ON p.topic_id = t.id
+             LEFT JOIN revision_plan_items pi ON pi.revision_history_id = h.id
              WHERE h.revision_date >= ?1
              ORDER BY h.revision_date DESC, h.id DESC
              LIMIT ?2",
@@ -1372,7 +1486,7 @@ fn recent_history(
             params![date_only::format_date_only(from), RECENT_HISTORY_LIMIT],
             |row| {
                 Ok(RevisionHistoryWithTopic {
-                    history: map_history_at(row, 0)?,
+                    history: map_history_at(row, 0, Some(20), Some(21))?,
                     topic: RevisionTopic {
                         id: row.get(1)?,
                         code: row.get(11)?,
@@ -1400,21 +1514,29 @@ fn load_history_entry(
     connection
         .query_row(
             "SELECT
-                id,
-                topic_id,
-                revision_date,
-                scheduled_for_date,
-                outcome,
-                notes,
-                interval_before_days,
-                interval_after_days,
-                mastery_before,
-                mastery_after,
-                created_at
-             FROM revision_history
-             WHERE id = ?1",
+                h.id,
+                h.topic_id,
+                h.revision_date,
+                h.scheduled_for_date,
+                h.outcome,
+                h.notes,
+                h.interval_before_days,
+                h.interval_after_days,
+                h.mastery_before,
+                h.mastery_after,
+                h.created_at,
+                pi.id,
+                (
+                    SELECT SUM(ss.duration_seconds)
+                    FROM revision_session_links rsl
+                    JOIN study_sessions ss ON ss.id = rsl.study_session_id
+                    WHERE rsl.plan_item_id = pi.id
+                )
+             FROM revision_history h
+             LEFT JOIN revision_plan_items pi ON pi.revision_history_id = h.id
+             WHERE h.id = ?1",
             [history_id],
-            |row| map_history_at(row, 0),
+            |row| map_history_at(row, 0, Some(11), Some(12)),
         )
         .optional()
         .map_err(|error| AppError::database("Revision history could not be loaded", error))?
@@ -1422,18 +1544,34 @@ fn load_history_entry(
 }
 
 fn map_history(row: &rusqlite::Row<'_>) -> rusqlite::Result<RevisionHistoryEntry> {
-    map_history_at(row, 0)
+    map_history_at(row, 0, Some(11), Some(12))
 }
 
 fn map_history_at(
     row: &rusqlite::Row<'_>,
     offset: usize,
+    plan_item_offset: Option<usize>,
+    actual_seconds_offset: Option<usize>,
 ) -> rusqlite::Result<RevisionHistoryEntry> {
+    let revision_date: String = row.get(offset + 2)?;
+    let scheduled_for_date: String = row.get(offset + 3)?;
+    let timing_days = date_only::parse_date_only(&revision_date)
+        .zip(date_only::parse_date_only(&scheduled_for_date))
+        .map(|(revision, scheduled)| (revision - scheduled).num_days());
+    let plan_item_id = match plan_item_offset {
+        Some(index) => row.get(index)?,
+        None => None,
+    };
+    let actual_seconds = match actual_seconds_offset {
+        Some(index) => row.get(index)?,
+        None => None,
+    };
+
     Ok(RevisionHistoryEntry {
         id: row.get(offset)?,
         topic_id: row.get(offset + 1)?,
-        revision_date: row.get(offset + 2)?,
-        scheduled_for_date: row.get(offset + 3)?,
+        revision_date,
+        scheduled_for_date,
         outcome: row.get(offset + 4)?,
         notes: row.get(offset + 5)?,
         interval_before_days: row.get(offset + 6)?,
@@ -1441,11 +1579,14 @@ fn map_history_at(
         mastery_before: row.get(offset + 8)?,
         mastery_after: row.get(offset + 9)?,
         created_at: row.get(offset + 10)?,
+        plan_item_id,
+        actual_seconds,
+        timing_days,
     })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EvidenceClass {
+pub(crate) enum EvidenceClass {
     Weak,
     Strong,
     Moderate,
@@ -1583,6 +1724,19 @@ fn evidence_assessment(pyq: Option<&analytics::PyqTopicPerformance>) -> Evidence
     }
 }
 
+pub(crate) fn evidence_status_for_topic(
+    connection: &Connection,
+    today: NaiveDate,
+    topic_id: i64,
+) -> Result<EvidenceClass, AppError> {
+    let evidence_from = analytics::evidence_cutoff(today);
+    let evidence_to = date_only::format_date_only(today);
+    let performance =
+        analytics::topic_performance(connection, None, None, &evidence_from, &evidence_to)?;
+    let stats = performance.iter().find(|entry| entry.topic_id == topic_id);
+    Ok(evidence_assessment(stats).class)
+}
+
 fn priority_need(priority: &str) -> f64 {
     match priority {
         "High-Yield" => 100.0,
@@ -1699,7 +1853,7 @@ fn recommendation_lane(
     }
 }
 
-fn recommendations(
+pub(crate) fn ranked_recommendations(
     states: &[RevisionTopicState],
     pyq: &HashMap<i64, analytics::PyqTopicPerformance>,
 ) -> Vec<RevisionRecommendation> {
@@ -1867,6 +2021,14 @@ fn recommendations(
             .then_with(|| left.next_revision_date.cmp(&right.next_revision_date))
             .then_with(|| left.topic.code.cmp(&right.topic.code))
     });
+    recommendations
+}
+
+fn recommendations(
+    states: &[RevisionTopicState],
+    pyq: &HashMap<i64, analytics::PyqTopicPerformance>,
+) -> Vec<RevisionRecommendation> {
+    let mut recommendations = ranked_recommendations(states, pyq);
     recommendations.truncate(MAX_RECOMMENDATIONS);
     recommendations
 }
@@ -1967,6 +2129,7 @@ mod tests {
             maximum_interval_days: settings.maximum_interval_days,
             include_weekends: settings.include_weekends,
             daily_revision_target: settings.daily_revision_target,
+            daily_revision_minutes: settings.daily_revision_minutes,
             reminders_enabled: settings.reminders_enabled,
         }
     }
@@ -2011,6 +2174,7 @@ mod tests {
             previous_outcome: previous_outcome.map(str::to_owned),
             mastery_estimate,
             notes: String::new(),
+            deferred_until: None,
             updated_at: "2026-10-20T10:00:00.000Z".to_owned(),
         }
     }
@@ -2244,6 +2408,7 @@ mod tests {
             &mut connection,
             topic,
             CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "again".to_owned(),
                 notes: "Could not recall the derivation".to_owned(),
             },
@@ -2293,6 +2458,7 @@ mod tests {
             &mut connection,
             topic,
             CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "difficult".to_owned(),
                 notes: "Partial recall".to_owned(),
             },
@@ -2322,6 +2488,7 @@ mod tests {
             &mut connection,
             topic,
             CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "good".to_owned(),
                 notes: String::new(),
             },
@@ -2351,6 +2518,7 @@ mod tests {
             &mut connection,
             topic,
             CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "easy".to_owned(),
                 notes: String::new(),
             },
@@ -2406,6 +2574,7 @@ mod tests {
                 &mut connection,
                 topic,
                 CompleteRevisionInput {
+                    plan_item_id: None,
                     outcome: "good".to_owned(),
                     notes: String::new(),
                 },
@@ -2460,6 +2629,7 @@ mod tests {
             &mut connection,
             topic,
             CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "good".to_owned(),
                 notes: String::new(),
             },
@@ -3289,6 +3459,7 @@ mod tests {
             &mut connection,
             topic,
             CompleteRevisionInput {
+                plan_item_id: None,
                 outcome: "good".to_owned(),
                 notes: "Completed before archiving".to_owned(),
             },
@@ -3342,6 +3513,7 @@ mod tests {
                 &mut connection,
                 topic,
                 CompleteRevisionInput {
+                    plan_item_id: None,
                     outcome: "good".to_owned(),
                     notes: "Do not save".to_owned(),
                 },

@@ -2,8 +2,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
+  RevisionDailyPlan,
   RevisionDashboard,
   RevisionHistoryEntry,
+  RevisionIntervalDecision,
+  RevisionPlanMembership,
   RevisionSchedule,
   RevisionTopic,
   RevisionTopicState,
@@ -87,10 +90,79 @@ function schedule(overrides: Partial<RevisionSchedule> = {}): RevisionSchedule {
     previousOutcome: 'good',
     masteryEstimate: 60,
     notes: 'Focus on dimensions.',
+    deferredUntil: null,
     updatedAt: '2026-10-25T10:00:00.000Z',
     ...overrides,
   };
 }
+
+const PLAN_ITEM_A: RevisionPlanMembership = {
+  dailyPlanId: 1,
+  planItemId: 101,
+  topic: TOPIC_A,
+  position: 0,
+  estimatedMinutes: 25,
+  lane: 'urgent_review',
+  triageScore: 73.6,
+  membershipStatus: 'planned',
+  itemStatus: 'planned',
+  actualSeconds: 0,
+  remainingEstimateMinutes: 25,
+  carriedFromDailyPlanId: null,
+  plannedBlock: {
+    id: null,
+    title: null,
+    calendarDate: null,
+    startTime: null,
+    endTime: null,
+  },
+};
+
+const EMPTY_DAILY_PLAN: RevisionDailyPlan = {
+  today: TODAY,
+  planId: null,
+  planDate: null,
+  version: null,
+  status: null,
+  needsGeneration: true,
+  effectiveBudgetMinutes: 90,
+  maxTopics: 5,
+  plannedMinutes: 0,
+  completedMinutes: 0,
+  actualMinutesToday: 0,
+  remainingWorkMinutes: 0,
+  remainingDailyBudgetMinutes: 90,
+  overBudget: false,
+  overLimit: false,
+  scheduled: [],
+  completed: [],
+  backlog: [],
+  deferred: [],
+  unscheduledUrgent: [],
+};
+
+const GENERATED_DAILY_PLAN: RevisionDailyPlan = {
+  ...EMPTY_DAILY_PLAN,
+  planId: 1,
+  planDate: TODAY,
+  version: 1,
+  status: 'active',
+  needsGeneration: false,
+  plannedMinutes: 25,
+  remainingWorkMinutes: 25,
+  remainingDailyBudgetMinutes: 65,
+  scheduled: [PLAN_ITEM_A],
+};
+
+const INTERVAL_PREVIEW: RevisionIntervalDecision = {
+  intervalBeforeDays: 5,
+  intervalAfterDays: 10,
+  timingDays: 0,
+  timingFactor: 1,
+  evidenceStatus: 'none',
+  evidenceFactor: 1,
+  reasons: ['Interval changes from 5 to 10 days.', 'Timing adjustment: +0 days.'],
+};
 
 const STATE_A: RevisionTopicState = {
   topic: TOPIC_A,
@@ -136,6 +208,9 @@ const HISTORY: RevisionHistoryEntry = {
   masteryBefore: 45,
   masteryAfter: 60,
   createdAt: '2026-10-25T10:00:00.000Z',
+  planItemId: null,
+  actualSeconds: null,
+  timingDays: 0,
 };
 
 const ARCHIVED_HISTORY: RevisionHistoryEntry = {
@@ -159,6 +234,7 @@ const DASHBOARD: RevisionDashboard = {
     maximumIntervalDays: 3650,
     includeWeekends: true,
     dailyRevisionTarget: 5,
+    dailyRevisionMinutes: 90,
     remindersEnabled: false,
     updatedAt: '2026-10-25T10:00:00.000Z',
   },
@@ -254,10 +330,34 @@ const DASHBOARD: RevisionDashboard = {
     'Mock tests are stored at part level and do not map to individual syllabus topics.',
   mockTestCount: 2,
 };
+function mockDashboardBackend(dashboard: RevisionDashboard) {
+  invokeMock.mockImplementation((command: string) => {
+    if (command === 'get_revision_dashboard') {
+      return Promise.resolve(dashboard);
+    }
+    if (command === 'get_revision_daily_plan') {
+      return Promise.resolve(EMPTY_DAILY_PLAN);
+    }
+    if (command === 'get_revision_interval_preview') {
+      return Promise.resolve(INTERVAL_PREVIEW);
+    }
+    if (command === 'get_revision_history') {
+      return Promise.resolve([]);
+    }
+    return Promise.reject(new Error(`Unexpected command: ${command}`));
+  });
+}
+
 function mockRevisionBackend() {
   invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
     if (command === 'get_revision_dashboard') {
       return Promise.resolve(DASHBOARD);
+    }
+    if (command === 'get_revision_daily_plan') {
+      return Promise.resolve(EMPTY_DAILY_PLAN);
+    }
+    if (command === 'get_revision_interval_preview') {
+      return Promise.resolve(INTERVAL_PREVIEW);
     }
     if (command === 'get_revision_history') {
       if (args?.topicId === ARCHIVED_TOPIC.id) {
@@ -269,6 +369,7 @@ function mockRevisionBackend() {
       return Promise.resolve({
         state: STATE_A,
         history: HISTORY,
+        planItemId: null,
       });
     }
     if (command === 'reschedule_revision') {
@@ -297,6 +398,28 @@ function mockRevisionBackend() {
     }
     if (command === 'update_revision_notes') {
       return Promise.resolve(STATE_A);
+    }
+    if (command === 'defer_revision') {
+      return Promise.resolve({
+        plan: EMPTY_DAILY_PLAN,
+        event: {
+          id: 77,
+          topicId: TOPIC_A.id,
+          planItemId: null,
+          eventKind: 'defer',
+          overriddenDeferralId: null,
+          previousDueDate: TODAY,
+          newDueDate: '2026-11-10',
+          occurredOn: TODAY,
+          reason: 'time',
+          notes: 'Conference',
+          createdAt: '2026-10-30T10:00:00.000Z',
+        },
+        schedule: schedule({
+          nextRevisionDate: '2026-11-10',
+          deferredUntil: '2026-11-10',
+        }),
+      });
     }
     return Promise.reject(new Error(`Unexpected command: ${command}`));
   });
@@ -359,7 +482,7 @@ describe('revision screen', () => {
   });
 
   it('renders the maintain lane with explicit stale and skipped-only evidence copy', async () => {
-    invokeMock.mockResolvedValue({
+    mockDashboardBackend({
       ...DASHBOARD,
       recommendations: [
         {
@@ -552,6 +675,197 @@ describe('revision screen', () => {
     expect(screen.getByText(/Topic added to the revision schedule/)).toBeInTheDocument();
   });
 
+  it('generates a daily plan and wires plan items to the timer and backlog', async () => {
+    let currentPlan = EMPTY_DAILY_PLAN;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_revision_dashboard') {
+        return Promise.resolve(DASHBOARD);
+      }
+      if (command === 'get_revision_daily_plan') {
+        return Promise.resolve(currentPlan);
+      }
+      if (command === 'get_revision_interval_preview') {
+        return Promise.resolve(INTERVAL_PREVIEW);
+      }
+      if (command === 'generate_revision_daily_plan') {
+        currentPlan = GENERATED_DAILY_PLAN;
+        return Promise.resolve(currentPlan);
+      }
+      if (command === 'start_study_timer') {
+        return Promise.resolve({});
+      }
+      if (command === 'move_revision_plan_item') {
+        currentPlan = {
+          ...GENERATED_DAILY_PLAN,
+          plannedMinutes: 0,
+          remainingWorkMinutes: 0,
+          remainingDailyBudgetMinutes: 90,
+          scheduled: [],
+        };
+        return Promise.resolve(currentPlan);
+      }
+      if (command === 'get_revision_history') {
+        return Promise.resolve([]);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    render(<RevisionScreen today={TODAY} />);
+    const planRegion = await screen.findByRole('region', { name: "Today's revision plan" });
+    expect(
+      within(planRegion).getByText(/No plan has been generated for today/),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      within(planRegion).getByRole('button', { name: "Generate today's plan" }),
+    );
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('generate_revision_daily_plan'));
+    expect(
+      await within(planRegion).findByRole('heading', { name: 'Scheduled work' }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      within(planRegion).getByRole('button', {
+        name: /Start focus timer for MMP-C01/,
+      }),
+    );
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('start_study_timer', {
+        mode: 'focus',
+        topicId: TOPIC_A.id,
+        planItemId: PLAN_ITEM_A.planItemId,
+      }),
+    );
+    await userEvent.click(
+      within(planRegion).getByRole('button', {
+        name: /Move MMP-C01 to backlog/,
+      }),
+    );
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('move_revision_plan_item', {
+        planItemId: PLAN_ITEM_A.planItemId,
+        target: 'backlog',
+      }),
+    );
+  });
+
+  it('defers a revision with an explicit return date and reason', async () => {
+    mockRevisionBackend();
+
+    render(<RevisionScreen today={TODAY} />);
+    const dueTodayQueue = await screen.findByRole('region', { name: 'Due today' });
+    await userEvent.click(within(dueTodayQueue).getByRole('button', { name: 'Review' }));
+    await screen.findByRole('heading', {
+      name: 'MMP-C01 · Dimensional analysis',
+      level: 2,
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Defer revision' }));
+    fireEvent.change(screen.getByLabelText('Return date'), {
+      target: { value: '2026-11-10' },
+    });
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'time' } });
+    fireEvent.change(screen.getByLabelText('Notes (optional)'), {
+      target: { value: 'Conference' },
+    });
+    const deferButtons = screen.getAllByRole('button', { name: 'Defer revision' });
+    await userEvent.click(deferButtons[deferButtons.length - 1]);
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('defer_revision', {
+        topicId: TOPIC_A.id,
+        newDate: '2026-11-10',
+        reason: 'time',
+        notes: 'Conference',
+      }),
+    );
+    expect(await screen.findByText(/Revision deferred until/)).toBeInTheDocument();
+  });
+
+  it('loads and expands immutable plan history versions', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_revision_dashboard') {
+        return Promise.resolve(DASHBOARD);
+      }
+      if (command === 'get_revision_daily_plan') {
+        return Promise.resolve(EMPTY_DAILY_PLAN);
+      }
+      if (command === 'get_revision_interval_preview') {
+        return Promise.resolve(INTERVAL_PREVIEW);
+      }
+      if (command === 'get_revision_plan_history') {
+        return Promise.resolve([
+          {
+            planId: 1,
+            planDate: TODAY,
+            version: 1,
+            status: 'superseded',
+            effectiveBudgetMinutes: 90,
+            maxTopics: 5,
+            plannedMinutes: 25,
+            completedMinutes: 10,
+            createdAt: '2026-10-30T09:00:00.000Z',
+            lastRebalancedAt: '2026-10-30T10:00:00.000Z',
+            memberships: [PLAN_ITEM_A],
+          },
+        ]);
+      }
+      if (command === 'get_revision_history') {
+        return Promise.resolve([]);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    render(<RevisionScreen today={TODAY} />);
+    await screen.findByText('Revision plan history and workload versions');
+    await userEvent.click(screen.getByText('Revision plan history and workload versions'));
+    await userEvent.click(screen.getByRole('button', { name: 'Load last 30 days' }));
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('get_revision_plan_history', {
+        fromDate: '2026-09-30',
+        toDate: TODAY,
+      }),
+    );
+    expect(await screen.findByText(/version 1/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Memberships (1)'));
+    expect(screen.getAllByText(/MMP-C01 · Dimensional analysis/).length).toBeGreaterThan(0);
+  });
+
+  it('refreshes the dashboard and daily plan when the local date changes', async () => {
+    const tomorrow = '2026-10-31';
+    let dashboardCalls = 0;
+    let planCalls = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_revision_dashboard') {
+        dashboardCalls += 1;
+        return Promise.resolve(
+          dashboardCalls === 1 ? DASHBOARD : { ...DASHBOARD, today: tomorrow },
+        );
+      }
+      if (command === 'get_revision_daily_plan') {
+        planCalls += 1;
+        return Promise.resolve(
+          planCalls === 1 ? GENERATED_DAILY_PLAN : { ...EMPTY_DAILY_PLAN, today: tomorrow },
+        );
+      }
+      if (command === 'get_revision_interval_preview') {
+        return Promise.resolve(INTERVAL_PREVIEW);
+      }
+      if (command === 'get_revision_history') {
+        return Promise.resolve([]);
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`));
+    });
+
+    const { rerender } = render(<RevisionScreen today={TODAY} />);
+    const planRegion = await screen.findByRole('region', { name: "Today's revision plan" });
+    expect(within(planRegion).getByText(/Version 1/)).toBeInTheDocument();
+
+    rerender(<RevisionScreen today={tomorrow} />);
+
+    await waitFor(() => expect(dashboardCalls).toBe(2));
+    await waitFor(() => expect(planCalls).toBe(2));
+    expect(await screen.findByText(/No plan has been generated for today/)).toBeInTheDocument();
+    expect(screen.queryByText(/Version 1/)).not.toBeInTheDocument();
+  });
+
   it('shows a loading state while the dashboard command is pending', () => {
     invokeMock.mockReturnValue(new Promise(() => {}));
     render(<RevisionScreen today={TODAY} />);
@@ -559,7 +873,7 @@ describe('revision screen', () => {
   });
 
   it('shows explicit empty queue and recommendation states', async () => {
-    invokeMock.mockResolvedValue({
+    mockDashboardBackend({
       ...DASHBOARD,
       stats: {
         scheduledCount: 0,
