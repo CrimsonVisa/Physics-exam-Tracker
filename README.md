@@ -590,16 +590,44 @@ revisions remain outside study-time totals unless a separate study session is re
 
 ### Advisory recommendations
 
-Recommendations are deterministic and advisory. They combine overdue/due dates, previous outcomes,
-mastery estimate, and PYQ evidence only when at least five distinct questions have scored outcomes in
-the last 365 calendar days. The evidence uses each question's latest scored result in that window, so repeated
-attempts cannot increase the question count and older attempts are superseded by newer outcomes for
-the same question. Topics with fewer evidence questions are explicitly annotated as insufficient
-evidence rather than labelled weak. Scheduling changes never happen from a recommendation alone; the
-user must open the topic or choose **Add to schedule**. Archived topics keep their schedules and
-history in SQLite but are excluded from active revision queues, recommendations, revision calendar
-items, and reminder counts. A separate read-only archived-history section on the Revision screen lets
-the user inspect those outcomes without scheduling changes. Revision schedule, completion, notes and
+Recommendations are deterministic and advisory. The Stage 3.2a triage score is:
+
+```text
+T = 0.55U + 0.10P + 0.10C + 0.15E + 0.10R
+```
+
+`U` is due urgency (overdue 100, due today 80, upcoming `max(0, 70 - 2 x days_until_due)`,
+not scheduled 0). `P` is syllabus priority (High-Yield 100, High 75, Normal 50, Low 25).
+`C` is 60% confidence need plus 40% syllabus-status need. `E` is PYQ evidence need:
+weak evidence scores `100 x min(1, distinct_questions / 10)` and strong evidence scores 0.
+`R` is 60% previous-outcome risk plus 40% mastery need. The weights and component
+calculations are centralized in `revision.rs`.
+
+Each recommendation receives exactly one lane, with precedence
+`urgent_review` > `strengthen` > `maintain`:
+
+- `urgent_review` - overdue, due today, or due within seven days.
+- `strengthen` - weak PYQ evidence, confidence 1-2, or a high-priority topic with
+  insufficient recent evidence. A high-priority unscheduled topic with insufficient
+  evidence appears here without a fabricated due state.
+- `maintain` - the fallback for non-urgent scheduled reviews that do not qualify for
+  `strengthen`. Strong evidence with high mastery is its canonical case. Other fallback
+  reviews use a neutral explanation: no stronger learning-risk signal was identified.
+
+PYQ evidence reuses the Stage 3.1 `topic_performance` path and its exact 365-calendar-day
+window. Each distinct question contributes only its latest scored outcome, and future or
+stale attempts are excluded. Fewer than five distinct scored questions, stale-only
+evidence, and skipped-only evidence are explicitly labelled and never described as weak
+performance; raw attempt counts never increase evidence strength. Missing syllabus
+metadata falls back to Normal priority, confidence 3, Not started status, and the Core
+category.
+
+The advisory cap remains eight recommendations, and scheduling changes never happen from
+a recommendation alone; the user must open the topic or choose **Add to schedule**.
+Archived topics keep their schedules and history in SQLite but are excluded from active
+revision queues, recommendations, revision calendar items, and reminder counts. A
+separate read-only archived-history section on the Revision screen lets the user inspect
+those outcomes without scheduling changes. Revision schedule, completion, notes and
 status mutations reject archived topics in the backend as well as the UI.
 
 Mock tests are stored at part level without a topic mapping. They remain available in Analytics, but

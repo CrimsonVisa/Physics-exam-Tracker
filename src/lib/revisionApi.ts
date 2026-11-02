@@ -19,6 +19,12 @@ export type RevisionSettings = {
 
 export type RevisionSettingsInput = Omit<RevisionSettings, 'updatedAt'>;
 
+export type RevisionPriority = 'High-Yield' | 'High' | 'Normal' | 'Low';
+export type RevisionSyllabusStatus = 'Not started' | 'Learning' | 'Revised' | 'Confident';
+export type RevisionLane = 'urgent_review' | 'strengthen' | 'maintain';
+export type RevisionEvidenceStatus =
+  'weak' | 'strong' | 'moderate' | 'insufficient' | 'stale' | 'skipped_only' | 'unscored' | 'none';
+
 export type RevisionTopic = {
   id: number;
   code: string;
@@ -26,6 +32,10 @@ export type RevisionTopic = {
   archived: boolean;
   sectionCode: string;
   sectionTitle: string;
+  priority: RevisionPriority;
+  confidence: number;
+  syllabusStatus: RevisionSyllabusStatus;
+  category: string;
 };
 
 export type RevisionSchedule = {
@@ -91,8 +101,18 @@ export type RevisionRecommendation = {
   pyqEvidenceAccuracy: number | null;
   pyqLastAttemptDate: string | null;
   pyqSufficient: boolean;
-  priority: 'high' | 'medium' | 'low';
-  score: number;
+  lane: RevisionLane;
+  triageScore: number;
+  daysOverdue: number;
+  daysUntilDue: number | null;
+  dueUrgency: number;
+  priorityNeed: number;
+  confidenceNeed: number;
+  statusNeed: number;
+  confidenceStatusNeed: number;
+  pyqEvidenceNeed: number;
+  revisionRisk: number;
+  evidenceStatus: RevisionEvidenceStatus;
   reasons: string[];
 };
 

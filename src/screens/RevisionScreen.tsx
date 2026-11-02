@@ -8,7 +8,9 @@ import {
   getRevisionDashboard,
   scheduleRevisionTopic,
   type RevisionDashboard,
+  type RevisionEvidenceStatus,
   type RevisionHistoryWithTopic,
+  type RevisionLane,
   type RevisionRecommendation,
   type RevisionSettings,
   type RevisionTopicState,
@@ -28,6 +30,44 @@ const EMPTY_FILTER: RevisionFilter = {
   schedulingStatus: '',
   dueState: '',
 };
+
+const LANE_LABELS: Record<RevisionLane, string> = {
+  urgent_review: 'Urgent review',
+  strengthen: 'Strengthen',
+  maintain: 'Maintain',
+};
+
+const EVIDENCE_LABELS: Record<RevisionEvidenceStatus, string> = {
+  weak: 'Weak PYQ evidence',
+  strong: 'Strong PYQ evidence',
+  moderate: 'Moderate PYQ evidence',
+  insufficient: 'Insufficient PYQ evidence',
+  stale: 'Stale PYQ evidence',
+  skipped_only: 'Skipped-only PYQ evidence',
+  unscored: 'Unscored PYQ attempts',
+  none: 'No recent PYQ evidence',
+};
+
+function dueStateLabel(recommendation: RevisionRecommendation): string {
+  switch (recommendation.dueState) {
+    case 'overdue':
+      return `Overdue by ${recommendation.daysOverdue} ${
+        recommendation.daysOverdue === 1 ? 'day' : 'days'
+      }`;
+    case 'due_today':
+      return 'Due today';
+    case 'upcoming':
+      return recommendation.daysUntilDue === null
+        ? 'Upcoming'
+        : `Due in ${recommendation.daysUntilDue} ${
+            recommendation.daysUntilDue === 1 ? 'day' : 'days'
+          }`;
+    case 'suspended':
+      return 'Suspended';
+    default:
+      return 'Not scheduled';
+  }
+}
 
 function dateLabel(value: string | null): string {
   if (!value) {
@@ -120,7 +160,7 @@ function RecommendationRow({
   onSchedule: (topicId: number) => void;
 }) {
   return (
-    <article className={`revision-recommendation revision-priority-${recommendation.priority}`}>
+    <article className={`revision-recommendation revision-lane-${recommendation.lane}`}>
       <div className="revision-recommendation-heading">
         <div>
           <h3>
@@ -133,10 +173,27 @@ function RecommendationRow({
               : 'Not scheduled'}
           </p>
         </div>
-        <span className={`revision-priority revision-priority-${recommendation.priority}`}>
-          {recommendation.priority} priority
-        </span>
+        <div className="revision-recommendation-badges">
+          <span className={`revision-lane revision-lane-${recommendation.lane}`}>
+            {LANE_LABELS[recommendation.lane]}
+          </span>
+          <span
+            className="revision-triage-score"
+            aria-label={`Triage score ${recommendation.triageScore.toFixed(1)}`}
+          >
+            Triage score {recommendation.triageScore.toFixed(1)}
+          </span>
+        </div>
       </div>
+      <p className="revision-recommendation-context">
+        {[
+          dueStateLabel(recommendation),
+          `${recommendation.topic.priority} priority`,
+          `Confidence ${recommendation.topic.confidence}/5`,
+          recommendation.topic.syllabusStatus,
+          EVIDENCE_LABELS[recommendation.evidenceStatus],
+        ].join(' · ')}
+      </p>
       <ul className="revision-reasons">
         {recommendation.reasons.map((reason) => (
           <li key={reason}>{reason}</li>
@@ -445,8 +502,9 @@ export default function RevisionScreen({ today }: { today: string }) {
               </div>
             </div>
             <p className="settings-lede">
-              Recommendations use due dates, previous outcomes, mastery, and PYQ outcomes with
-              enough data. They never change the schedule automatically.
+              Recommendations combine due urgency, syllabus priority, confidence, recent PYQ
+              evidence, and revision history. Lanes apply in order: urgent review, strengthen, then
+              maintain. They never change the schedule automatically.
             </p>
             {dashboard.recommendations.length === 0 ? (
               <p className="revision-empty">
