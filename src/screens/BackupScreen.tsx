@@ -87,6 +87,19 @@ function countRows(counts: Record<string, number>): number {
   return Object.values(counts).reduce((total, count) => total + count, 0);
 }
 
+function recoveryKindLabel(kind: string): string {
+  switch (kind) {
+    case 'pre_migration':
+      return 'Pre-migration (older schema)';
+    case 'post_migration':
+      return 'Post-migration (current schema)';
+    case 'pre_restore':
+      return 'Pre-restore safety';
+    default:
+      return 'Recovery snapshot';
+  }
+}
+
 function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   if (!feedback) {
     return null;
@@ -122,6 +135,7 @@ export default function BackupScreen({
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
   const [restoreFeedback, setRestoreFeedback] = useState<Feedback>(null);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [oldSchemaAcknowledged, setOldSchemaAcknowledged] = useState(false);
   const [csvDirectory, setCsvDirectory] = useState('');
   const [csvResult, setCsvResult] = useState<CsvExportResult | null>(null);
   const [csvFeedback, setCsvFeedback] = useState<Feedback>(null);
@@ -293,6 +307,26 @@ export default function BackupScreen({
     }
   }
 
+  async function previewRestorePath(path: string) {
+    setRestorePath(path);
+    setRestoreFeedback(null);
+    setRestorePreview(null);
+    setOldSchemaAcknowledged(false);
+    setIsRestoring(true);
+    try {
+      const preview = await previewRestoreBackup(path);
+      setRestorePreview(preview);
+      setRestoreFeedback({
+        tone: 'success',
+        message: 'Backup structure, manifest, checksum, schema and relationships validated.',
+      });
+    } catch (error: unknown) {
+      setRestoreFeedback({ tone: 'error', message: toCommandError(error).message });
+    } finally {
+      setIsRestoring(false);
+    }
+  }
+
   async function handleChooseRestore() {
     try {
       const selected = await openDialog({
@@ -304,20 +338,7 @@ export default function BackupScreen({
       if (typeof selected !== 'string') {
         return;
       }
-      setRestorePath(selected);
-      setRestoreFeedback(null);
-      setRestorePreview(null);
-      setIsRestoring(true);
-      try {
-        const preview = await previewRestoreBackup(selected);
-        setRestorePreview(preview);
-        setRestoreFeedback({
-          tone: 'success',
-          message: 'Backup structure, manifest, checksum, schema and relationships validated.',
-        });
-      } finally {
-        setIsRestoring(false);
-      }
+      await previewRestorePath(selected);
     } catch (error: unknown) {
       setRestoreFeedback({ tone: 'error', message: toCommandError(error).message });
     }
@@ -327,8 +348,19 @@ export default function BackupScreen({
     if (!restorePreview || !restorePath || isBusy) {
       return;
     }
+    const oldSchema = restorePreview.manifest.schemaVersion < restorePreview.currentSchemaVersion;
+    if (oldSchema && !oldSchemaAcknowledged) {
+      setRestoreFeedback({
+        tone: 'error',
+        message:
+          'Acknowledge that records created after this older backup will not be present in the restored live database.',
+      });
+      return;
+    }
     const confirmed = window.confirm(
-      'Restore this backup and replace all current application data? A verified safety backup of the current database will be created first.',
+      oldSchema
+        ? 'Restore this older-schema backup? The current database will be replaced by an older snapshot. Records created after that backup will not be in the restored live database. A verified pre-restore safety snapshot will preserve the current data, but it is not merged automatically.'
+        : 'Restore this backup and replace all current application data? A verified safety backup of the current database will be created first.',
     );
     if (!confirmed) {
       return;
@@ -338,7 +370,7 @@ export default function BackupScreen({
     try {
       const safety = await applyRestoreBackup(restorePath);
       window.alert(
-        `Restore completed. Safety backup: ${safety.fileName}. The application will reload.`,
+        `Restore completed. The pre-restore safety snapshot is at:\n${safety.directory}\n${safety.fileName}\n\nIt contains the database as it existed immediately before this restore. Use the protected recovery snapshots list to restore it if needed. The application will reload.`,
       );
       reloadApplication();
     } catch (error: unknown) {
@@ -553,7 +585,7 @@ export default function BackupScreen({
 
       <section className="backup-status-grid" aria-label="Backup status">
         <div className="backup-status-card">
-          <span>Last successful backup</span>
+          <span>Last successful current-schema backup</span>
           <strong>{timestampLabel(overview.settings.lastSuccessAt)}</strong>
           <small>
             {overview.settings.lastSuccessFile ?? 'No successful backup recorded yet.'}
@@ -728,6 +760,51 @@ export default function BackupScreen({
         <FeedbackMessage feedback={settingsFeedback} />
       </section>
 
+      <section className="backup-card" aria-labelledby="recovery-snapshots-heading">
+        <div className="card-heading">
+          <div>
+            <p className="eyebrow">Protected recovery history</p>
+            <h2 id="recovery-snapshots-heading">Migration and safety snapshots</h2>
+          </div>
+        </div>
+        <p className="settings-lede">
+          These snapshots are not pruned by automatic retention. A pre-migration snapshot belongs to
+          the older schema. A post-migration snapshot is current-schema. A pre-restore safety
+          snapshot contains the database as it existed immediately before a restore.
+        </p>
+        {overview && overview.recoverySnapshots.length === 0 ? (
+          <p className="backup-empty-copy">No protected recovery snapshots are available yet.</p>
+        ) : (
+          <ul className="recovery-snapshot-list">
+            {overview?.recoverySnapshots.map((snapshot) => (
+              <li className="recovery-snapshot-row" key={snapshot.path}>
+                <div>
+                  <p className="recovery-snapshot-title">
+                    {recoveryKindLabel(snapshot.kind)} · schema {snapshot.schemaVersion}
+                  </p>
+                  <p className="recovery-snapshot-file">{snapshot.fileName}</p>
+                  <p className="recovery-snapshot-meta">
+                    {timestampLabel(snapshot.createdAt)} · {snapshot.directory}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void previewRestorePath(snapshot.path)}
+                  disabled={isBusy}
+                >
+                  Review restore
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="backup-preview-note">
+          Restoring a pre-restore safety snapshot restores the newer database state; it does not
+          merge records. A new pre-restore safety snapshot is created before every restore.
+        </p>
+      </section>
+
       <section className="backup-card" aria-labelledby="restore-backup-heading">
         <div className="card-heading">
           <div>
@@ -830,6 +907,28 @@ export default function BackupScreen({
                 {warning}
               </p>
             ))}
+            {restorePreview.manifest.schemaVersion < restorePreview.currentSchemaVersion && (
+              <div className="old-schema-restore-warning">
+                <p className="backup-warning">
+                  This is an older-schema backup. Restoring it replaces the current database with
+                  that older snapshot. Records created after the backup will not be present in the
+                  restored live database. A verified pre-restore safety snapshot will preserve the
+                  current data, but it is not merged automatically.
+                </p>
+                <label className="checkbox-field" htmlFor="old-schema-restore-ack">
+                  <input
+                    id="old-schema-restore-ack"
+                    type="checkbox"
+                    checked={oldSchemaAcknowledged}
+                    onChange={(event) => setOldSchemaAcknowledged(event.target.checked)}
+                  />
+                  <span>
+                    I understand that records created after this older backup will not be in the
+                    restored live database.
+                  </span>
+                </label>
+              </div>
+            )}
             <p className="backup-destructive-note">
               Restoring replaces the current application data. Confirm only when you intend to use
               this snapshot.
@@ -838,7 +937,11 @@ export default function BackupScreen({
               type="button"
               className="danger-button"
               onClick={() => void handleRestore()}
-              disabled={isBusy}
+              disabled={
+                isBusy ||
+                (restorePreview.manifest.schemaVersion < restorePreview.currentSchemaVersion &&
+                  !oldSchemaAcknowledged)
+              }
             >
               {isRestoring ? 'Restoring…' : 'Restore selected backup'}
             </button>
@@ -916,9 +1019,10 @@ export default function BackupScreen({
           </div>
         </div>
         <p className="settings-lede">
-          Includes all user-owned records, catalog relationships, settings, dashboard layout,
-          revision history, export format version, schema version, timestamp, application version,
-          and database identifier. The written JSON is parsed again before success is reported.
+          Includes all user-owned records, the four exam profiles and their explicit dates, catalog
+          relationships, settings, dashboard layout, revision history, export format version, schema
+          version, timestamp, application version, and database identifier. The written JSON is
+          parsed again before success is reported.
         </p>
         <div className="form-field backup-path-field">
           <label htmlFor="json-export-directory">Export folder</label>
@@ -968,10 +1072,12 @@ export default function BackupScreen({
         </div>
         <p className="settings-lede">
           The whole file is validated in a temporary database before a safety backup or write. Merge
-          appends core history, matches resources by stable resource key, and preserves existing
-          resource progress, notes, and local PDF references. Replace preserves exported IDs,
-          relationships, and valid local-file references after clearing current records. Legacy
-          format 1 exports contain core records only; format 2 adds resources and local references.
+          appends core history, matches resources by stable resource key, preserves existing
+          resource progress/notes/local PDF references, and keeps local exam profiles and dates.
+          Replace preserves exported IDs, relationships, exam profiles/dates, and valid local-file
+          references after clearing current records. Legacy formats preserve local exam profiles and
+          do not apply their old CSIR date as a confirmed profile date. Format 1 exports contain
+          core records only; format 2 adds resources and local references.
         </p>
         <div className="form-footer">
           <button

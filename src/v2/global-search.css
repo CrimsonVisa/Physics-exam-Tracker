@@ -1,0 +1,424 @@
+/* ==========================================================================
+   Physics Tracker V2 — global search and dialog shell.
+   Uses only the existing design tokens, workspace accents and typography.
+   ========================================================================== */
+
+.v2-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 20px 24px;
+  background: rgb(4 8 12 / 62%);
+  backdrop-filter: blur(3px);
+}
+
+[data-theme='light'] .v2-dialog-backdrop {
+  background: rgb(15 23 42 / 28%);
+}
+
+.v2-dialog {
+  width: 100%;
+  max-width: 720px;
+  max-height: min(76vh, 760px);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  background: var(--paper);
+  box-shadow: var(--shadow-hero);
+  color: var(--ink);
+}
+
+.v2-dialog:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------- search */
+
+.v2-search-dialog {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2-search-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  transition:
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+
+.v2-search-head:focus-within {
+  background: var(--surface-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.v2-search-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.v2-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 1rem;
+}
+
+.v2-search-input:focus {
+  outline: none;
+}
+
+.v2-search-input::placeholder {
+  color: var(--muted);
+}
+
+.v2-search-esc {
+  flex: 0 0 auto;
+}
+
+.v2-search-scopebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.v2-search-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v2-search-scope > span {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.v2-search-scope select {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+}
+
+.v2-search-scope select:focus-visible {
+  border-color: var(--accent);
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.v2-search-status {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.v2-search-body {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 8px 8px 12px;
+}
+
+.v2-search-empty {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 26px 16px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.v2-search-empty p {
+  margin: 0;
+}
+
+.v2-search-categories {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.v2-search-results {
+  display: grid;
+  gap: 6px;
+}
+
+.v2-search-group {
+  display: grid;
+  gap: 2px;
+  padding: 6px 6px 2px;
+}
+
+.v2-search-group-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 6px 8px 4px;
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.v2-search-group-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.v2-search-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.v2-search-result:hover {
+  background: var(--surface-soft);
+}
+
+.v2-search-result.is-active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.v2-search-result:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.v2-search-result-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.v2-search-result-copy strong {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.v2-search-result-copy > span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.v2-search-result mark {
+  border-radius: 2px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.v2-search-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.v2-search-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 14px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.v2-search-footer-note {
+  opacity: 0.85;
+}
+
+kbd {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+/* ------------------------------------------------------------ shortcuts */
+
+.v2-shortcuts-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+  padding: 22px;
+  overflow-y: auto;
+}
+
+.v2-shortcuts-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v2-shortcuts-head h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.v2-dialog-close {
+  flex: 0 0 auto;
+}
+
+.v2-shortcut-list {
+  display: grid;
+  gap: 0;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v2-shortcut-list li {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 0.83rem;
+}
+
+.v2-shortcut-list li:last-child {
+  border-bottom: 0;
+}
+
+.v2-shortcut-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.v2-shortcut-label {
+  color: var(--muted);
+}
+
+.v2-shortcuts-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------- settings */
+
+.v2-shortcut-reference {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.v2-shortcut-reference > div {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 14px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 0.83rem;
+}
+
+.v2-shortcut-reference > div:last-child {
+  border-bottom: 0;
+}
+
+.v2-shortcut-reference dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+
+.v2-shortcut-reference dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 700px) {
+  .v2-dialog-backdrop {
+    padding: 6vh 10px 16px;
+  }
+
+  .v2-dialog {
+    max-height: 86vh;
+  }
+
+  .v2-search-footer-note {
+    display: none;
+  }
+
+  .v2-shortcuts-dialog {
+    padding: 16px;
+  }
+
+  .v2-shortcut-list li,
+  .v2-shortcut-reference > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}

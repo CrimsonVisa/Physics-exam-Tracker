@@ -23,6 +23,14 @@ impl AppError {
         }
     }
 
+    pub fn forbidden(field: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code: "forbidden",
+            message: message.into(),
+            field: Some(field),
+        }
+    }
+
     pub fn database(context: &str, source: impl std::fmt::Display) -> Self {
         eprintln!("{context}: {source}");
         Self {
@@ -75,6 +83,34 @@ impl AppError {
             message: "This study session is no longer available. Refresh the session history and try again."
                 .to_owned(),
             field: None,
+        }
+    }
+
+    pub fn concept_not_found() -> Self {
+        Self {
+            code: "concept_not_found",
+            message:
+                "This concept is not in the shared library. Refresh the concept list and try again."
+                    .to_owned(),
+            field: Some("slug"),
+        }
+    }
+
+    pub fn mastery_run_not_found() -> Self {
+        Self {
+            code: "mastery_run_not_found",
+            message: "This mastery calculation is no longer available. Refresh the mastery history and try again."
+                .to_owned(),
+            field: Some("runId"),
+        }
+    }
+
+    pub fn evidence_not_found() -> Self {
+        Self {
+            code: "evidence_not_found",
+            message: "This mastery evidence is no longer available. Refresh the concept detail and try again."
+                .to_owned(),
+            field: Some("evidenceId"),
         }
     }
 
@@ -286,6 +322,51 @@ impl AppError {
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             code: "internal_error",
+            message: message.into(),
+            field: None,
+        }
+    }
+
+    pub fn unsupported_schema(found: i64, expected: i64) -> Self {
+        Self {
+            code: "unsupported_schema",
+            message: format!(
+                "The V2 database uses schema version {found}, but this application supports version {expected}. It was not modified."
+            ),
+            field: None,
+        }
+    }
+
+    pub fn schema_integrity(message: impl Into<String>) -> Self {
+        Self {
+            code: "schema_integrity_error",
+            message: message.into(),
+            field: None,
+        }
+    }
+
+    pub fn v2_file_operation(context: &str, source: impl std::fmt::Display) -> Self {
+        eprintln!("{context}: {source}");
+        Self {
+            code: "file_operation_error",
+            message: format!(
+                "{context}. Check the V2 application-data folder permissions and free space, then retry."
+            ),
+            field: None,
+        }
+    }
+
+    pub fn v2_integrity(message: impl Into<String>) -> Self {
+        Self {
+            code: "integrity_error",
+            message: message.into(),
+            field: None,
+        }
+    }
+
+    pub fn v2_foreign_key(message: impl Into<String>) -> Self {
+        Self {
+            code: "foreign_key_error",
             message: message.into(),
             field: None,
         }

@@ -14,9 +14,9 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{backup, date_only, db, error::AppError};
+use crate::{backup, date_only, db, error::AppError, exams};
 
-pub const JSON_EXPORT_FORMAT_VERSION: u32 = 3;
+pub const JSON_EXPORT_FORMAT_VERSION: u32 = 4;
 pub const MIN_JSON_IMPORT_FORMAT_VERSION: u32 = 1;
 pub const MIN_JSON_IMPORT_SCHEMA_VERSION: i64 = 8;
 pub const MAX_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
@@ -55,6 +55,36 @@ const V2_TABLES: [&str; 20] = [
 ];
 
 const V3_TABLES: [&str; 25] = [
+    "settings",
+    "syllabus_sources",
+    "syllabus_sections",
+    "syllabus_topics",
+    "syllabus_progress",
+    "timer_settings",
+    "study_sessions",
+    "checklist_tasks",
+    "planned_study_blocks",
+    "pyq_attempts",
+    "mock_tests",
+    "revision_settings",
+    "revision_schedules",
+    "revision_history",
+    "revision_plan_items",
+    "timer_state",
+    "revision_daily_plans",
+    "revision_daily_plan_items",
+    "revision_deferrals",
+    "revision_session_links",
+    "dashboard_sections",
+    "study_resources",
+    "resource_progress",
+    "resource_local_files",
+    "resource_discovery_runs",
+];
+
+const V4_TABLES: [&str; 27] = [
+    "exams",
+    "exam_profiles",
     "settings",
     "syllabus_sources",
     "syllabus_sections",
@@ -162,8 +192,40 @@ const V3_DELETE_ORDER: [&str; 25] = [
     "settings",
 ];
 
+const V4_DELETE_ORDER: [&str; 27] = [
+    "exam_profiles",
+    "exams",
+    "revision_session_links",
+    "revision_deferrals",
+    "revision_daily_plan_items",
+    "revision_daily_plans",
+    "revision_plan_items",
+    "resource_local_files",
+    "resource_progress",
+    "resource_discovery_runs",
+    "study_resources",
+    "dashboard_sections",
+    "revision_history",
+    "revision_schedules",
+    "revision_settings",
+    "mock_tests",
+    "pyq_attempts",
+    "planned_study_blocks",
+    "checklist_tasks",
+    "study_sessions",
+    "timer_state",
+    "timer_settings",
+    "syllabus_progress",
+    "syllabus_topics",
+    "syllabus_sections",
+    "syllabus_sources",
+    "settings",
+];
+
 fn tables_for_format(format_version: u32) -> &'static [&'static str] {
-    if format_version >= 3 {
+    if format_version >= 4 {
+        &V4_TABLES
+    } else if format_version >= 3 {
         &V3_TABLES
     } else if format_version >= 2 {
         &V2_TABLES
@@ -173,7 +235,9 @@ fn tables_for_format(format_version: u32) -> &'static [&'static str] {
 }
 
 fn delete_order_for_format(format_version: u32) -> &'static [&'static str] {
-    if format_version >= 3 {
+    if format_version >= 4 {
+        &V4_DELETE_ORDER
+    } else if format_version >= 3 {
         &V3_DELETE_ORDER
     } else if format_version >= 2 {
         &V2_DELETE_ORDER
@@ -371,8 +435,41 @@ pub fn export_csv_datasets(
     })
 }
 
-fn csv_datasets() -> [(&'static str, &'static str); 15] {
+fn csv_datasets() -> [(&'static str, &'static str); 17] {
     [
+        (
+            "exams.csv",
+            "SELECT
+                e.id AS exam_id,
+                e.code AS exam_code,
+                e.name AS exam_name,
+                e.short_name,
+                e.authority,
+                e.official_url,
+                e.display_order,
+                p.is_active,
+                p.exam_date,
+                p.legacy_date_notice_state,
+                p.created_at,
+                p.updated_at
+             FROM exams e
+             JOIN exam_profiles p ON p.exam_id = e.id
+             ORDER BY e.display_order, e.id",
+        ),
+        (
+            "exam_profiles.csv",
+            "SELECT
+                p.exam_id,
+                e.code AS exam_code,
+                p.is_active,
+                p.exam_date,
+                p.legacy_date_notice_state,
+                p.created_at,
+                p.updated_at
+             FROM exam_profiles p
+             JOIN exams e ON e.id = p.exam_id
+             ORDER BY e.display_order, e.id",
+        ),
         (
             "syllabus_topics_progress.csv",
             "SELECT
@@ -788,7 +885,7 @@ pub fn export_json(
     let database_id = backup::ensure_database_identifier(connection, None)?;
     let mut tables = BTreeMap::new();
     let mut record_counts = BTreeMap::new();
-    for table in V3_TABLES {
+    for table in V4_TABLES {
         let rows = table_to_json(connection, table)?;
         record_counts.insert(table.to_owned(), rows.len() as i64);
         tables.insert(table.to_owned(), rows);
@@ -1006,6 +1103,12 @@ pub fn preview_json_import(
             .to_owned(),
         "A verified safety backup of the current database is created before import.".to_owned(),
     ];
+    if envelope.format_version < 4 {
+        warnings.push(
+            "This legacy format does not contain exam profiles. Local profiles are preserved, and its old CSIR date is not applied as a confirmed profile date."
+                .to_owned(),
+        );
+    }
     if envelope.format_version < 3
         && [
             "revision_plan_items",
@@ -1087,13 +1190,17 @@ pub fn preview_json_import(
         warnings,
         merge_supported,
         replacement_supported: true,
-        merge_description: if format_includes_resources(envelope.format_version) {
+        merge_description: if envelope.format_version >= 4 {
+            "Merge appends study history under new local IDs, matches syllabus topics by stable code, matches resources by resource key, preserves existing resource progress/notes/local PDF references, keeps current settings, timer state, revision rules, dashboard layout, local exam profiles/dates, and local revision plan history. Daily plan versions, deferrals, and session links from the export are not merged because their IDs are installation-specific; use Replace for exact plan history.".to_owned()
+        } else if format_includes_resources(envelope.format_version) {
             "Merge appends study history under new local IDs, matches syllabus topics by stable code, matches resources by resource key, preserves existing resource progress/notes/local PDF references, keeps current settings, timer state, revision rules, dashboard layout, and local revision plan history. Daily plan versions, deferrals, and session links from the export are not merged because their IDs are installation-specific; use Replace for exact plan history.".to_owned()
         } else {
             "Merge appends study history under new local IDs, matches syllabus topics by stable code, skips conflicting progress/schedules/import-key rows, keeps the current settings, timer state, revision rules, dashboard layout, and local revision plan history, and does not merge exported plan versions. This format version has no resource tables.".to_owned()
         },
-        replacement_description: if envelope.format_version >= 3 {
-            "Replace removes current core records, revision plan versions/deferrals/session links, resources, study progress, and local-file references, then inserts the validated export in foreign-key order. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
+        replacement_description: if envelope.format_version >= 4 {
+            "Replace removes current exam profiles, core records, revision plan versions/deferrals/session links, resources, study progress, and local-file references, then inserts the validated export in foreign-key order. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
+        } else if envelope.format_version >= 3 {
+            "Replace removes current core records, revision plan versions/deferrals/session links, resources, study progress, and local-file references, then inserts the validated export in foreign-key order. Local exam profiles are preserved because this format has no profile data. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
         } else if format_includes_resources(envelope.format_version) {
             "Replace removes current core records, revision plan versions/deferrals/session links, resources, study progress, and local-file references, then inserts the validated legacy export in foreign-key order. Legacy formats cannot reconstruct daily plan history, so it is cleared. Missing local PDF references are skipped; PDF files on disk are never deleted. Current backup settings and the local database identifier are kept.".to_owned()
         } else {
@@ -1129,7 +1236,7 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
             "This JSON export format version is not supported.",
         ));
     }
-    if envelope.format_version >= 3 {
+    if envelope.format_version >= 4 {
         if envelope.schema_version != db::LATEST_SCHEMA_VERSION {
             return Err(AppError::import_failed(format!(
                 "JSON format version {} requires schema version {}; this export uses schema {}.",
@@ -1137,6 +1244,12 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
                 db::LATEST_SCHEMA_VERSION,
                 envelope.schema_version
             )));
+        }
+    } else if envelope.format_version == 3 {
+        if envelope.schema_version != 11 {
+            return Err(AppError::import_failed(
+                "JSON format version 3 requires schema version 11.",
+            ));
         }
     } else if envelope.format_version == 2 {
         if envelope.schema_version != 10 {
@@ -1186,6 +1299,9 @@ fn parse_envelope(bytes: &[u8]) -> Result<JsonExportEnvelope, AppError> {
         return Err(AppError::import_failed(
             "The JSON export contains an unknown table.",
         ));
+    }
+    if envelope.format_version >= 4 {
+        validate_exam_profiles(&envelope.tables)?;
     }
     if format_includes_resources(envelope.format_version) {
         validate_resource_identities(&envelope.tables)?;
@@ -1255,6 +1371,104 @@ fn validate_envelope_with_temporary_database(
     transaction.rollback().map_err(|error| {
         AppError::database("The JSON validation transaction could not close", error)
     })
+}
+
+fn validate_exam_profiles(tables: &BTreeMap<String, Vec<Value>>) -> Result<(), AppError> {
+    let exams = &tables["exams"];
+    let profiles = &tables["exam_profiles"];
+    if exams.len() != 4 || profiles.len() != 4 {
+        return Err(AppError::import_failed(
+            "A format 4 export must contain exactly four exam profiles.",
+        ));
+    }
+
+    let mut exam_ids = HashSet::new();
+    let mut codes = HashSet::new();
+    for row in exams {
+        let id = row
+            .get("id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("An exam record has no valid identifier."))?;
+        let code = row
+            .get("code")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::import_failed("An exam record has no stable code."))?;
+        if !exam_ids.insert(id) || !codes.insert(code.to_owned()) {
+            return Err(AppError::import_failed(
+                "The export contains duplicate exam identifiers or codes.",
+            ));
+        }
+        if row.get("display_order").and_then(Value::as_i64).is_none() {
+            return Err(AppError::import_failed(
+                "An exam record has no display order.",
+            ));
+        }
+    }
+
+    let expected_codes = [
+        exams::CSIR_EXAM_CODE,
+        "gate-physics",
+        "tifr-gs-physics",
+        "jest-physics",
+    ];
+    if expected_codes.iter().any(|code| !codes.contains(*code)) {
+        return Err(AppError::import_failed(
+            "The export is missing one of the four built-in examinations.",
+        ));
+    }
+
+    let mut profile_ids = HashSet::new();
+    for row in profiles {
+        let exam_id = row
+            .get("exam_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("An exam profile has no exam identifier."))?;
+        if !exam_ids.contains(&exam_id) || !profile_ids.insert(exam_id) {
+            return Err(AppError::import_failed(
+                "An exam profile references an unknown or duplicate examination.",
+            ));
+        }
+        let active = row
+            .get("is_active")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| AppError::import_failed("An exam profile has no active state."))?;
+        if active != 0 && active != 1 {
+            return Err(AppError::import_failed(
+                "An exam profile has an invalid active state.",
+            ));
+        }
+        let notice = row
+            .get("legacy_date_notice_state")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                AppError::import_failed("An exam profile has no legacy-date notice state.")
+            })?;
+        if !matches!(notice, "none" | "pending" | "dismissed" | "transferred") {
+            return Err(AppError::import_failed(
+                "An exam profile has an invalid legacy-date notice state.",
+            ));
+        }
+        let exam_date = row.get("exam_date").and_then(Value::as_str);
+        if row.get("exam_date").is_some_and(|value| !value.is_null()) && exam_date.is_none() {
+            return Err(AppError::import_failed(
+                "An exam profile has an invalid exam date.",
+            ));
+        }
+        if let Some(date) = exam_date
+            && date_only::parse_date_only(date).is_none()
+        {
+            return Err(AppError::import_failed(
+                "An exam profile has an invalid calendar date.",
+            ));
+        }
+        if notice == "pending" && exam_date.is_some() {
+            return Err(AppError::import_failed(
+                "A pending legacy-date notice cannot have a confirmed exam date.",
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_resource_identities(tables: &BTreeMap<String, Vec<Value>>) -> Result<(), AppError> {
@@ -1570,6 +1784,21 @@ fn detect_merge_conflicts(
                     "Merge keeps the current installation configuration instead of overwriting it."
                         .to_owned(),
             });
+        }
+    }
+
+    if envelope.format_version >= 4 {
+        for table in ["exams", "exam_profiles"] {
+            let rows = envelope.tables.get(table).map_or(0, Vec::len) as i64;
+            if rows > 0 {
+                conflicts.push(ImportTableConflict {
+                    table: table.to_owned(),
+                    rows,
+                    reason:
+                        "Merge keeps local exam profiles, activation states and dates instead of overwriting them."
+                            .to_owned(),
+                });
+            }
         }
     }
 
@@ -1941,6 +2170,9 @@ pub fn apply_json_import(
     let merge_warnings = match strategy {
         JsonImportStrategy::Replace => {
             replace_from_json(connection, &envelope, &sha256, &batch_id, &mut per_table)?;
+            if envelope.format_version < 4 {
+                refresh_legacy_exam_date_notice(connection)?;
+            }
             Vec::new()
         }
         JsonImportStrategy::Merge => {
@@ -1987,6 +2219,26 @@ pub fn apply_json_import(
         batch_id,
         warnings,
     })
+}
+
+fn refresh_legacy_exam_date_notice(connection: &Connection) -> Result<(), AppError> {
+    connection
+        .execute(
+            "UPDATE exam_profiles
+             SET legacy_date_notice_state = 'pending',
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE exam_id = (SELECT id FROM exams WHERE code = ?1)
+               AND exam_date IS NULL
+               AND EXISTS (SELECT 1 FROM settings WHERE id = 1)",
+            [exams::CSIR_EXAM_CODE],
+        )
+        .map_err(|error| {
+            AppError::database(
+                "The imported legacy CSIR date could not be marked unconfirmed",
+                error,
+            )
+        })?;
+    Ok(())
 }
 
 fn empty_import_counts(format_version: u32) -> BTreeMap<String, ImportTableResult> {
@@ -2182,6 +2434,14 @@ fn merge_from_json(
         let rows = envelope.tables[table].len() as i64;
         let result = per_table.get_mut(table).expect("table result exists");
         result.skipped = rows;
+    }
+
+    if envelope.format_version >= 4 {
+        for table in ["exams", "exam_profiles"] {
+            let rows = envelope.tables[table].len() as i64;
+            let result = per_table.get_mut(table).expect("table result exists");
+            result.skipped = rows;
+        }
     }
 
     for row in &envelope.tables["syllabus_progress"] {
@@ -2775,8 +3035,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        mock_tests, planner, pyq, resources, revision, revision_plan, sessions, settings, syllabus,
-        timer,
+        exams, mock_tests, planner, pyq, resources, revision, revision_plan, sessions, settings,
+        syllabus, timer,
     };
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
@@ -3047,11 +3307,11 @@ mod tests {
         let bytes = fs::read(&path).expect("JSON export should be readable");
         let envelope: JsonExportEnvelope =
             serde_json::from_slice(&bytes).expect("JSON should parse");
-        assert_eq!(envelope.format_version, 3);
-        assert_eq!(envelope.schema_version, 11);
-        assert_eq!(envelope.application_version, "1.2.0");
+        assert_eq!(envelope.format_version, 4);
+        assert_eq!(envelope.schema_version, 12);
+        assert_eq!(envelope.application_version, "2.0.0");
         assert_eq!(envelope.import_batch_id.as_deref().map(str::len), Some(32));
-        assert_eq!(envelope.tables.keys().count(), 25);
+        assert_eq!(envelope.tables.keys().count(), 27);
         assert_eq!(envelope.record_counts["study_sessions"], 1);
         assert_eq!(envelope.record_counts["revision_history"], 1);
         assert_eq!(envelope.record_counts["study_resources"], 1);
@@ -3064,9 +3324,11 @@ mod tests {
 
         let csv =
             export_csv_datasets(&connection, export_dir.path()).expect("CSV export should succeed");
-        assert_eq!(csv.files.len(), 15);
+        assert_eq!(csv.files.len(), 17);
         let csv_dir = export_dir.path().join(&csv.folder_name);
         for file in [
+            "exams.csv",
+            "exam_profiles.csv",
             "revision_plan_items.csv",
             "revision_daily_plans.csv",
             "revision_daily_plan_items.csv",
@@ -3363,7 +3625,7 @@ mod tests {
         let export_path = export_dir.path().join(&exported.file_name);
         let envelope: JsonExportEnvelope =
             serde_json::from_slice(&fs::read(&export_path).unwrap()).expect("export should parse");
-        assert_eq!(envelope.format_version, 3);
+        assert_eq!(envelope.format_version, 4);
         assert_eq!(envelope.record_counts["resource_discovery_runs"], 1);
         assert_eq!(
             envelope.tables["study_resources"][0]["original_url"],
@@ -3664,7 +3926,7 @@ mod tests {
     }
 
     #[test]
-    fn format_three_replacement_restores_versioned_revision_lifecycle_data() {
+    fn latest_format_replacement_restores_versioned_revision_lifecycle_data() {
         let source = tempfile::tempdir().expect("source temp");
         let target = tempfile::tempdir().expect("target temp");
         let export_dir = tempfile::tempdir().expect("export temp");
@@ -3775,7 +4037,7 @@ mod tests {
         )
         .expect("target deferral should save");
         let preview = preview_json_import(&target_db, &export_path).expect("preview should load");
-        assert_eq!(preview.format_version, 3);
+        assert_eq!(preview.format_version, 4);
 
         apply_json_import(
             &mut target_db,
@@ -3784,7 +4046,7 @@ mod tests {
             &preview.file_sha256,
             target.path(),
         )
-        .expect("format 3 replacement should restore lifecycle data");
+        .expect("latest format replacement should restore lifecycle data");
 
         assert_eq!(counts(&target_db), expected);
         let timer_plan_item: Option<i64> = target_db
@@ -3831,7 +4093,151 @@ mod tests {
     }
 
     #[test]
-    fn format_three_import_rejects_malformed_deferral_dates() {
+    fn format_four_round_trip_preserves_explicit_dates_and_merge_keeps_local_profiles() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let merge_target = tempfile::tempdir().expect("merge target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let mut source_db = database(&source, "source.sqlite3");
+        let source_csir = exams::list(&source_db)
+            .expect("source profiles")
+            .into_iter()
+            .find(|profile| profile.code == exams::CSIR_EXAM_CODE)
+            .expect("CSIR profile");
+        exams::update_date(&mut source_db, source_csir.exam_id, Some("2027-06-15"))
+            .expect("source date should save");
+
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+        let envelope: JsonExportEnvelope =
+            serde_json::from_slice(&fs::read(&export_path).expect("export should read"))
+                .expect("export should parse");
+        assert_eq!(envelope.format_version, 4);
+        assert_eq!(envelope.tables["exams"].len(), 4);
+        assert_eq!(envelope.tables["exam_profiles"].len(), 4);
+        assert!(envelope.tables["exam_profiles"].iter().any(|profile| {
+            profile["exam_id"].as_i64() == Some(source_csir.exam_id)
+                && profile["exam_date"] == Value::String("2027-06-15".to_owned())
+        }));
+
+        let mut target_db = database(&target, "target.sqlite3");
+        let preview =
+            preview_json_import(&target_db, &export_path).expect("format 4 should preview");
+        apply_json_import(
+            &mut target_db,
+            &export_path,
+            JsonImportStrategy::Replace,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("format 4 replace should succeed");
+        let restored = exams::list(&target_db)
+            .expect("restored profiles")
+            .into_iter()
+            .find(|profile| profile.code == exams::CSIR_EXAM_CODE)
+            .expect("restored CSIR profile");
+        assert_eq!(restored.exam_date.as_deref(), Some("2027-06-15"));
+
+        let mut merge_db = database(&merge_target, "merge.sqlite3");
+        let local = exams::list(&merge_db)
+            .expect("merge profiles")
+            .into_iter()
+            .find(|profile| profile.code == exams::CSIR_EXAM_CODE)
+            .expect("merge CSIR profile");
+        exams::update_date(&mut merge_db, local.exam_id, Some("2028-01-01"))
+            .expect("local date should save");
+        let merge_preview =
+            preview_json_import(&merge_db, &export_path).expect("merge should preview");
+        assert!(
+            merge_preview
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.table == "exam_profiles" && conflict.rows == 4)
+        );
+        let result = apply_json_import(
+            &mut merge_db,
+            &export_path,
+            JsonImportStrategy::Merge,
+            &merge_preview.file_sha256,
+            merge_target.path(),
+        )
+        .expect("format 4 merge should succeed");
+        assert_eq!(result.per_table["exam_profiles"].imported, 0);
+        assert_eq!(result.per_table["exam_profiles"].skipped, 4);
+        let kept = exams::list(&merge_db)
+            .expect("merge profiles")
+            .into_iter()
+            .find(|profile| profile.code == exams::CSIR_EXAM_CODE)
+            .expect("merge CSIR profile");
+        assert_eq!(kept.exam_date.as_deref(), Some("2028-01-01"));
+    }
+
+    #[test]
+    fn format_three_replace_preserves_local_profiles_and_marks_legacy_date_unconfirmed() {
+        let source = tempfile::tempdir().expect("source temp");
+        let target = tempfile::tempdir().expect("target temp");
+        let export_dir = tempfile::tempdir().expect("export temp");
+        let source_db = database(&source, "source.sqlite3");
+        let exported = export_json(&source_db, export_dir.path()).expect("export should succeed");
+        let export_path = export_dir.path().join(&exported.file_name);
+
+        let mut legacy: Value =
+            serde_json::from_slice(&fs::read(&export_path).expect("export should read"))
+                .expect("export should parse");
+        legacy["formatVersion"] = Value::from(3);
+        legacy["schemaVersion"] = Value::from(11);
+        trim_legacy_tables(&mut legacy, 3);
+        let legacy_path = export_dir.path().join("legacy-v3.json");
+        fs::write(
+            &legacy_path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy should encode"),
+        )
+        .expect("legacy should write");
+
+        let mut target_db = database(&target, "target.sqlite3");
+        let preview =
+            preview_json_import(&target_db, &legacy_path).expect("format 3 should preview");
+        assert_eq!(preview.format_version, 3);
+        assert_eq!(preview.schema_version, 11);
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("legacy format does not contain exam profiles"))
+        );
+
+        apply_json_import(
+            &mut target_db,
+            &legacy_path,
+            JsonImportStrategy::Replace,
+            &preview.file_sha256,
+            target.path(),
+        )
+        .expect("format 3 replace should succeed");
+
+        let profiles: Vec<(String, i64, Option<String>, String)> = target_db
+            .prepare(
+                "SELECT e.code, p.is_active, p.exam_date, p.legacy_date_notice_state
+                 FROM exam_profiles p
+                 JOIN exams e ON e.id = p.exam_id
+                 ORDER BY e.display_order",
+            )
+            .expect("profiles should prepare")
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .expect("profiles should query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("profiles should load");
+        assert_eq!(profiles.len(), 4);
+        assert!(profiles.iter().all(|profile| profile.1 == 1));
+        assert_eq!(profiles[0].0, exams::CSIR_EXAM_CODE);
+        assert_eq!(profiles[0].2, None);
+        assert_eq!(profiles[0].3, "pending");
+    }
+
+    #[test]
+    fn latest_format_import_rejects_malformed_deferral_dates() {
         let source = tempfile::tempdir().expect("source temp");
         let target = tempfile::tempdir().expect("target temp");
         let export_dir = tempfile::tempdir().expect("export temp");

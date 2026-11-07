@@ -33,6 +33,7 @@ const OVERVIEW: BackupOverview = {
   schemaVersion: 9,
   applicationVersion: '1.2.0',
   databaseId: '0123456789abcdef0123456789abcdef',
+  recoverySnapshots: [],
 };
 
 const MANIFEST = {
@@ -187,7 +188,7 @@ describe('backup and data management screen', () => {
     mockBackend();
     render(<BackupScreen />);
 
-    expect(await screen.findByText('Last successful backup')).toBeInTheDocument();
+    expect(await screen.findByText('Last successful current-schema backup')).toBeInTheDocument();
     expect(
       screen.getByText('csir-net-tracker-manual-v9-20261029-120000.sqlite3'),
     ).toBeInTheDocument();
@@ -273,6 +274,64 @@ describe('backup and data management screen', () => {
     );
     expect(window.confirm).toHaveBeenCalled();
     expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('safety.sqlite3'));
+    expect(reload).toHaveBeenCalled();
+  });
+
+  it('requires explicit acknowledgement before restoring an older-schema backup', async () => {
+    mockBackend();
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === 'get_backup_overview') {
+        return Promise.resolve(OVERVIEW);
+      }
+      if (command === 'preview_restore_backup') {
+        return Promise.resolve({
+          ...RESTORE_PREVIEW,
+          manifest: { ...MANIFEST, schemaVersion: 8 },
+          currentSchemaVersion: 12,
+          requiresUpgrade: true,
+        });
+      }
+      if (command === 'apply_restore_backup') {
+        return Promise.resolve({
+          fileName: 'safety.sqlite3',
+          directory: 'C:\\Safety',
+          manifest: { ...MANIFEST, schemaVersion: 12, fileName: 'safety.sqlite3' },
+          removedOldBackups: 0,
+          warning: null,
+        });
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command} ${String(args)}`));
+    });
+    openDialogMock.mockResolvedValue('C:\\Backups\\older.sqlite3');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const reload = vi.fn();
+    render(<BackupScreen reloadApplication={reload} />);
+    await screen.findByText('Restore a full SQLite backup');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Choose backup file' }));
+    expect(
+      await screen.findByText(/records created after the backup will not be present/i),
+    ).toBeInTheDocument();
+    const restoreButton = screen.getByRole('button', { name: 'Restore selected backup' });
+    expect(restoreButton).toBeDisabled();
+
+    await userEvent.click(
+      screen.getByLabelText(
+        /I understand that records created after this older backup will not be in the restored live database/i,
+      ),
+    );
+    expect(restoreButton).toBeEnabled();
+    await userEvent.click(restoreButton);
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('apply_restore_backup', {
+        path: 'C:\\Backups\\older.sqlite3',
+      }),
+    );
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('Records created after that backup'),
+    );
     expect(reload).toHaveBeenCalled();
   });
 
@@ -460,7 +519,7 @@ describe('backup and data management screen', () => {
     render(<BackupScreen />);
     expect(await screen.findByText('Backup status could not be loaded')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('Last successful backup')).toBeInTheDocument();
+    expect(await screen.findByText('Last successful current-schema backup')).toBeInTheDocument();
     expect(attempts).toBe(2);
   });
 });

@@ -1,0 +1,10 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="PH sidebar mark">
+  <!-- Sidebar mark for dark surfaces; the in-app mark is drawn inline so both
+       themes can tint the tile and glyph. -->
+  <rect width="512" height="512" rx="128" fill="#FFFFFF" fill-opacity="0.08"/>
+  <rect x="1" y="1" width="510" height="510" rx="127" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="2"/>
+  <g fill="#E8EDF2" transform="translate(97 97) scale(0.62)">
+    <path fill-rule="evenodd" d="M40 72H176A88 88 0 0 1 176 248H96V440H40V72ZM96 128H176A32 32 0 0 1 176 192H96V128Z"/>
+    <path d="M296 72H352V228H416V72H472V440H416V284H352V440H296V72Z"/>
+  </g>
+</svg>

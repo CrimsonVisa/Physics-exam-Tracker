@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import type { ExamProfile } from './lib/examsApi';
 import type {
   Agenda,
   ApplyExamDateChangeInput,
@@ -33,6 +34,73 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 const TODAY = '2026-12-10';
+
+const EXAM_PROFILES: ExamProfile[] = [
+  {
+    examId: 1,
+    code: 'csir-net-physics',
+    name: 'CSIR-UGC NET Physical Sciences',
+    shortName: 'CSIR-NET',
+    authority: 'CSIR-HRDG / National Testing Agency',
+    officialUrl: 'https://csirnet.nta.nic.in/',
+    displayOrder: 1,
+    isBuiltin: true,
+    isActive: true,
+    examDate: null,
+    legacyDateNoticeState: 'none',
+    legacyExamDate: null,
+    createdAt: '2026-11-02T00:00:00Z',
+    updatedAt: '2026-11-02T00:00:00Z',
+  },
+  {
+    examId: 2,
+    code: 'gate-physics',
+    name: 'GATE Physics (PH)',
+    shortName: 'GATE PH',
+    authority: 'Indian Institute of Technology Madras',
+    officialUrl: 'https://gate2027.iitm.ac.in/',
+    displayOrder: 2,
+    isBuiltin: true,
+    isActive: true,
+    examDate: null,
+    legacyDateNoticeState: 'none',
+    legacyExamDate: null,
+    createdAt: '2026-11-02T00:00:00Z',
+    updatedAt: '2026-11-02T00:00:00Z',
+  },
+  {
+    examId: 3,
+    code: 'tifr-gs-physics',
+    name: 'TIFR Graduate School Physics',
+    shortName: 'TIFR GS',
+    authority: 'Tata Institute of Fundamental Research',
+    officialUrl: 'https://www.tifr.res.in/academics/',
+    displayOrder: 3,
+    isBuiltin: true,
+    isActive: true,
+    examDate: null,
+    legacyDateNoticeState: 'none',
+    legacyExamDate: null,
+    createdAt: '2026-11-02T00:00:00Z',
+    updatedAt: '2026-11-02T00:00:00Z',
+  },
+  {
+    examId: 4,
+    code: 'jest-physics',
+    name: 'JEST Physics',
+    shortName: 'JEST',
+    authority: 'JEST Consortium',
+    officialUrl: 'https://www.jest.org.in/',
+    displayOrder: 4,
+    isBuiltin: true,
+    isActive: true,
+    examDate: null,
+    legacyDateNoticeState: 'none',
+    legacyExamDate: null,
+    createdAt: '2026-11-02T00:00:00Z',
+    updatedAt: '2026-11-02T00:00:00Z',
+  },
+];
 
 const EMPTY_TOTALS: StudyTotals = {
   rangeFrom: TODAY,
@@ -261,6 +329,7 @@ const EMPTY_BACKUP_OVERVIEW = {
   schemaVersion: 9,
   applicationVersion: '1.0.0',
   databaseId: '0123456789abcdef0123456789abcdef',
+  recoverySnapshots: [],
 };
 
 const EMPTY_REVISION_SETTINGS = {
@@ -370,6 +439,28 @@ type MockHandler = (args?: Record<string, unknown>) => unknown;
 function mockBackend(overrides: Record<string, MockHandler> = {}) {
   const handlers: Record<string, MockHandler> = {
     get_settings: () => DEFAULT_SETTINGS,
+    get_exam_profiles: () => EXAM_PROFILES,
+    get_restore_recovery: () => null,
+    keep_restore_recovery: () => undefined,
+    restore_recovery_safety: () => ({
+      fileName: 'csir-net-tracker-pre-restore-v12-20261030-100000.sqlite3',
+      directory: 'C:\\Users\\Test\\AppData\\backups\\safety',
+      manifest: {
+        formatVersion: 1,
+        applicationVersion: '1.2.0',
+        schemaVersion: 12,
+        createdAt: '2026-10-30T10:00:00.000Z',
+        databaseId: '0123456789abcdef0123456789abcdef',
+        reason: 'pre-restore',
+        backupFileName: 'csir-net-tracker-pre-restore-v12-20261030-100000.sqlite3',
+        backupSizeBytes: 1000,
+        sha256: 'a'.repeat(64),
+        integrityCheck: 'ok',
+        recordCounts: {},
+      },
+      removedOldBackups: 0,
+      warning: null,
+    }),
     update_settings: (args) => args?.settings,
     preview_exam_date_change: (args) => previewFor(args?.settings as Settings),
     apply_exam_date_change: (args) => {
@@ -531,7 +622,7 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    const examDate = (await screen.findByLabelText('Legacy CSIR date')) as HTMLInputElement;
     await screen.findByText('days remaining');
     fireEvent.change(examDate, { target: { value: '2026-12-20' } });
 
@@ -573,7 +664,7 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    const examDate = (await screen.findByLabelText('Legacy CSIR date')) as HTMLInputElement;
     await screen.findByText('days remaining');
     fireEvent.change(examDate, { target: { value: '2026-12-20' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
@@ -624,7 +715,7 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    const examDate = (await screen.findByLabelText('Legacy CSIR date')) as HTMLInputElement;
     fireEvent.change(examDate, { target: { value: '2027-01-15' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
@@ -674,7 +765,7 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    const examDate = (await screen.findByLabelText('Legacy CSIR date')) as HTMLInputElement;
     fireEvent.change(examDate, { target: { value: '2027-01-19' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
@@ -695,7 +786,7 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    const examDate = (await screen.findByLabelText('Legacy CSIR date')) as HTMLInputElement;
     fireEvent.change(examDate, { target: { value: '2026-12-20' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByRole('heading', { name: 'Review the exam-date change' });
@@ -773,7 +864,7 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    const examDate = (await screen.findByLabelText('Legacy CSIR date')) as HTMLInputElement;
     fireEvent.change(examDate, { target: { value: '2026-12-20' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
@@ -791,7 +882,7 @@ describe('settings dashboard', () => {
 
     renderApp();
 
-    const examDate = (await screen.findByLabelText('Exam date')) as HTMLInputElement;
+    const examDate = (await screen.findByLabelText('Legacy CSIR date')) as HTMLInputElement;
     fireEvent.change(examDate, { target: { value: '' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
@@ -849,6 +940,29 @@ describe('settings dashboard', () => {
       'page',
     );
     expect(callsFor('get_settings')).toHaveLength(1);
+  });
+
+  it('navigates to the exam profiles screen and shows all four profiles', async () => {
+    mockBackend();
+
+    renderApp();
+
+    expect(await screen.findByText('days remaining')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Exams' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Exam profiles', level: 1 }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'CSIR-UGC NET Physical Sciences' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'GATE Physics (PH)' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'TIFR Graduate School Physics' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'JEST Physics' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Exams' })).toHaveAttribute('aria-current', 'page');
+    expect(callsFor('get_exam_profiles').length).toBe(1);
   });
 
   it('navigates to the timer and sessions screens', async () => {

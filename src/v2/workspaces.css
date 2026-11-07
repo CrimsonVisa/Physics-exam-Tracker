@@ -1,0 +1,455 @@
+/* ==========================================================================
+   Physics Tracker V2 — workspace identities and composition details.
+   Accent tokens come from design-system.css via [data-workspace] scopes.
+   ========================================================================== */
+
+/* A short accent rule under every page header and card section heading gives
+   each workspace a recognisable signature without painting whole surfaces. */
+
+.page-header {
+  position: relative;
+}
+
+.page-header::after {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 64px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  content: '';
+}
+
+.v2-section-heading h2 {
+  position: relative;
+  padding-bottom: 6px;
+}
+
+.v2-section-heading h2::after {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  content: '';
+}
+
+/* Metric cards carry the accent as a top rule: the same grammar on every
+   workspace, tinted per workspace. */
+
+.v2-coverage-grid > .v2-coverage-card {
+  border-top: 2px solid var(--accent);
+}
+
+/* ------------------------------------------------------------ dashboard */
+
+.v2-dashboard .v2-quickstart {
+  border-color: var(--accent-border);
+  background: linear-gradient(180deg, var(--accent-soft), transparent 90px), var(--paper);
+}
+
+.v2-dashboard .v2-overview-strip > div:first-child {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+/* ------------------------------------------------------- exam workspace */
+
+.v2-workspace > .v2-back-button {
+  justify-self: start;
+}
+
+.v2-workspace-hero {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.v2-exam-tile {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border: 1px solid var(--accent-border);
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.v2-exam-tile[data-exam='gate-physics'] {
+  border-color: rgb(242 164 92 / 40%);
+  background: rgb(242 164 92 / 12%);
+  color: #f2a45c;
+}
+
+.v2-exam-tile[data-exam='tifr-gs-physics'] {
+  border-color: rgb(69 209 191 / 40%);
+  background: rgb(69 209 191 / 12%);
+  color: #45d1bf;
+}
+
+.v2-exam-tile[data-exam='jest-physics'] {
+  border-color: rgb(192 160 255 / 40%);
+  background: rgb(192 160 255 / 12%);
+  color: #c0a0ff;
+}
+
+[data-theme='light'] .v2-exam-tile[data-exam='csir-net-physics'] {
+  border-color: #b9ccf7;
+  background: #e8effe;
+  color: #1d4ed8;
+}
+
+[data-theme='light'] .v2-exam-tile[data-exam='gate-physics'] {
+  border-color: #ecd0a4;
+  background: #fdf3e2;
+  color: #b45309;
+}
+
+[data-theme='light'] .v2-exam-tile[data-exam='tifr-gs-physics'] {
+  border-color: #a5d8d0;
+  background: #e3f4f1;
+  color: #0f766e;
+}
+
+[data-theme='light'] .v2-exam-tile[data-exam='jest-physics'] {
+  border-color: #d2c2f7;
+  background: #f1ebfe;
+  color: #6d28d9;
+}
+
+.v2-workspace-hero .page-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding-bottom: 14px;
+}
+
+.v2-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -8px 0 4px;
+}
+
+.v2-workspace .v2-timer-card {
+  border-color: var(--accent-border);
+}
+
+.v2-workspace .v2-info-card {
+  border-top: 2px solid var(--accent);
+}
+
+/* -------------------------------------------------------------- syllabus */
+
+.v2-syllabus-page .v2-syllabus-expand {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.v2-syllabus-page .v2-coverage-card {
+  border-top-color: var(--accent);
+}
+
+.v2-syllabus-node-focused {
+  border-radius: 10px;
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+/* -------------------------------------------------------------- practice */
+
+.v2-practice .v2-practice-toolbar {
+  border-top: 2px solid var(--accent);
+}
+
+.v2-practice .v2-practice-tabs .nav-button.nav-item-active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* ------------------------------------------------------- mock examination */
+
+.v2-question-mock-runner[data-workspace='mock'] {
+  border: 1px solid var(--ws-border);
+  border-radius: var(--radius-panel);
+  background: var(--paper);
+}
+
+.v2-question-mock-runner[data-workspace='mock'] > .v2-question-mock-header {
+  border-color: var(--ws-border);
+}
+
+.v2-question-mock-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+  background: var(--accent-soft);
+}
+
+.v2-question-mock-section-tabs .nav-button.nav-item-active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* ------------------------------------------------------- planner/revision */
+
+.v2-planner-page .v2-planner-datebar,
+.v2-revision-page .v2-planner-datebar {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--paper);
+}
+
+.v2-planner-page .v2-concept-card .v2-session-heading strong,
+.v2-revision-page .v2-concept-card .v2-session-heading strong {
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+}
+
+/* -------------------------------------------------------------- analytics */
+
+.v2-analytics-page .v2-coverage-card {
+  border-top-color: var(--accent);
+}
+
+.v2-analytics-page .v2-trend-list li {
+  padding: 5px 0;
+}
+
+/* Rows with a trailing session count become three aligned columns so dense
+   duration tables never wrap mid-value. */
+.v2-analytics-page .v2-trend-list li:has(.v2-session-date) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px 14px;
+  align-items: baseline;
+}
+
+.v2-analytics-page .v2-trend-list li:has(.v2-session-date) > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.v2-analytics-page .v2-trend-list strong,
+.v2-analytics-page .v2-trend-list .v2-session-date {
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ study timer */
+
+/* Study is its own identity even when embedded in another workspace page. */
+.v2-study {
+  --accent: #5fd68f;
+  --accent-strong: #9cefbd;
+  --accent-soft: rgb(95 214 143 / 12%);
+  --accent-border: rgb(95 214 143 / 36%);
+  --focus-ring: #7fe8a9;
+}
+
+[data-theme='light'] .v2-study {
+  --accent: #15803d;
+  --accent-strong: #166534;
+  --accent-soft: #e6f6ec;
+  --accent-border: #a9d8bc;
+  --focus-ring: #15803d;
+}
+
+.v2-study .v2-timer-card {
+  border-top: 2px solid var(--accent);
+}
+
+/* Keep the timer card at its intrinsic height even when the totals column is
+   taller; prevents grid rows (and buttons) from stretching. */
+.v2-study-grid {
+  align-items: start;
+}
+
+.v2-study-totals .v2-total-exams li > span:last-child {
+  color: var(--muted);
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Exam cards carry their examination's own identity bar. */
+.v2-exam-card[data-exam-code='csir-net-physics']::before {
+  background: #6ea8ff;
+}
+
+.v2-exam-card[data-exam-code='gate-physics']::before {
+  background: #f2a45c;
+}
+
+.v2-exam-card[data-exam-code='tifr-gs-physics']::before {
+  background: #45d1bf;
+}
+
+.v2-exam-card[data-exam-code='jest-physics']::before {
+  background: #c0a0ff;
+}
+
+[data-theme='light'] .v2-exam-card[data-exam-code='csir-net-physics']::before {
+  background: #1d4ed8;
+}
+
+[data-theme='light'] .v2-exam-card[data-exam-code='gate-physics']::before {
+  background: #b45309;
+}
+
+[data-theme='light'] .v2-exam-card[data-exam-code='tifr-gs-physics']::before {
+  background: #0f766e;
+}
+
+[data-theme='light'] .v2-exam-card[data-exam-code='jest-physics']::before {
+  background: #6d28d9;
+}
+
+/* -------------------------------------------------------------- resources */
+
+.v2-resources-page .v2-concept-card {
+  border-top: 2px solid var(--accent);
+}
+
+/* --------------------------------------------------------------- settings */
+
+.v2-settings-page .v2-concept-card {
+  border-top: 2px solid var(--accent);
+}
+
+.v2-appearance-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.v2-font-options {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.v2-font-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.v2-font-option:hover {
+  border-color: var(--line-strong);
+}
+
+.v2-font-option[aria-pressed='true'] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.v2-font-option:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.v2-font-option-sample {
+  font-size: 1.05rem;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+}
+
+.v2-font-option-label {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.v2-font-option-check {
+  color: var(--accent);
+}
+
+.v2-font-sample-manrope {
+  font-family: 'Manrope', var(--font-ui);
+}
+
+.v2-font-sample-inter {
+  font-family: 'Inter', var(--font-ui);
+}
+
+.v2-font-sample-ibm {
+  font-family: 'IBM Plex Sans', var(--font-ui);
+}
+
+.v2-font-sample-jakarta {
+  font-family: 'Plus Jakarta Sans', var(--font-ui);
+}
+
+.v2-density-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.v2-appearance-preview {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface-soft);
+}
+
+.v2-appearance-preview h3 {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.v2-appearance-preview p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.v2-appearance-preview .v2-appearance-number {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 1.3rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------- responsive */
+
+@media (max-width: 900px) {
+  .v2-appearance-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-workspace-hero {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .v2-exam-tile {
+    width: 52px;
+    height: 52px;
+    font-size: 0.74rem;
+  }
+}

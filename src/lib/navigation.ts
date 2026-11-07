@@ -1,5 +1,6 @@
 export type AppView =
   | 'overview'
+  | 'exams'
   | 'timer'
   | 'sessions'
   | 'checklist'
@@ -13,7 +14,17 @@ export type AppView =
   | 'resources';
 
 export type NavIconName =
-  AppView | 'sun' | 'moon' | 'check' | 'chevron-left' | 'chevron-right' | 'panel-hide' | 'menu';
+  | AppView
+  | 'concepts'
+  | 'search'
+  | 'keyboard'
+  | 'sun'
+  | 'moon'
+  | 'check'
+  | 'chevron-left'
+  | 'chevron-right'
+  | 'panel-hide'
+  | 'menu';
 
 export type NavItem = {
   view: AppView;
@@ -23,6 +34,7 @@ export type NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { view: 'overview', label: 'Overview', icon: 'overview' },
+  { view: 'exams', label: 'Exams', icon: 'exams' },
   { view: 'timer', label: 'Timer', icon: 'timer' },
   { view: 'sessions', label: 'Sessions', icon: 'sessions' },
   { view: 'checklist', label: 'Checklist', icon: 'checklist' },

@@ -177,7 +177,7 @@ The database is created outside the repository in Tauri's per-user application-d
 
 SQLite may also create `-wal` and `-shm` files alongside it. The directory is created on first launch
 if needed. The schema is versioned with deterministic, append-only migrations (current schema version:
-11), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
+12), and the app enables foreign keys, WAL journaling, a busy timeout, and transactions for multi-step
 writes. Upgrading a version-1 database preserves its saved settings and seeds the catalog without
 creating any progress rows. Upgrading a version-2 database adds timer and session tables with default
 timer settings and an idle timer; it does not fabricate study sessions. Upgrading a version-3 database
@@ -194,12 +194,114 @@ independent resource-study progress, local PDF records, and discovery-run histor
 settings, syllabus progress, sessions, planner records, PYQs, mocks, or revision history. Upgrading a
 version-10 database adds daily revision plans, versioned plan memberships, append-only deferrals,
 work-item/session links, the daily revision budget, and timer plan-item context without changing
-existing revision schedules or history. Every upgrade from an existing database first creates a
-verified pre-migration snapshot; if that snapshot fails, the upgrade is aborted.
+existing revision schedules or history. Upgrading a version-11 database adds four examination
+profiles, one optional date per profile, and the legacy CSIR-date notice. The CSIR profile starts with
+no exam date; the old singleton date is preserved but is not treated as user-confirmed. Every upgrade
+from an existing database first creates a verified pre-migration snapshot; if that snapshot fails, the
+upgrade is aborted. After migration and initialization, a verified post-migration snapshot is created;
+if it fails, the app does not report successful initialization and retries on the next start.
+
+### Examination profiles and the legacy CSIR date
+
+The four built-in profiles are active on a fresh installation:
+
+- CSIR-UGC NET Physical Sciences
+- GATE Physics (PH)
+- TIFR Graduate School Physics
+- JEST Physics
+
+Each profile has exactly one optional `exam_date`. Dates are entered, edited, and cleared manually.
+Empty dates show `Not set`; today shows `Exam day`; past dates show `Exam date passed`. The app never
+scrapes, guesses, or synchronizes an exam date.
+
+The old `settings.exam_date` value is retained for backward compatibility, but it is not copied into
+the CSIR profile because the database has no field-level audit proving whether it was user-entered or
+a built-in default. When an existing installation upgrades, the CSIR profile starts with no date and
+the Exams screen offers an explicit **Use this legacy date** action or a dismiss action. Dismissing
+never deletes the original value.
+
+The **Exams** sidebar view lists all four profiles, supports activation/deactivation and date editing,
+and records the active exam context in local UI preferences for future exam-specific screens.
+Deactivation changes only the active flag; historical sessions, progress, revision history, PYQs,
+mocks and lifetime study time remain untouched.
+
+### Migration recovery
+
+Every successful schema upgrade creates two protected snapshots:
+
+- A **pre-migration** snapshot of the old schema in `backups\`.
+- A **post-migration** snapshot of the initialized current schema in `backups\safety\`.
+
+The post-migration snapshot is created after the migration and after the four exam profiles, settings
+defaults, syllabus seed and timer defaults are present. It is verified with SQLite integrity and
+foreign-key checks, a SHA-256 checksum and a manifest. If it cannot be created or verified, the
+application does not report a successful initialization.
+
+`backups\migration-state.json` records whether the database was created fresh, has a migration
+pending, or was upgraded and which post-migration snapshot was created. The migration-pending marker
+is written before migration begins and is replaced with `upgraded` only after the post-migration
+snapshot has been created and verified. This durable marker is separate from the pre-migration file,
+so a missing or corrupt pre-migration snapshot cannot disable the required schema-12 repair. Fresh
+installations are marked separately and do not receive an unnecessary post-migration snapshot. A
+schema-12 installation without the marker is treated as an upgraded installation requiring repair;
+the valid post-migration snapshot is preserved instead of duplicated when one already exists. A
+failed or interrupted migration therefore remains pending and is retried on the next start. A pre-migration
+artifact also invalidates a stale `fresh` marker, so an interrupted upgrade cannot suppress repair.
+
+A pre-migration snapshot does **not** contain work created after the upgrade. The post-migration
+snapshot contains the state at migration completion, but it also does not contain later work. After a
+successful migration the app enables daily automatic backups with 14-copy retention so later work is
+covered.
+
+To recover safely:
+
+1. Use the **Migration and safety snapshots** section on the Backup screen to see pre-migration,
+   post-migration and pre-restore safety snapshots with their schema versions.
+2. Restore a pre-migration snapshot only when you intentionally need the old schema. The app warns
+   that records created after that snapshot will not be in the restored live database and requires
+   explicit acknowledgement.
+3. Before replacing the live database, the app creates and verifies a **pre-restore safety snapshot**
+   of the current database. That safety snapshot contains the newer records.
+4. After restoring an older snapshot, use **Review restore** on the pre-restore safety snapshot to
+   restore the newer database state. This is a replacement, not a merge.
+5. Never restore a newer schema into an older app.
+6. JSON format 4 can also preserve the expanded state, but full SQLite backup is the exact-restore
+   path.
+
+If a restore process is interrupted, the app preserves a durable restore-operation record and the
+verified pre-restore safety snapshot. The record is validated against the actual live database path,
+the protected backup folder, the schema version and the database identity. On startup, if the live
+database is invalid, the app copies and verifies the safety snapshot before installing it; if the
+live database is valid, it leaves it untouched. If the live database is missing and the recovery
+metadata is missing or unreadable, startup fails closed instead of creating a new empty database.
+A displaced live database is copied together with its WAL/SHM/journal sidecars to a protected
+`.failed` path. It is never treated as a disposable restore temporary, and Keep cannot delete it.
+
+A live database with a schema newer than this application supports is never replaced by an older
+safety snapshot. Startup preserves it, fails closed, and requires the newer application version or
+an explicit recovery decision. The recovery record, safety snapshot and other candidates are kept.
+
+Keep, normal restore, safety restore, recovery inspection and cleanup share the database lock. A
+Keep operation cannot race a new restore and delete another operation's files or sidecar.
+
+The recovery banner shows the restore stage, the live database path and schema state, whether the
+safety snapshot is verified, and which rollback/temporary candidates remain. **Keep verified live
+database** is enabled only when the restore reached a completed/recovered stage, the safety snapshot
+is verified, the paths are inside the application recovery locations, and no unexplained candidates
+remain. It always requires confirmation and lists the files that will be deleted. If the live
+database may be the installed restore candidate, if the safety snapshot is missing or invalid, if
+the live schema is newer, or if recovery metadata is stale, the banner preserves all candidates and
+explains why Keep is disabled. The pre-restore safety snapshot is never deleted by Keep. Leftover
+rollback/temp/.failed files are preserved until a safe decision is confirmed.
+
+Periodic backups still have an interval between snapshots. A crash or corruption before the next
+automatic backup can lose recent changes; the pre-restore safety snapshot protects the restore
+operation itself, not work created after the latest backup.
 
 The initial single-row settings record uses:
 
-- Exam date: `2026-12-19` — **provisional**; verify the actual subject date on the admit card.
+- Legacy exam date: `2026-12-19` — preserved for compatibility; it is not a confirmed exam-profile
+  date. Use the Exams screen to manage the four profile dates.
 - Preparation start date: the local first-run date, clamped to the exam date. No preparation history
   is fabricated.
 - Daily study target: `240` minutes (4 hours).
@@ -867,7 +969,7 @@ reported safely.
 
 Local PDF bytes are never stored in SQLite. The full SQLite backup includes the resource catalogue,
 study progress, and local-copy records (but not the PDF files themselves), so keep the chosen PDF
-folder alongside backups if you need the files. JSON formats 2 and 3 include the resource catalogue,
+folder alongside backups if you need the files. JSON formats 2, 3 and 4 include the resource catalogue,
 resource study progress/notes, local-file metadata, and discovery history. Local PDF paths are
 references, not file contents; after importing or restoring on another computer, missing or changed
 files are reported as unavailable and can be re-linked without losing the resource or progress.
@@ -899,8 +1001,8 @@ included rather than copied incorrectly from only the main database file. Each s
 5. Renamed into place only after verification.
 6. Accompanied by `<backup>.sqlite3.manifest.json` containing format version, application version,
    schema version, creation timestamp, database identifier, reason, filename, size, SHA-256,
-   integrity result, and record counts for the core tables and the four resource tables
-   (`study_resources`, `resource_progress`, `resource_local_files`, and
+   integrity result, and record counts for the two exam-profile tables, core tables, and the four
+   resource tables (`study_resources`, `resource_progress`, `resource_local_files`, and
    `resource_discovery_runs`).
 
 Manifest format version **1** is unchanged. Record counts are optional metadata, so backups and
@@ -917,21 +1019,31 @@ Restore requires the manifest. A renamed backup, missing manifest, truncated fil
 or schema newer than this app is rejected. Manual filenames identify the reason, schema, and local
 timestamp, for example `csir-net-tracker-manual-v8-20261030-180000.sqlite3`.
 
-The default automatic backup directory is `%APPDATA%\com.crimsonvisa.csirnetphysics\backups`. Safety
-backups created before migrations, restore, and JSON import are written under `backups\safety`; they
-are never pruned by automatic retention.
+The default backup directory is `%APPDATA%\com.crimsonvisa.csirnetphysics\backups`. Pre-migration
+snapshots are written under `backups\`; post-migration, pre-restore, and pre-JSON-import/replace
+safety snapshots are written under `backups\safety\`. All of these recovery snapshots are protected
+from automatic retention.
 
 ### Automatic backups and retention
 
-Automatic backups are **off by default**. Supported frequencies are daily, weekly, and
-before-important-operations only. Daily and weekly checks run at application start and once per hour
-while the app remains open. Destructive operations always create their own safety backup regardless of
-this setting.
+Automatic backups are off for installations that have not undergone a schema migration. After a
+successful schema migration, the app enables **daily** automatic backups with a retention of **14**
+current-schema copies. Supported frequencies remain daily, weekly, and before-important-operations.
+Daily and weekly checks run at application start and once per hour while the app remains open.
+Destructive operations always create their own safety backup regardless of this setting.
 
-Retention applies only to files named as automatic backups. The newest configured number of valid
-automatic backups are kept; manual and safety backups are never deleted. If no valid automatic backup
-can be verified, pruning is skipped with a warning. Unavailable drives and permission failures are
-recorded in `backup_settings` and shown in the Backup screen.
+Retention applies only to files named as automatic backups. The newest 14 valid automatic backups are
+kept after migration; manual, pre-migration, post-migration, pre-restore, pre-import and other
+protected safety backups are never deleted. Ordering uses the timestamp embedded in the backup
+filename, with modification time only as a fallback. The newest verified automatic backup and the
+file referenced by last-success state are always protected.
+
+Pruning is failure-safe: a manifest is removed only after its database file was deleted; if the
+database file cannot be deleted, the manifest is kept. A manifest deletion failure is reported and
+the prune is not counted as successful. Files that fail verification are preserved rather than
+deleted, because a read failure may be transient. If the folder cannot be inspected or no valid
+automatic backup exists, no files are pruned. Unavailable drives and permission failures are recorded
+in `backup_settings` and shown in the Backup screen.
 
 ### Restore workflow
 
@@ -941,8 +1053,16 @@ resource catalogue, resource study progress, local PDF references, and discovery
 tables are present. It also checks each saved local PDF path on the current computer and reports how
 many copies are available, missing, or changed.
 
-Restore includes the full SQLite database: settings, syllabus and progress, sessions, planner,
-PYQ/mock-test records, revision history, dashboard layout, and, when present, the resource catalogue,
+When the selected backup uses an older schema, the screen explains that restoring it replaces the
+current live database with an older snapshot, that records created after the backup will not be in
+the restored database, and that a verified pre-restore safety snapshot will preserve the current
+data. The user must explicitly acknowledge these consequences before the restore button is enabled.
+The pre-restore safety snapshot is kept after the restore and appears in the protected recovery
+snapshots list.
+
+Restore includes the full SQLite database: the four exam profiles and dates, settings, syllabus and
+progress, sessions, planner, PYQ/mock-test records, revision history, dashboard layout, and, when
+present, the resource catalogue,
 resource study progress and notes, local PDF paths, and discovery history. Local PDF paths are
 references only. **PDF files are never stored in the backup**, and restore never copies, downloads,
 or overwrites PDF files.
@@ -962,8 +1082,10 @@ newer schemas are never downgraded.
 
 ### CSV dataset export
 
-Export creates a timestamped folder containing fifteen UTF-8 files with a BOM and CRLF rows:
+Export creates a timestamped folder containing seventeen UTF-8 files with a BOM and CRLF rows:
 
+- `exams.csv`
+- `exam_profiles.csv`
 - `syllabus_topics_progress.csv`
 - `study_sessions.csv`
 - `checklist_tasks.csv`
@@ -986,26 +1108,30 @@ according to CSV rules. Export queries are read-only.
 
 ### Complete JSON export and validated import
 
-The complete JSON format is versioned. **Format 3** records application version, schema version, export
-timestamp, database identifier, a unique `importBatchId`, per-table record counts, and all 25 user
-tables: settings, syllabus sources/sections/topics/progress, timer settings/state, sessions, tasks,
-blocks, PYQs, mocks, revision settings/schedules/history, revision work items/daily plans/memberships/
-deferrals/session links, dashboard sections, study resources, resource study progress, local-file
-metadata, and discovery history. Safe backup preferences are included without machine-specific
-destination paths. The serialized file is parsed and inserted into a temporary migrated database before
-success is reported.
+The complete JSON format is versioned. **Format 4** records application version, schema version, export
+timestamp, database identifier, a unique `importBatchId`, per-table record counts, and all 27 user
+tables: the four exam profiles, settings, syllabus sources/sections/topics/progress, timer settings/
+state, sessions, tasks, blocks, PYQs, mocks, revision settings/schedules/history, revision work items/
+daily plans/memberships/deferrals/session links, dashboard sections, study resources, resource study
+progress, local-file metadata, and discovery history. Safe backup preferences are included without
+machine-specific destination paths. The serialized file is parsed and inserted into a temporary
+migrated database before success is reported.
 
 Format 1 exports from versions 1.0.0 and 1.1.0 remain importable; they contain the original 16 core
 tables and do not modify the resource catalogue. Format 2 exports from schema 10 remain importable and
-are expanded with default values for the new daily-plan columns. Format 3 requires schema 11.
+are expanded with default values for the new daily-plan columns. Format 3 requires schema 11. Format 4
+requires schema 12. Legacy formats do not contain exam profiles: Replace preserves the local four
+profiles and marks the imported old CSIR date as unconfirmed rather than copying it into the profile.
+Merge preserves local exam profiles and dates.
 
 Migration `0009_json_import_batches.sql` adds `json_import_batches`. Successful imports record the
 batch identifier and result counts there. Preview detects an export that was already merged and
 disables merge, preventing duplicate sessions and tasks. Complete replacement remains an explicit
 opt-in and can intentionally reapply a file.
 
-Format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10; format 3 requires schema 11.
-The whole file is validated in a temporary current-schema database before taking a safety backup or
+Format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10; format 3 requires schema 11;
+format 4 requires schema 12. The whole file is validated in a temporary current-schema database before
+taking a safety backup or
 writing current data. Older formats may omit columns added later; SQLite defaults and nullable columns
 fill those values. Duplicate primary keys, duplicate resource keys, orphaned progress/local-file
 references, missing fields, unknown fields, malformed JSON, incompatible format/schema versions, and
@@ -1016,17 +1142,20 @@ Two explicit strategies are available:
 - **Merge:** appends sessions, tasks, blocks, PYQs without conflicting import keys, mocks, and revision
   history under new local IDs; maps syllabus topics by stable code; matches resources by stable
   `resource_key`; preserves existing resource study status, personal notes, and local PDF references;
-  skips matching progress/schedules/settings/timer state/revision rules/dashboard layout; rejects rows
-  whose required topic or resource is unavailable. Daily revision plan versions, deferrals, and
-  session links are not merged because their IDs are installation-specific; existing local plan
-  history is preserved and a warning recommends Replace when the full plan history is needed.
+  skips matching progress/schedules/settings/timer state/revision rules/dashboard layout and local
+  exam profiles/dates; rejects rows whose required topic or resource is unavailable. Daily revision
+  plan versions, deferrals, and session links are not merged because their IDs are
+  installation-specific; existing local plan history is preserved and a warning recommends Replace
+  when the full plan history is needed.
 - **Replace:** after the safety backup, removes current core records and, for format 2 or later,
-  resource records in foreign-key-safe order; for format 3 it also replaces revision lifecycle data.
-  It then inserts the complete validated export with exported IDs and relationships, restores
-  append-only history triggers, verifies foreign keys and exact counts, and commits. Format 1 and 2
-  replacements clear the newer revision lifecycle tables because those formats cannot describe plan
-  versions or deferrals; export format 3 preserves them. Local PDF references are imported only when
-  the path exists and its size and SHA-256 match.
+  resource records in foreign-key-safe order; for format 3 it also replaces revision lifecycle data;
+  for format 4 it also replaces the four exam profiles and their explicit dates. It then inserts the
+  complete validated export with exported IDs and relationships, restores append-only history
+  triggers, verifies foreign keys and exact counts, and commits. Format 1 and 2 replacements clear the
+  newer revision lifecycle tables because those formats cannot describe plan versions or deferrals;
+  export formats 3 and 4 preserve them. Legacy formats preserve local exam profiles and mark the
+  imported old CSIR date as unconfirmed. Local PDF references are imported only when the path exists
+  and its size and SHA-256 match.
   Missing or changed PDFs are skipped, while resource metadata and progress remain. PDF files on disk
   are never deleted. Current backup settings and database identity remain installation-local.
 
@@ -1049,7 +1178,7 @@ Backup and export files are personal study data. They are written only to user-s
 removable-drive folders, never sent over the network; explicit UNC network paths are rejected.
 Generated filenames prevent traversal; selected paths must be absolute.
 User-facing errors describe the folder or operation without dumping internal absolute paths. No
-credentials or unrelated machine information are placed in manifests or JSON exports. Formats 2 and 3
+credentials or unrelated machine information are placed in manifests or JSON exports. Formats 2, 3 and 4
 include the local PDF paths you chose for imported files so they can be re-validated; those paths may reveal
 folder names, so treat exports as private data.
 
@@ -1057,7 +1186,8 @@ Backups and exports are **not encrypted**. Anyone with file access can read them
 private folder or encrypted removable drive. Restore requires the adjacent manifest, so move or copy
 both files together. Automatic backups run only while the app is running; they are not a background
 Windows service. JSON format 1 imports accept schema 8, 9, or 10; format 2 requires schema 10; format 3
-requires schema 11. Use the SQLite backup restore workflow for older database schemas.
+requires schema 11; format 4 requires schema 12. Use the SQLite backup restore workflow for older
+database schemas.
 
 ## Typography and colour
 

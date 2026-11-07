@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "CSIR-NET Physics Tracker",
-  "version": "1.2.0",
-  "identifier": "com.crimsonvisa.csirnetphysics",
+  "productName": "Physics Tracker",
+  "version": "2.0.0",
+  "identifier": "com.crimsonvisa.physics-tracker",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,15 +12,17 @@
   "app": {
     "windows": [
       {
-        "title": "CSIR-NET Physics Tracker",
+        "title": "Physics Tracker",
         "width": 1100,
         "height": 760,
         "minWidth": 800,
         "minHeight": 600,
         "center": true,
-        "resizable": true,
-        "fullscreen": false,
-        "backgroundColor": "#18252B"
+        "resizable": false,
+        "fullscreen": true,
+        "decorations": false,
+        "focus": true,
+        "backgroundColor": "#0e1319"
       }
     ],
     "security": {
@@ -44,12 +46,14 @@
       "icons/icon.ico"
     ],
     "windows": {
+      "allowDowngrades": false,
       "nsis": {
+        "template": "nsis/installer.nsi",
         "installMode": "currentUser",
         "languages": ["English"],
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "startMenuFolder": "CSIR-NET Physics Tracker"
+        "startMenuFolder": "Physics Tracker"
       }
     },
     "android": {

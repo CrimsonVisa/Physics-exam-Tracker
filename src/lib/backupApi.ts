@@ -33,12 +33,47 @@ export type BackupSettingsInput = {
   retentionCount: number;
 };
 
+export type RecoverySnapshot = {
+  kind: 'pre_migration' | 'post_migration' | 'pre_restore' | 'recovery';
+  reason: string;
+  fileName: string;
+  directory: string;
+  path: string;
+  schemaVersion: number;
+  createdAt: string;
+  databaseId: string;
+};
+
 export type BackupOverview = {
   settings: BackupSettings;
   defaultDirectory: string;
   schemaVersion: number;
   applicationVersion: string;
   databaseId: string;
+  recoverySnapshots: RecoverySnapshot[];
+};
+
+export type RestoreRecovery = {
+  stage: string;
+  safetyFileName: string | null;
+  safetyPath: string | null;
+  safetySchemaVersion: number | null;
+  safetyVerified: boolean;
+  livePath: string;
+  liveValid: boolean;
+  liveStatus: 'valid' | 'newer_schema' | 'invalid' | 'missing';
+  sourceBackupPath: string | null;
+  rollbackFiles: string[];
+  tempFiles: string[];
+  deletionFiles: string[];
+  keepAllowed: boolean;
+  keepBlockedReason: string | null;
+  leftoverFiles: string[];
+};
+
+export type KeepRecoveryResult = {
+  removedFiles: string[];
+  preservedFiles: string[];
 };
 
 export type BackupResult = {
@@ -144,6 +179,18 @@ export type JsonImportResult = {
 
 export function getBackupOverview(): Promise<BackupOverview> {
   return invoke<BackupOverview>('get_backup_overview');
+}
+
+export function getRestoreRecovery(): Promise<RestoreRecovery | null> {
+  return invoke<RestoreRecovery | null>('get_restore_recovery');
+}
+
+export function keepRestoreRecovery(confirmed: boolean): Promise<KeepRecoveryResult> {
+  return invoke<KeepRecoveryResult>('keep_restore_recovery', { confirmed });
+}
+
+export function restoreRecoverySafety(): Promise<BackupResult> {
+  return invoke<BackupResult>('restore_recovery_safety');
 }
 
 export function updateBackupSettings(settings: BackupSettingsInput): Promise<BackupSettings> {

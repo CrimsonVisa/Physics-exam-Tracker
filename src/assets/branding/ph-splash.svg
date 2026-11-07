@@ -1,0 +1,8 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Physics Tracker splash mark">
+  <!-- Splash-screen lockup: PH lettermark with generous breathing room on a
+       transparent canvas. -->
+  <g fill="#2563EB" transform="translate(256 256)">
+    <path fill-rule="evenodd" d="M40 72H176A88 88 0 0 1 176 248H96V440H40V72ZM96 128H176A32 32 0 0 1 176 192H96V128Z"/>
+    <path d="M296 72H352V228H416V72H472V440H416V284H352V440H296V72Z"/>
+  </g>
+</svg>

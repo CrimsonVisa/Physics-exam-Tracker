@@ -3,10 +3,11 @@ export type SidebarMode = 'expanded' | 'collapsed' | 'hidden';
 
 export const THEME_STORAGE_KEY = 'csir-net-tracker.ui.theme.v1';
 export const SIDEBAR_MODE_STORAGE_KEY = 'csir-net-tracker.ui.sidebar-mode.v1';
+export const EXAM_CONTEXT_STORAGE_KEY = 'csir-net-tracker.ui.exam-context.v1';
 
 const THEME_COLORS: Record<Theme, string> = {
-  dark: '#18252B',
-  light: '#F3F7F4',
+  dark: '#0e1319',
+  light: '#f3f5f8',
 };
 
 function readStorage(key: string): string | null {
@@ -47,6 +48,32 @@ export function normalizeSidebarMode(value: string | null | undefined): SidebarM
 
 export function getStoredTheme(): Theme {
   return normalizeTheme(readStorage(THEME_STORAGE_KEY));
+}
+
+export function normalizeExamContext(value: string | null | undefined): number | null {
+  if (!value || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const examId = Number(value);
+  return Number.isSafeInteger(examId) && examId > 0 ? examId : null;
+}
+
+export function getStoredExamContext(): number | null {
+  return normalizeExamContext(readStorage(EXAM_CONTEXT_STORAGE_KEY));
+}
+
+export function storeExamContext(examId: number | null) {
+  if (examId === null) {
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.removeItem(EXAM_CONTEXT_STORAGE_KEY);
+      } catch {
+        // A blocked preference store must not prevent the UI from working.
+      }
+    }
+    return;
+  }
+  writeStorage(EXAM_CONTEXT_STORAGE_KEY, String(examId));
 }
 
 export function getStoredSidebarMode(): SidebarMode {

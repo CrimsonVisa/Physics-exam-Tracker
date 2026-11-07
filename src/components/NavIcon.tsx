@@ -10,6 +10,13 @@ const ICON_PATHS: Record<NavIconName, ReactNode> = {
       <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
     </>
   ),
+  exams: (
+    <>
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z" />
+      <path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" />
+      <path d="M8 7h8M8 10.5h6" />
+    </>
+  ),
   timer: (
     <>
       <circle cx="12" cy="13" r="8" />
@@ -75,8 +82,18 @@ const ICON_PATHS: Record<NavIconName, ReactNode> = {
   ),
   syllabus: (
     <>
-      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H11v18H6.5A2.5 2.5 0 0 0 4 22.5z" />
-      <path d="M20 4.5A2.5 2.5 0 0 0 17.5 2H13v18h4.5a2.5 2.5 0 0 1 2.5 2.5z" />
+      <path d="M5 4.5v15" />
+      <path d="M5 8h5M5 14.5h8" />
+      <rect height="4.5" rx="1.2" width="8" x="10" y="5.75" />
+      <rect height="4.5" rx="1.2" width="6" x="13" y="12.25" />
+    </>
+  ),
+  concepts: (
+    <>
+      <circle cx="6" cy="6.5" r="2.4" />
+      <circle cx="18" cy="7.5" r="2.4" />
+      <circle cx="12" cy="18" r="2.4" />
+      <path d="M7.9 8.1 10.6 15.6M16.2 9.4 13.4 15.9M8.4 6.2l7.2.5" />
     </>
   ),
   resources: (
@@ -108,6 +125,18 @@ const ICON_PATHS: Record<NavIconName, ReactNode> = {
   menu: (
     <>
       <path d="M4 6h16M4 12h16M4 18h16" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m15.5 15.5 5 5" />
+    </>
+  ),
+  keyboard: (
+    <>
+      <rect height="10" rx="2" width="18" x="3" y="7" />
+      <path d="M6.5 10.5h.01M9.5 10.5h.01M12.5 10.5h.01M15.5 10.5h.01M18 10.5h.01M6.5 13.5h.01M9.5 13.5h.01M12.5 13.5h5" />
     </>
   ),
 };

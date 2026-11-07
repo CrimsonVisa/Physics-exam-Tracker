@@ -3,10 +3,11 @@ import { AppSidebar } from './components/AppSidebar';
 import { DateField } from './components/DateField';
 import { Icon } from './components/NavIcon';
 import { PreparationDashboard } from './components/PreparationDashboard';
+import { RestoreRecoveryBanner } from './components/RestoreRecoveryBanner';
 import { ThemeSwitch } from './components/ThemeSwitch';
 import { toCommandError } from './lib/commandError';
 import { formatDateLong, parseDateOnly } from './lib/dateOnly';
-import { runAutomaticBackupIfDue } from './lib/backupApi';
+import { getRestoreRecovery, runAutomaticBackupIfDue, type RestoreRecovery } from './lib/backupApi';
 import { KNOWN_VIEWS, type AppView } from './lib/navigation';
 import {
   applyExamDateChange,
@@ -17,8 +18,10 @@ import { checkRevisionReminder } from './lib/revisionApi';
 import { getSettings, saveSettings, type Settings } from './lib/settingsApi';
 import {
   applyTheme,
+  getStoredExamContext,
   getStoredSidebarMode,
   getStoredTheme,
+  storeExamContext,
   storeSidebarMode,
   storeTheme,
   type SidebarMode,
@@ -29,6 +32,7 @@ import AnalyticsScreen, { type AnalyticsTab } from './screens/AnalyticsScreen';
 import BackupScreen from './screens/BackupScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import ChecklistScreen from './screens/ChecklistScreen';
+import ExamsScreen from './screens/ExamsScreen';
 import MockTestsScreen from './screens/MockTestsScreen';
 import PyqScreen from './screens/PyqScreen';
 import RevisionScreen from './screens/RevisionScreen';
@@ -150,6 +154,8 @@ function isDirty(form: FormState, settings: Settings): boolean {
 export default function App({ today }: AppProps) {
   const currentToday = useTodayDateOnly(today);
   const [view, setView] = useState<AppView>('overview');
+  const [selectedExamId, setSelectedExamId] = useState<number | null>(() => getStoredExamContext());
+  const [restoreRecovery, setRestoreRecovery] = useState<RestoreRecovery | null>(null);
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => getStoredSidebarMode());
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
@@ -175,6 +181,10 @@ export default function App({ today }: AppProps) {
   useEffect(() => {
     storeSidebarMode(sidebarMode);
   }, [sidebarMode]);
+
+  useEffect(() => {
+    storeExamContext(selectedExamId);
+  }, [selectedExamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,6 +231,22 @@ export default function App({ today }: AppProps) {
       // Reminders are optional; a notification failure must not block the app.
     });
   }, [currentToday]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getRestoreRecovery()
+      .then((recovery) => {
+        if (!cancelled) {
+          setRestoreRecovery(recovery);
+        }
+      })
+      .catch(() => {
+        // Backup/recovery UI remains available in the Backup screen.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const run = () => {
@@ -446,8 +472,21 @@ export default function App({ today }: AppProps) {
           </div>
         )}
 
+        {restoreRecovery && (
+          <RestoreRecoveryBanner
+            recovery={restoreRecovery}
+            onResolved={() => setRestoreRecovery(null)}
+          />
+        )}
+
         <main className="main-area" id="main-content" tabIndex={-1}>
-          {view === 'syllabus' ? (
+          {view === 'exams' ? (
+            <ExamsScreen
+              today={currentToday}
+              selectedExamId={selectedExamId}
+              onSelectExam={setSelectedExamId}
+            />
+          ) : view === 'syllabus' ? (
             <SyllabusScreen />
           ) : view === 'resources' ? (
             <StudyResourcesScreen />
@@ -535,10 +574,10 @@ export default function App({ today }: AppProps) {
                     <form className="settings-form" onSubmit={handleSubmit} noValidate>
                       <DateField
                         id={FIELD_IDS.examDate}
-                        label="Exam date"
+                        label="Legacy CSIR date"
                         value={form.examDate}
                         onChange={(value) => handleFieldChange('examDate', value)}
-                        hint="The provisional default is 19 December 2026."
+                        hint="Legacy CSIR date used by existing exam-anchored tasks. Manage the four profile dates under Exams."
                         error={fieldErrors.examDate}
                         disabled={isSaving}
                       />
