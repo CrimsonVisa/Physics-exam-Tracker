@@ -1,0 +1,673 @@
+/* ==========================================================================
+   Physics Tracker V2 — Flashcards workspace.
+   Uses the existing design tokens, workspace accents and typography.
+   ========================================================================== */
+
+.v2-flashcards-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.v2-flashcard-stats,
+.v2-flashcard-toolbar,
+.v2-flashcard-filterbar,
+.v2-flashcard-layout,
+.v2-flashcard-review-page {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.v2-flashcard-stats > div {
+  min-width: 0;
+}
+
+.v2-flashcard-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.v2-flashcard-stats > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--accent);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+}
+
+.v2-flashcard-stats span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.v2-flashcard-stats strong {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.v2-flashcard-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.v2-flashcard-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.v2-flashcard-tabs .nav-button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: 7px;
+}
+
+.v2-flashcard-tabs .nav-button[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.v2-flashcard-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+}
+
+.v2-flashcard-filterbar .v2-field {
+  flex: 1 1 135px;
+  min-width: 0;
+}
+
+.v2-flashcard-filterbar .v2-field:first-child {
+  flex-grow: 1.6;
+}
+
+.v2-flashcard-filterbar .v2-field select,
+.v2-flashcard-filterbar .v2-field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.v2-flashcard-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.v2-flashcard-check input {
+  accent-color: var(--accent);
+}
+
+.v2-flashcard-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.v2-flashcard-filter-chips .v2-allocation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v2-flashcard-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.v2-flashcard-layout.has-detail {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  align-items: start;
+}
+
+.v2-flashcard-library {
+  min-width: 0;
+}
+
+.v2-flashcard-library .v2-empty-panel .primary-button {
+  justify-self: start;
+}
+
+.v2-flashcard-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v2-flashcard-row {
+  display: flex;
+  width: 100%;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: inherit;
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.v2-flashcard-row:hover {
+  border-color: var(--accent-border);
+  background: var(--surface-soft);
+}
+
+.v2-flashcard-row.is-active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.v2-flashcard-row:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.v2-flashcard-row-main {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+}
+
+.v2-flashcard-row-main strong {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.94rem;
+}
+
+.v2-flashcard-row-main span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.v2-flashcard-row-meta {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 46%;
+}
+
+.v2-flashcard-row-meta > span:not(.v2-status-badge) {
+  color: var(--muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.v2-flashcard-detail {
+  display: grid;
+  gap: 12px;
+  position: sticky;
+  top: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--accent);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+}
+
+.v2-flashcard-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.v2-flashcard-detail-head h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.v2-flashcard-detail-content {
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.v2-flashcard-detail-divider,
+.v2-flashcard-review-divider {
+  height: 1px;
+  background: var(--line);
+}
+
+.v2-flashcard-history {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.v2-flashcard-history h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.v2-flashcard-history-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v2-flashcard-history-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.v2-flashcard-history-list strong {
+  color: var(--ink);
+  text-transform: capitalize;
+}
+
+/* ------------------------------------------------------------- review */
+
+.v2-flashcard-review-page {
+  display: grid;
+  gap: 14px;
+}
+
+.v2-flashcard-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.v2-flashcard-review-head h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.v2-flashcard-mode-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.v2-flashcard-mode-toggle .nav-button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+
+.v2-flashcard-mode-toggle .nav-button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.v2-flashcard-review-card {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 22px;
+  border: 1px solid var(--accent-border);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+}
+
+.v2-flashcard-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.v2-flashcard-review-content {
+  color: var(--ink);
+  font-size: 1.1rem;
+  line-height: 1.65;
+  min-height: 80px;
+}
+
+.v2-flashcard-review-back {
+  padding: 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-soft);
+}
+
+.v2-flashcard-reveal {
+  justify-self: start;
+}
+
+.v2-flashcard-ratings {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.v2-flashcard-rating {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  padding: 9px 8px;
+  text-align: center;
+}
+
+.v2-flashcard-rating strong {
+  font-size: 0.88rem;
+}
+
+.v2-flashcard-rating span {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.v2-flashcard-rating-again {
+  border-color: var(--error-border);
+  background: var(--error-soft);
+}
+
+.v2-flashcard-rating-hard {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+
+.v2-flashcard-rating-good {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+
+.v2-flashcard-rating-easy {
+  border-color: var(--info-border);
+  background: var(--info-soft);
+}
+
+.v2-flashcard-rating-again strong {
+  color: var(--error);
+}
+
+.v2-flashcard-rating-hard strong {
+  color: var(--warning-ink);
+}
+
+.v2-flashcard-rating-good strong {
+  color: var(--success);
+}
+
+.v2-flashcard-rating-easy strong {
+  color: var(--info);
+}
+
+.v2-flashcard-session-summary {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  max-width: 660px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+}
+
+.v2-flashcard-session-summary h3 {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------- editor */
+
+.v2-flashcard-editor-dialog {
+  max-width: 780px;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.v2-flashcard-editor {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.v2-flashcard-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v2-flashcard-editor-head h2 {
+  margin: 0;
+}
+
+.v2-flashcard-editor textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.v2-flashcard-preview {
+  margin-top: -4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.v2-flashcard-fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.v2-flashcard-fieldset legend {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.v2-flashcard-exam-link {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.v2-flashcard-exam-link > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+}
+
+.v2-flashcard-exam-link select {
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+}
+
+.v2-flashcard-exam-link select:focus-visible {
+  border-color: var(--accent);
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.v2-flashcard-selected-concept {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 0.84rem;
+}
+
+.v2-flashcard-concept-options {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v2-flashcard-concept-options .link-button {
+  text-align: left;
+}
+
+.v2-flashcard-concept-options span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* --------------------------------------------------------------- math */
+
+.v2-math-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.v2-math-display {
+  display: block;
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.v2-math-inline {
+  display: inline;
+}
+
+.v2-math-fallback {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--error-soft);
+  color: var(--error);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.v2-katex-error {
+  color: var(--error);
+}
+
+/* ------------------------------------------------------------ responsive */
+
+.v2-syllabus-flashcard-link,
+.v2-concept-flashcard-link {
+  margin-top: 8px;
+  justify-self: start;
+}
+
+@media (max-width: 1100px) {
+  .v2-flashcard-layout.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v2-flashcard-detail {
+    position: static;
+  }
+}
+
+@media (max-width: 860px) {
+  .v2-flashcard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .v2-flashcard-filterbar .v2-field {
+    flex-basis: 45%;
+  }
+
+  .v2-flashcard-row {
+    flex-direction: column;
+  }
+
+  .v2-flashcard-row-meta {
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 700px) {
+  .v2-flashcard-filterbar .v2-field {
+    flex-basis: 100%;
+  }
+
+  .v2-flashcard-ratings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .v2-flashcard-review-card {
+    padding: 15px;
+  }
+
+  .v2-flashcard-exam-link {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v2-flashcard-editor {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 520px) {
+  .v2-flashcard-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

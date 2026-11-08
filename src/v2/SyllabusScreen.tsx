@@ -12,6 +12,7 @@ type SyllabusScreenProps = {
   exams: V2ExamSummary[];
   initialExamCode?: string | null;
   initialFocusNodeId?: number | null;
+  onOpenFlashcards?: (examCode: string, nodeId: number, nodeTitle: string) => void;
 };
 
 const PROGRESS_LABELS: Record<string, string> = {
@@ -31,6 +32,7 @@ export function SyllabusScreen({
   exams,
   initialExamCode = null,
   initialFocusNodeId = null,
+  onOpenFlashcards,
 }: SyllabusScreenProps) {
   const initialExam = exams.find((exam) => exam.code === initialExamCode) ?? exams[0];
   const [examId, setExamId] = useState(String(initialExam?.id ?? ''));
@@ -234,6 +236,16 @@ export function SyllabusScreen({
               <span className="v2-status-badge v2-status-active">Official verified</span>{' '}
               {node.sourceReference}
             </p>
+            {onOpenFlashcards && syllabus && node.nodeKind === 'topic' && (
+              <button
+                aria-label={`Open flashcards for ${node.title}`}
+                className="secondary-button v2-syllabus-flashcard-link"
+                onClick={() => onOpenFlashcards(syllabus.examCode, node.id, node.title)}
+                type="button"
+              >
+                Flashcards for this topic
+              </button>
+            )}
           </div>
           {node.nodeKind === 'topic' && (
             <label className="v2-field">

@@ -89,6 +89,7 @@ function results(overrides: Partial<V2GlobalSearchResult> = {}): V2GlobalSearchR
         examCodes: ['gate-physics'],
       },
     ],
+    flashcards: [],
     ...overrides,
   };
 }
@@ -209,6 +210,27 @@ describe('GlobalSearch', () => {
         limitPerCategory: 6,
       }),
     );
+  });
+
+  it('navigates to a flashcard result and labels shared cards', async () => {
+    const { onNavigate } = renderSearch({
+      result: results({
+        flashcards: [
+          {
+            flashcardId: 21,
+            frontSnippet: 'Vector field definition',
+            backSnippet: 'A vector assigned to each point in space.',
+            subjectArea: 'Mathematical Methods',
+            examCodes: [],
+          },
+        ],
+      }),
+    });
+    await typeQuery('vector');
+    const option = await screen.findByRole('option', { name: /Vector field definition/ });
+    expect(option.textContent).toContain('Shared');
+    await userEvent.setup().click(option);
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'flashcards', flashcardId: 21 });
   });
 
   it('shows the no-match empty state and closes on Escape', async () => {

@@ -73,6 +73,16 @@ pub struct V2GlobalResourceHit {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct V2GlobalFlashcardHit {
+    pub flashcard_id: i64,
+    pub front_snippet: String,
+    pub back_snippet: String,
+    pub subject_area: String,
+    pub exam_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct V2GlobalSearchResult {
     pub query: String,
     pub exam_id: Option<i64>,
@@ -80,6 +90,7 @@ pub struct V2GlobalSearchResult {
     pub concepts: Vec<V2GlobalConceptHit>,
     pub pyqs: Vec<V2GlobalPyqHit>,
     pub resources: Vec<V2GlobalResourceHit>,
+    pub flashcards: Vec<V2GlobalFlashcardHit>,
 }
 
 /// Global search across the V2 records that have a workspace destination today:
@@ -127,6 +138,7 @@ pub fn global_search(
             concepts: Vec::new(),
             pyqs: Vec::new(),
             resources: Vec::new(),
+            flashcards: Vec::new(),
         });
     }
 
@@ -141,6 +153,7 @@ pub fn global_search(
         concepts: search_concepts(connection, &query, &pattern, &prefix, input.exam_id, limit)?,
         pyqs: search_pyqs(connection, &query, &pattern, &prefix, input.exam_id, limit)?,
         resources: search_resources(connection, &query, &pattern, &prefix, input.exam_id, limit)?,
+        flashcards: search_flashcards(connection, &query, &pattern, &prefix, input.exam_id, limit)?,
     })
 }
 
@@ -421,6 +434,80 @@ fn search_resources(
         .map_err(|error| AppError::database("A resource search row is invalid", error))
 }
 
+fn search_flashcards(
+    connection: &Connection,
+    query: &str,
+    pattern: &str,
+    prefix: &str,
+    exam_id: Option<i64>,
+    limit: i64,
+) -> Result<Vec<V2GlobalFlashcardHit>, AppError> {
+    let mut sql = String::from(
+        "SELECT f.id, f.front, f.back, f.subject_area,
+                COALESCE((
+                    SELECT json_group_array(e.code)
+                    FROM flashcard_exam_links l
+                    JOIN exams e ON e.id = l.exam_id
+                    WHERE l.flashcard_id = f.id
+                ), '[]')
+         FROM flashcards f
+         WHERE f.is_archived = 0",
+    );
+    let mut values: Vec<Value> = Vec::new();
+    if let Some(exam_id) = exam_id {
+        sql.push_str(
+            " AND (
+                NOT EXISTS (SELECT 1 FROM flashcard_exam_links l WHERE l.flashcard_id=f.id)
+                OR EXISTS (
+                    SELECT 1 FROM flashcard_exam_links l
+                    WHERE l.flashcard_id=f.id AND l.exam_id=?
+                )
+              )",
+        );
+        values.push(Value::Integer(exam_id));
+    }
+    sql.push_str(
+        " AND (f.front LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR f.back LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR f.subject_area LIKE ? ESCAPE '\\' COLLATE NOCASE)
+         ORDER BY CASE
+                    WHEN lower(trim(f.front)) = lower(?) THEN 0
+                    WHEN f.front LIKE ? ESCAPE '\\' COLLATE NOCASE THEN 1
+                    WHEN f.front LIKE ? ESCAPE '\\' COLLATE NOCASE THEN 2
+                    ELSE 3
+                  END,
+                  f.front COLLATE NOCASE, f.id
+         LIMIT ?",
+    );
+    for _ in 0..3 {
+        values.push(Value::Text(pattern.to_owned()));
+    }
+    values.push(Value::Text(query.to_owned()));
+    values.push(Value::Text(prefix.to_owned()));
+    values.push(Value::Text(pattern.to_owned()));
+    values.push(Value::Integer(limit));
+
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| AppError::database("Flashcard search could not be prepared", error))?;
+    let rows = statement
+        .query_map(params_from_iter(values.iter()), |row| {
+            let front: String = row.get(1)?;
+            let back: String = row.get(2)?;
+            let codes_json: String = row.get(4)?;
+            Ok(V2GlobalFlashcardHit {
+                flashcard_id: row.get(0)?,
+                front_snippet: snippet(&front),
+                back_snippet: snippet(&back),
+                subject_area: row.get(3)?,
+                exam_codes: serde_json::from_str(&codes_json).unwrap_or_default(),
+            })
+        })
+        .map_err(|error| AppError::database("Flashcard search could not run", error))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| AppError::database("A flashcard search row is invalid", error))
+}
+
 fn escape_like(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
@@ -449,6 +536,7 @@ fn snippet(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::v2::V2State;
+    use chrono::Utc;
     use std::time::Instant;
 
     fn state() -> (tempfile::TempDir, V2State) {
@@ -944,6 +1032,66 @@ mod tests {
             .map(|hit| hit.question_number.as_str())
             .collect::<Vec<_>>();
         assert_eq!(numbers, ["R1", "R2", "R3"]);
+    }
+
+    #[test]
+    fn flashcard_search_ranks_shared_cards_and_honours_scope() {
+        let (_root, state) = state();
+        state
+            .with_connection(|connection| {
+                for (front, exam_id) in [
+                    ("Vector field", None),
+                    ("Vector field divergence", Some(1_i64)),
+                    ("A vector field note", None),
+                ] {
+                    crate::v2::flashcards::save_flashcard(
+                        connection,
+                        crate::v2::flashcards::V2FlashcardInput {
+                            id: None,
+                            front: front.to_owned(),
+                            back: format!("{front} back"),
+                            subject_area: "Mathematical Methods".to_owned(),
+                            concept_id: None,
+                            exam_links: exam_id
+                                .map(|exam_id| {
+                                    vec![crate::v2::flashcards::V2FlashcardExamLinkInput {
+                                        exam_id,
+                                        syllabus_node_id: None,
+                                    }]
+                                })
+                                .unwrap_or_default(),
+                            today: "2026-11-08".to_owned(),
+                        },
+                        Utc::now(),
+                    )
+                    .expect("flashcard fixture");
+                }
+                Ok::<(), AppError>(())
+            })
+            .expect("flashcard search fixtures");
+
+        let global = search(&state, "vector field", None);
+        let fronts = global
+            .flashcards
+            .iter()
+            .map(|hit| hit.front_snippet.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            fronts,
+            [
+                "Vector field",
+                "Vector field divergence",
+                "A vector field note"
+            ]
+        );
+
+        let gate = search(&state, "vector field", Some(2));
+        assert_eq!(gate.flashcards.len(), 2);
+        assert!(
+            gate.flashcards
+                .iter()
+                .all(|hit| hit.front_snippet != "Vector field divergence")
+        );
     }
 
     #[test]

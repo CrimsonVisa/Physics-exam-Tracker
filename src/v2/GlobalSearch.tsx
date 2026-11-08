@@ -11,7 +11,7 @@ type GlobalSearchProps = {
   onNavigate: (view: V2View) => void;
 };
 
-type SearchGroupId = 'syllabus' | 'concepts' | 'pyqs' | 'resources';
+type SearchGroupId = 'syllabus' | 'concepts' | 'flashcards' | 'pyqs' | 'resources';
 
 type SearchItem = {
   key: string;
@@ -26,6 +26,7 @@ type SearchItem = {
 const GROUPS: Array<{ id: SearchGroupId; label: string; workspace: string }> = [
   { id: 'syllabus', label: 'Syllabus topics and units', workspace: 'syllabus' },
   { id: 'concepts', label: 'Concepts', workspace: 'concepts' },
+  { id: 'flashcards', label: 'Flashcards', workspace: 'flashcards' },
   { id: 'pyqs', label: 'Previous-year questions', workspace: 'practice' },
   { id: 'resources', label: 'Resources', workspace: 'resources' },
 ];
@@ -102,6 +103,18 @@ function buildItems(result: V2GlobalSearchResult | null, exams: V2ExamSummary[])
       secondary: [hit.domain, mastery].join(' · '),
       badge: hit.examCodes.length > 0 ? `${hit.examCodes.length} exam link(s)` : 'Shared',
       view: { kind: 'concepts', examCode: null, conceptSlug: hit.slug },
+      index: index++,
+    });
+  }
+  for (const hit of result.flashcards) {
+    const examBadges = hit.examCodes.map((code) => examShortName(exams, code)).join(' · ');
+    items.push({
+      key: `flashcard-${hit.flashcardId}`,
+      group: 'flashcards',
+      title: hit.frontSnippet,
+      secondary: [hit.subjectArea || 'No subject', hit.backSnippet].filter(Boolean).join(' · '),
+      badge: examBadges || 'Shared',
+      view: { kind: 'flashcards', flashcardId: hit.flashcardId },
       index: index++,
     });
   }

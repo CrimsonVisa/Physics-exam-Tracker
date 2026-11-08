@@ -6,15 +6,19 @@ import {
   finishV2Timer,
   getV2ConceptDetail,
   getV2DatabaseStatus,
+  getV2FlashcardStats,
   getV2StudyTotals,
   getV2Timer,
   heartbeatV2Timer,
   initializeV2Database,
   listV2Exams,
+  listV2Flashcards,
   listV2Sessions,
   pauseV2Timer,
   replayV2ConceptMastery,
   resumeV2Timer,
+  reviewV2Flashcard,
+  saveV2Flashcard,
   searchV2Concepts,
   setV2SessionAllocations,
   startV2Timer,
@@ -167,6 +171,56 @@ describe('V2 API layer', () => {
     await verifyV2MasteryRun({ runId: 9 });
     expect(invokeMock).toHaveBeenLastCalledWith('v2_verify_mastery_run', {
       input: { runId: 9 },
+    });
+  });
+
+  it('maps flashcard commands and inputs exactly', async () => {
+    const filter = {
+      query: 'gradient',
+      examId: 1,
+      subjectArea: 'Mathematical Methods',
+      nodeId: 11,
+      conceptSlug: 'kinematics',
+      includeArchived: false,
+      dueOnly: true,
+      today: '2026-11-08',
+      sort: 'due',
+      limit: 100,
+    };
+    await listV2Flashcards(filter);
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_list_flashcards', { filter });
+
+    await saveV2Flashcard({
+      front: 'Prompt',
+      back: 'Answer',
+      subjectArea: 'Mechanics',
+      conceptId: 7,
+      examLinks: [{ examId: 1, syllabusNodeId: 11 }],
+      today: '2026-11-08',
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_save_flashcard', {
+      input: {
+        front: 'Prompt',
+        back: 'Answer',
+        subjectArea: 'Mechanics',
+        conceptId: 7,
+        examLinks: [{ examId: 1, syllabusNodeId: 11 }],
+        today: '2026-11-08',
+      },
+    });
+
+    await reviewV2Flashcard({
+      flashcardId: 3,
+      rating: 'good',
+      today: '2026-11-08',
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_review_flashcard', {
+      input: { flashcardId: 3, rating: 'good', today: '2026-11-08' },
+    });
+
+    await getV2FlashcardStats({ today: '2026-11-08', examId: 1 });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_get_flashcard_stats', {
+      input: { today: '2026-11-08', examId: 1 },
     });
   });
 });

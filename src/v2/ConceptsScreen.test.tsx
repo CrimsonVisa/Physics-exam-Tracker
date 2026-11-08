@@ -495,6 +495,8 @@ describe('V2 concept library', () => {
 
 describe('Concept deep links', () => {
   it('opens a shared concept directly from a search result regardless of exam scope', async () => {
+    const user = userEvent.setup();
+    const onOpenFlashcards = vi.fn();
     const shared = concept();
     mockedSearch.mockResolvedValue(searchResult([shared]));
     mockedDetail.mockResolvedValue(detail(shared));
@@ -504,6 +506,7 @@ describe('Concept deep links', () => {
         exams={EXAMS}
         initialConceptSlug={shared.slug}
         initialExamCode={null}
+        onOpenFlashcards={onOpenFlashcards}
         today={TODAY}
       />,
     );
@@ -513,5 +516,7 @@ describe('Concept deep links', () => {
     ).toBeInTheDocument();
     expect(mockedDetail).toHaveBeenCalledWith({ slug: shared.slug });
     expect(screen.getByRole('button', { name: /Back to concept library/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Open flashcards for ${shared.title}` }));
+    expect(onOpenFlashcards).toHaveBeenCalledWith(shared.slug, shared.title);
   });
 });

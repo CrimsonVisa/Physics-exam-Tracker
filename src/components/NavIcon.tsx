@@ -96,6 +96,13 @@ const ICON_PATHS: Record<NavIconName, ReactNode> = {
       <path d="M7.9 8.1 10.6 15.6M16.2 9.4 13.4 15.9M8.4 6.2l7.2.5" />
     </>
   ),
+  flashcards: (
+    <>
+      <rect x="3.5" y="6" width="13" height="14" rx="2" />
+      <path d="M7.5 3.5h11A2.5 2.5 0 0 1 21 6v11.5" />
+      <path d="M6.5 10h7M6.5 13.5h5" />
+    </>
+  ),
   resources: (
     <>
       <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5v8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z" />

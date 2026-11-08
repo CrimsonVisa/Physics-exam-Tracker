@@ -175,4 +175,20 @@ describe('Syllabus deep links', () => {
     expect(node).toHaveClass('v2-syllabus-node-focused');
     expect(screen.getByText('Kinematics')).toBeInTheDocument();
   });
+
+  it('navigates to flashcards for a topic', async () => {
+    const user = userEvent.setup();
+    const onOpenFlashcards = vi.fn();
+    mockedSyllabus.mockResolvedValue(CONFIGURED);
+    render(
+      <SyllabusScreen
+        exams={EXAMS}
+        initialExamCode="csir-net-physics"
+        onOpenFlashcards={onOpenFlashcards}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Open flashcards for Kinematics' }));
+    expect(onOpenFlashcards).toHaveBeenCalledWith('csir-net-physics', 2, 'Kinematics');
+  });
 });

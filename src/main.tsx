@@ -3,11 +3,13 @@ import { createRoot } from 'react-dom/client';
 import App from './v2/App';
 import { applyTheme, getStoredTheme } from './lib/uiPreferences';
 import { applyAppearance, getStoredFontFamily, getStoredFontSize } from './lib/appearance';
+import 'katex/dist/katex.min.css';
 import './styles.css';
 import './v2/v2.css';
 import './v2/design-system.css';
 import './v2/workspaces.css';
 import './v2/global-search.css';
+import './v2/flashcards.css';
 
 applyTheme(getStoredTheme());
 applyAppearance(getStoredFontFamily(), getStoredFontSize());

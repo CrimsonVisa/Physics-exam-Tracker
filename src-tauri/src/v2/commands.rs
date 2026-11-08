@@ -711,12 +711,7 @@ pub async fn v2_restore_recovery_safety(
     input: V2RestoreInput,
 ) -> Result<V2RestoreResult, AppError> {
     run_blocking(app, move |state| {
-        let data_dir = state.data_directory().ok_or_else(|| {
-            AppError::database_unavailable("The V2 data directory is unavailable.")
-        })?;
-        state.with_connection(|connection| {
-            super::backup::restore_recovery_safety(connection, &data_dir, input)
-        })
+        state.restore_recovery_safety(input, Utc::now())
     })
     .await
 }
@@ -1480,6 +1475,91 @@ pub async fn v2_reject_pyq_extraction_candidate(
 pub async fn v2_get_pyq_source_counts(app: AppHandle) -> Result<V2SourceCounts, AppError> {
     run_blocking(app, move |state| {
         state.with_connection(|connection| super::practice::sources::counts(connection))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_list_flashcards(
+    app: AppHandle,
+    filter: super::flashcards::V2FlashcardFilter,
+) -> Result<super::flashcards::V2FlashcardLibrary, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| super::flashcards::list_flashcards(connection, filter))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_get_flashcard_detail(
+    app: AppHandle,
+    flashcard_id: i64,
+) -> Result<super::flashcards::V2FlashcardDetail, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::flashcards::get_flashcard_detail(connection, flashcard_id)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_save_flashcard(
+    app: AppHandle,
+    input: super::flashcards::V2FlashcardInput,
+) -> Result<super::flashcards::V2FlashcardDetail, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::flashcards::save_flashcard(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_set_flashcard_archived(
+    app: AppHandle,
+    input: super::flashcards::V2FlashcardArchiveInput,
+) -> Result<super::flashcards::V2FlashcardDetail, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::flashcards::set_flashcard_archived(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_get_flashcard_review_queue(
+    app: AppHandle,
+    input: super::flashcards::V2FlashcardQueueInput,
+) -> Result<super::flashcards::V2FlashcardQueue, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| super::flashcards::review_queue(connection, input))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_review_flashcard(
+    app: AppHandle,
+    input: super::flashcards::V2FlashcardReviewInput,
+) -> Result<super::flashcards::V2FlashcardReviewResult, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::flashcards::review_flashcard(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_get_flashcard_stats(
+    app: AppHandle,
+    input: super::flashcards::V2FlashcardStatsInput,
+) -> Result<super::flashcards::V2FlashcardStats, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| super::flashcards::flashcard_stats(connection, input))
     })
     .await
 }

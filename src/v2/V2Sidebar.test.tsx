@@ -81,6 +81,7 @@ describe('V2Sidebar', () => {
       'Concepts',
       'Syllabus',
       'Practice',
+      'Flashcards',
       'Planner',
       'Revision',
       'Analytics',
@@ -101,7 +102,7 @@ describe('V2Sidebar', () => {
       'true',
     );
     // The shared stylesheet hides icons by default; the V2 shell renders them.
-    expect(document.querySelectorAll('.nav-icon')).toHaveLength(13);
+    expect(document.querySelectorAll('.nav-icon')).toHaveLength(14);
 
     // Expanded navigation relies on the visible label, not a title tooltip.
     expect(screen.getByRole('button', { name: 'Practice systems' })).not.toHaveAttribute('title');
@@ -124,6 +125,9 @@ describe('V2Sidebar', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Concept library' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'concepts', examCode: null });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Flashcards' }));
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'flashcards' });
 
     await userEvent.click(screen.getByRole('button', { name: 'GATE Physics (PH)' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'exam', examCode: 'gate-physics' });

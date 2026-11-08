@@ -674,8 +674,11 @@ mod tests {
         let reopened = V2State::initialize(&data_dir);
         let status = reopened.status();
         assert_eq!(status.state, crate::v2::V2DatabaseState::Healthy);
-        assert_eq!(status.schema_version, Some(2));
-        assert_eq!(status.metadata_schema_version, Some(2));
+        assert_eq!(status.schema_version, Some(crate::v2::V2_SCHEMA_VERSION));
+        assert_eq!(
+            status.metadata_schema_version,
+            Some(crate::v2::V2_SCHEMA_VERSION)
+        );
         assert!(status.migration_checksum_valid);
         let (exam_id, node_id) = ids(&reopened);
         let saved = save(&reopened, input("After upgrade", 30, exam_id, node_id, 30));
@@ -696,7 +699,8 @@ mod tests {
                 Ok(collected)
             })
             .expect("ledger rows");
-        assert_eq!(ledger, vec![(2, "v2_initial_schema".to_owned())]);
+        assert!(ledger.iter().any(|(version, _)| *version == 2));
+        assert!(ledger.iter().any(|(version, _)| *version == 3));
         let _ = V2_DATABASE_FILE_NAME;
         let database_path = data_dir.join(V2_DATABASE_FILE_NAME);
         assert!(Path::new(&database_path).exists());

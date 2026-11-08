@@ -872,6 +872,8 @@ export type V2RestorePreview = {
   fileName: string;
   sizeBytes: number;
   schemaVersion: number;
+  targetSchemaVersion: number;
+  requiresUpgrade: boolean;
   examCount: number;
   integrityCheck: string;
 };
@@ -1340,6 +1342,14 @@ export type V2GlobalResourceHit = {
   examCodes: string[];
 };
 
+export type V2GlobalFlashcardHit = {
+  flashcardId: number;
+  frontSnippet: string;
+  backSnippet: string;
+  subjectArea: string;
+  examCodes: string[];
+};
+
 export type V2GlobalSearchResult = {
   query: string;
   examId: number | null;
@@ -1347,6 +1357,7 @@ export type V2GlobalSearchResult = {
   concepts: V2GlobalConceptHit[];
   pyqs: V2GlobalPyqHit[];
   resources: V2GlobalResourceHit[];
+  flashcards: V2GlobalFlashcardHit[];
 };
 
 export function globalSearchV2(input: {
@@ -2511,4 +2522,184 @@ export function rejectV2PyqExtractionCandidate(
 
 export function getV2PyqSourceCounts(): Promise<V2SourceCounts> {
   return invoke<V2SourceCounts>('v2_get_pyq_source_counts');
+}
+
+export type V2FlashcardExamLink = {
+  examId: number;
+  examCode: string;
+  examShortName: string;
+  syllabusNodeId: number | null;
+  nodeTitle: string | null;
+};
+
+export type V2FlashcardSchedule = {
+  dueOn: string;
+  intervalDays: number;
+  easeFactor: number;
+  reviewCount: number;
+  lapseCount: number;
+  lastRating: string | null;
+  lastReviewedOn: string | null;
+  lastReviewedAt: string | null;
+  algorithmVersion: number;
+};
+
+export type V2FlashcardSummary = {
+  id: number;
+  frontPreview: string;
+  backPreview: string;
+  subjectArea: string;
+  conceptId: number | null;
+  conceptTitle: string | null;
+  isArchived: boolean;
+  archivedAt: string | null;
+  schedule: V2FlashcardSchedule;
+  examLinks: V2FlashcardExamLink[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type V2FlashcardReview = {
+  id: number;
+  reviewedOn: string;
+  reviewedAt: string;
+  rating: string;
+  scheduledDueOn: string;
+  nextDueOn: string;
+  intervalBeforeDays: number;
+  intervalAfterDays: number;
+  easeBefore: number;
+  easeAfter: number;
+  algorithmVersion: number;
+};
+
+export type V2FlashcardDetail = {
+  flashcard: V2FlashcardSummary;
+  front: string;
+  back: string;
+  reviews: V2FlashcardReview[];
+};
+
+export type V2FlashcardFilter = {
+  query?: string;
+  examId?: number | null;
+  subjectArea?: string;
+  nodeId?: number | null;
+  conceptSlug?: string;
+  includeArchived?: boolean;
+  dueOnly?: boolean;
+  today: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type V2FlashcardExamLinkInput = {
+  examId: number;
+  syllabusNodeId?: number | null;
+};
+
+export type V2FlashcardInput = {
+  id?: number | null;
+  front: string;
+  back: string;
+  subjectArea: string;
+  conceptId?: number | null;
+  examLinks: V2FlashcardExamLinkInput[];
+  today: string;
+};
+
+export type V2FlashcardArchiveInput = {
+  flashcardId: number;
+  archived: boolean;
+};
+
+export type V2FlashcardLibrary = {
+  cards: V2FlashcardSummary[];
+  total: number;
+  subjects: string[];
+};
+
+export type V2FlashcardQueueInput = {
+  examId?: number | null;
+  subjectArea?: string;
+  nodeId?: number | null;
+  conceptSlug?: string;
+  dueOnly: boolean;
+  today: string;
+  limit?: number;
+};
+
+export type V2FlashcardReviewCard = {
+  id: number;
+  front: string;
+  back: string;
+  subjectArea: string;
+  conceptTitle: string | null;
+  schedule: V2FlashcardSchedule;
+};
+
+export type V2FlashcardQueue = {
+  cards: V2FlashcardReviewCard[];
+  remaining: number;
+};
+
+export type V2FlashcardReviewInput = {
+  flashcardId: number;
+  rating: 'again' | 'hard' | 'good' | 'easy';
+  today: string;
+};
+
+export type V2FlashcardReviewResult = {
+  review: V2FlashcardReview;
+  schedule: V2FlashcardSchedule;
+};
+
+export type V2FlashcardStatsInput = {
+  query?: string;
+  examId?: number | null;
+  subjectArea?: string;
+  nodeId?: number | null;
+  conceptSlug?: string;
+  includeArchived?: boolean;
+  today: string;
+};
+
+export type V2FlashcardStats = {
+  totalCards: number;
+  dueCards: number;
+  reviewedCards: number;
+  newCards: number;
+  totalReviews: number;
+  reviewsLast30Days: number;
+  successfulLast30Days: number;
+  retentionPercent: number | null;
+};
+
+export function listV2Flashcards(filter: V2FlashcardFilter): Promise<V2FlashcardLibrary> {
+  return invoke<V2FlashcardLibrary>('v2_list_flashcards', { filter });
+}
+
+export function getV2FlashcardDetail(flashcardId: number): Promise<V2FlashcardDetail> {
+  return invoke<V2FlashcardDetail>('v2_get_flashcard_detail', { flashcardId });
+}
+
+export function saveV2Flashcard(input: V2FlashcardInput): Promise<V2FlashcardDetail> {
+  return invoke<V2FlashcardDetail>('v2_save_flashcard', { input });
+}
+
+export function setV2FlashcardArchived(input: V2FlashcardArchiveInput): Promise<V2FlashcardDetail> {
+  return invoke<V2FlashcardDetail>('v2_set_flashcard_archived', { input });
+}
+
+export function getV2FlashcardReviewQueue(input: V2FlashcardQueueInput): Promise<V2FlashcardQueue> {
+  return invoke<V2FlashcardQueue>('v2_get_flashcard_review_queue', { input });
+}
+
+export function reviewV2Flashcard(input: V2FlashcardReviewInput): Promise<V2FlashcardReviewResult> {
+  return invoke<V2FlashcardReviewResult>('v2_review_flashcard', { input });
+}
+
+export function getV2FlashcardStats(input: V2FlashcardStatsInput): Promise<V2FlashcardStats> {
+  return invoke<V2FlashcardStats>('v2_get_flashcard_stats', { input });
 }

@@ -265,6 +265,15 @@ impl AppError {
         }
     }
 
+    pub fn flashcard_not_found() -> Self {
+        Self {
+            code: "flashcard_not_found",
+            message: "This flashcard is no longer available. Refresh the list and try again."
+                .to_owned(),
+            field: None,
+        }
+    }
+
     pub fn resource_discovery_failed(message: impl Into<String>) -> Self {
         Self {
             code: "resource_discovery_failed",

@@ -238,7 +238,14 @@ export function BackupScreen({ onChanged }: BackupScreenProps) {
               <p className="v2-empty-copy">
                 Restoring replaces the live V2 database. A safety backup will be created first.
               </p>
-              {preview.schemaVersion === overview?.schemaVersion ? (
+              {preview.requiresUpgrade && (
+                <p className="v2-empty-copy">
+                  This schema {preview.schemaVersion} backup will be upgraded to schema{' '}
+                  {preview.targetSchemaVersion} on a temporary copy. The original backup file is not
+                  modified.
+                </p>
+              )}
+              {preview.schemaVersion === overview?.schemaVersion || preview.requiresUpgrade ? (
                 <button
                   className="primary-button v2-danger-button"
                   disabled={busy}

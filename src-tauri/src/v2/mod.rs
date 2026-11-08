@@ -19,6 +19,7 @@ pub mod backup;
 mod commands;
 pub mod concepts;
 pub mod dashboard;
+pub mod flashcards;
 pub mod mastery;
 pub mod planner;
 pub mod practice;
@@ -37,41 +38,49 @@ pub use commands::{
     v2_discard_timer, v2_extract_pyq_source, v2_finish_timer, v2_generate_revision_daily_plan,
     v2_get_agenda, v2_get_analytics, v2_get_app_settings, v2_get_backup_overview,
     v2_get_concept_detail, v2_get_dashboard_sections, v2_get_database_status, v2_get_exam_syllabus,
+    v2_get_flashcard_detail, v2_get_flashcard_review_queue, v2_get_flashcard_stats,
     v2_get_planner_day, v2_get_practice_analytics, v2_get_practice_options, v2_get_pyq_answer_key,
     v2_get_pyq_extraction_candidate, v2_get_pyq_question_detail, v2_get_pyq_source_counts,
     v2_get_pyq_source_detail, v2_get_question_mock_session, v2_get_restore_recovery,
     v2_get_revision_daily_plan, v2_get_revision_dashboard, v2_get_study_totals, v2_get_timer,
     v2_global_search, v2_heartbeat_timer, v2_import_resource_file, v2_initialize_database,
     v2_link_block_session, v2_link_resource_exam, v2_link_revision_plan_block,
-    v2_list_exam_profiles, v2_list_exams, v2_list_mock_tests, v2_list_pyq_answer_key_conflicts,
-    v2_list_pyq_answer_keys, v2_list_pyq_attempts, v2_list_pyq_extraction_candidates,
-    v2_list_pyq_questions, v2_list_pyq_sources, v2_list_question_mock_candidates,
-    v2_list_quick_start_configs, v2_list_resources, v2_list_sessions, v2_move_revision_plan_item,
-    v2_pause_timer, v2_preview_exam_date_change, v2_preview_pyq_answer_key, v2_preview_pyq_import,
-    v2_preview_restore_backup, v2_rebalance_revision_daily_plan, v2_reconcile_pyq_source,
-    v2_record_pyq_attempt, v2_reject_pyq_extraction_candidate, v2_remove_resource_file,
-    v2_replay_concept_mastery, v2_reschedule_revision, v2_reschedule_task,
-    v2_reset_dashboard_sections, v2_restore_recovery_safety, v2_resume_timer,
-    v2_run_automatic_backup_if_due, v2_save_block, v2_save_dashboard_sections, v2_save_mock_test,
-    v2_save_pyq_answer_key, v2_save_pyq_question, v2_save_pyq_source, v2_save_question_mock_state,
-    v2_save_quick_start_config, v2_save_resource, v2_save_task, v2_schedule_revision_concept,
-    v2_search_concepts, v2_set_block_status, v2_set_exam_active, v2_set_mock_test_status,
-    v2_set_pyq_source_status, v2_set_revision_status, v2_set_session_allocations,
-    v2_set_task_status, v2_set_timer_allocations, v2_start_question_mock, v2_start_timer,
-    v2_submit_question_mock, v2_update_app_settings, v2_update_backup_settings,
-    v2_update_concept_mapping, v2_update_concept_mastery, v2_update_pyq_extraction_candidate,
-    v2_update_resource_progress, v2_update_revision_settings, v2_update_study_session,
-    v2_update_syllabus_node_progress, v2_update_timer_settings, v2_verify_mastery_run,
-    v2_verify_pyq_extraction_candidate,
+    v2_list_exam_profiles, v2_list_exams, v2_list_flashcards, v2_list_mock_tests,
+    v2_list_pyq_answer_key_conflicts, v2_list_pyq_answer_keys, v2_list_pyq_attempts,
+    v2_list_pyq_extraction_candidates, v2_list_pyq_questions, v2_list_pyq_sources,
+    v2_list_question_mock_candidates, v2_list_quick_start_configs, v2_list_resources,
+    v2_list_sessions, v2_move_revision_plan_item, v2_pause_timer, v2_preview_exam_date_change,
+    v2_preview_pyq_answer_key, v2_preview_pyq_import, v2_preview_restore_backup,
+    v2_rebalance_revision_daily_plan, v2_reconcile_pyq_source, v2_record_pyq_attempt,
+    v2_reject_pyq_extraction_candidate, v2_remove_resource_file, v2_replay_concept_mastery,
+    v2_reschedule_revision, v2_reschedule_task, v2_reset_dashboard_sections,
+    v2_restore_recovery_safety, v2_resume_timer, v2_review_flashcard,
+    v2_run_automatic_backup_if_due, v2_save_block, v2_save_dashboard_sections, v2_save_flashcard,
+    v2_save_mock_test, v2_save_pyq_answer_key, v2_save_pyq_question, v2_save_pyq_source,
+    v2_save_question_mock_state, v2_save_quick_start_config, v2_save_resource, v2_save_task,
+    v2_schedule_revision_concept, v2_search_concepts, v2_set_block_status, v2_set_exam_active,
+    v2_set_flashcard_archived, v2_set_mock_test_status, v2_set_pyq_source_status,
+    v2_set_revision_status, v2_set_session_allocations, v2_set_task_status,
+    v2_set_timer_allocations, v2_start_question_mock, v2_start_timer, v2_submit_question_mock,
+    v2_update_app_settings, v2_update_backup_settings, v2_update_concept_mapping,
+    v2_update_concept_mastery, v2_update_pyq_extraction_candidate, v2_update_resource_progress,
+    v2_update_revision_settings, v2_update_study_session, v2_update_syllabus_node_progress,
+    v2_update_timer_settings, v2_verify_mastery_run, v2_verify_pyq_extraction_candidate,
 };
 
 pub const V2_DATABASE_FILE_NAME: &str = "physics-tracker.sqlite3";
-pub const V2_SCHEMA_VERSION: i64 = 2;
+pub const V2_SCHEMA_VERSION: i64 = 3;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 const SEED_SQL: &str = include_str!("seed.sql");
 const UPGRADE_SQL_V2_2: &str = include_str!("schema_upgrade_v2_2.sql");
+const UPGRADE_SQL_V2_3: &str = include_str!("schema_upgrade_v2_3.sql");
+const SCHEMA_VERSION_2: i64 = 2;
+// Generated from the schema.sql shipped with the QoL-3 baseline. It is kept
+// stable so schema-2 databases and backups can be upgraded without rewriting
+// their historical migration ledger.
+const SCHEMA_2_CHECKSUM: &str = "7a2c00bdca6741f4219b5889633615c02391888705294ea3bb83d8db4a360463";
 
 struct BuiltInExam {
     code: &'static str,
@@ -327,6 +336,24 @@ impl V2State {
                 if result.is_ok() { Err(error) } else { result }
             }
         }
+    }
+
+    pub fn restore_recovery_safety(
+        &self,
+        input: backup::V2RestoreInput,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<backup::V2RestoreResult, AppError> {
+        let data_dir = self.data_directory().ok_or_else(|| {
+            AppError::database_unavailable("The V2 data directory is unavailable.")
+        })?;
+        let path = Path::new(input.path.trim());
+        if !path.starts_with(backup::safety_backup_directory(&data_dir)) {
+            return Err(AppError::validation(
+                "path",
+                "Choose a safety backup from the V2 recovery folder.",
+            ));
+        }
+        self.restore_backup(input, now)
     }
 
     pub fn with_connection<T>(
@@ -620,11 +647,20 @@ fn open_or_initialize(path: &Path) -> Result<Connection, AppError> {
         }
         return create_database(path);
     }
-    // The only supported intermediate version is 1 (the initial V2 schema).
-    // Upgrade it in place so a schema-newer interstitial never appears for data
-    // that this build can additively extend.
+    // Supported intermediate versions are 1 (initial V2 schema) and 2
+    // (quick-start configurations). Upgrade in place so a schema-newer
+    // interstitial never appears for data that this build can additively
+    // extend. A version-1 database is upgraded through both additive steps.
     if version == 1 {
         upgrade_database_1_to_2(&mut connection)?;
+        upgrade_database_2_to_3(&mut connection)?;
+        ensure_database_identity(&mut connection)?;
+        repair_missing_exams(&mut connection)?;
+        verify_connection(&connection, false)?;
+        return Ok(connection);
+    }
+    if version == 2 {
+        upgrade_database_2_to_3(&mut connection)?;
         ensure_database_identity(&mut connection)?;
         repair_missing_exams(&mut connection)?;
         verify_connection(&connection, false)?;
@@ -634,11 +670,11 @@ fn open_or_initialize(path: &Path) -> Result<Connection, AppError> {
     Err(AppError::unsupported_schema(version, V2_SCHEMA_VERSION))
 }
 
-/// Upgrade a version-1 V2 database to the current schema. The quick-start
-/// tables are additive; no existing row is touched. The schema-migrations
-/// ledger and the app metadata are updated inside the same transaction that
-/// applies the DDL so a failure leaves the database untouched at version 1.
-fn upgrade_database_1_to_2(connection: &mut Connection) -> Result<(), AppError> {
+/// Upgrade a version-1 V2 database to version 2. The quick-start tables are
+/// additive; no existing row is touched. The ledger row is pinned to version 2
+/// with the historical schema-2 checksum so later upgrades retain an accurate
+/// migration trail.
+pub(crate) fn upgrade_database_1_to_2(connection: &mut Connection) -> Result<(), AppError> {
     let transaction = connection
         .transaction()
         .map_err(|error| AppError::migration("The V2 schema upgrade could not start", error))?;
@@ -655,10 +691,69 @@ fn upgrade_database_1_to_2(connection: &mut Connection) -> Result<(), AppError> 
         .execute(
             "INSERT OR IGNORE INTO schema_migrations (version, name, checksum, applied_at)
              VALUES (?1, 'v2_quick_start_configs', ?2, ?3)",
-            params![V2_SCHEMA_VERSION, initial_schema_checksum(), token],
+            params![SCHEMA_VERSION_2, SCHEMA_2_CHECKSUM, token],
         )
         .map_err(|error| {
             AppError::migration("The V2 schema upgrade ledger could not be written", error)
+        })?;
+    let recorded_checksum: Option<String> = transaction
+        .query_row(
+            "SELECT checksum FROM schema_migrations WHERE version=?1",
+            [SCHEMA_VERSION_2],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::migration("The V2 upgrade ledger could not be read", error))?;
+    if recorded_checksum.as_deref() != Some(SCHEMA_2_CHECKSUM) {
+        return Err(AppError::internal(
+            "The V2 schema-2 upgrade ledger checksum does not match this application's schema.",
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE app_metadata SET schema_version = ?1, updated_at = ?2 WHERE id = 1",
+            params![SCHEMA_VERSION_2, token],
+        )
+        .map_err(|error| {
+            AppError::migration("The V2 schema upgrade metadata could not be updated", error)
+        })?;
+    transaction
+        .execute_batch("PRAGMA user_version = 2;")
+        .map_err(|error| {
+            AppError::migration("The V2 schema version could not be recorded", error)
+        })?;
+    transaction.commit().map_err(|error| {
+        AppError::migration("The V2 schema upgrade could not be committed", error)
+    })?;
+    Ok(())
+}
+
+/// Upgrade a version-2 V2 database to version 3 by adding flashcards.
+/// The DDL is additive and idempotent; no existing row is touched.
+pub(crate) fn upgrade_database_2_to_3(connection: &mut Connection) -> Result<(), AppError> {
+    let transaction = connection
+        .transaction()
+        .map_err(|error| AppError::migration("The V2 schema upgrade could not start", error))?;
+    transaction
+        .execute_batch(UPGRADE_SQL_V2_3)
+        .map_err(|error| {
+            AppError::migration(
+                "The V2 flashcard schema upgrade could not be applied",
+                error,
+            )
+        })?;
+    let token = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO schema_migrations (version, name, checksum, applied_at)
+             VALUES (?1, 'v2_flashcards', ?2, ?3)",
+            params![V2_SCHEMA_VERSION, initial_schema_checksum(), token],
+        )
+        .map_err(|error| {
+            AppError::migration(
+                "The V2 flashcard upgrade ledger could not be written",
+                error,
+            )
         })?;
     let recorded_checksum: Option<String> = transaction
         .query_row(
@@ -670,7 +765,7 @@ fn upgrade_database_1_to_2(connection: &mut Connection) -> Result<(), AppError> 
         .map_err(|error| AppError::migration("The V2 upgrade ledger could not be read", error))?;
     if recorded_checksum.as_deref() != Some(initial_schema_checksum().as_str()) {
         return Err(AppError::internal(
-            "The V2 upgrade ledger checksum does not match this application's schema.",
+            "The V2 schema-3 upgrade ledger checksum does not match this application's schema.",
         ));
     }
     transaction
@@ -689,6 +784,25 @@ fn upgrade_database_1_to_2(connection: &mut Connection) -> Result<(), AppError> 
     transaction.commit().map_err(|error| {
         AppError::migration("The V2 schema upgrade could not be committed", error)
     })?;
+    Ok(())
+}
+
+/// Upgrade any supported existing V2 database file (versions 1 or 2) to the
+/// current schema. Used by the restore candidate path, which always operates
+/// on a disposable copy rather than the original backup.
+pub(crate) fn upgrade_open_connection_to_current(
+    connection: &mut Connection,
+) -> Result<(), AppError> {
+    let version = user_version(connection)?;
+    match version {
+        1 => {
+            upgrade_database_1_to_2(connection)?;
+            upgrade_database_2_to_3(connection)?;
+        }
+        2 => upgrade_database_2_to_3(connection)?,
+        V2_SCHEMA_VERSION => {}
+        other => return Err(AppError::unsupported_schema(other, V2_SCHEMA_VERSION)),
+    }
     Ok(())
 }
 

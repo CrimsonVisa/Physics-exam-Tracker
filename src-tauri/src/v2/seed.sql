@@ -1,8 +1,8 @@
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
-VALUES (2,'v2_initial_schema','0000000000000000000000000000000000000000000000000000000000000000','2026-01-01T00:00:00Z');
+VALUES (3,'v2_initial_schema','0000000000000000000000000000000000000000000000000000000000000000','2026-01-01T00:00:00Z');
 
 INSERT INTO app_metadata(id,schema_version,database_id,app_version,exam_config_version,created_at,updated_at)
-VALUES (1,2,'00000000000000000000000000000000','2.0.0',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+VALUES (1,3,'00000000000000000000000000000000','2.0.0',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
 
 INSERT INTO settings(id,preparation_start_date,daily_study_target_minutes,created_at,updated_at)
 VALUES (1,NULL,120,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');

@@ -25,6 +25,7 @@ type ConceptsScreenProps = {
   today: string;
   initialExamCode?: string | null;
   initialConceptSlug?: string | null;
+  onOpenFlashcards?: (conceptSlug: string, conceptTitle: string) => void;
 };
 
 const COVERAGE_LABELS: Record<string, string> = {
@@ -114,6 +115,7 @@ export function ConceptsScreen({
   today,
   initialExamCode = null,
   initialConceptSlug = null,
+  onOpenFlashcards,
 }: ConceptsScreenProps) {
   const [query, setQuery] = useState('');
   const [domain, setDomain] = useState('');
@@ -437,6 +439,16 @@ export function ConceptsScreen({
               {detail.mappings.length === 1 ? '' : 's'}
             </span>
           </div>
+          {onOpenFlashcards && (
+            <button
+              aria-label={`Open flashcards for ${detail.concept.title}`}
+              className="secondary-button v2-concept-flashcard-link"
+              onClick={() => onOpenFlashcards(detail.concept.slug, detail.concept.title)}
+              type="button"
+            >
+              Flashcards for this concept
+            </button>
+          )}
         </header>
 
         {error && (

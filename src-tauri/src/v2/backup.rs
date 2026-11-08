@@ -14,6 +14,8 @@ use crate::{error::AppError, v2::V2_SCHEMA_VERSION};
 const BACKUP_FORMAT_VERSION: i64 = 1;
 const RESTORE_OPERATION_FILE: &str = "restore-operation.json";
 const RESTORE_CANDIDATE_FILE: &str = "restore-candidate.sqlite3";
+const SCHEMA_1_CHECKSUM: &str = "6a60abbde82d0b6e963ddf5086b7a4f43c9f5acf111f54763714727a27d00ab8";
+const SCHEMA_2_CHECKSUM: &str = "7a2c00bdca6741f4219b5889633615c02391888705294ea3bb83d8db4a360463";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +78,8 @@ pub struct V2RestorePreview {
     pub file_name: String,
     pub size_bytes: i64,
     pub schema_version: i64,
+    pub target_schema_version: i64,
+    pub requires_upgrade: bool,
     pub exam_count: i64,
     pub integrity_check: String,
 }
@@ -556,9 +560,30 @@ fn previous_live_path(database_path: &Path, operation_id: &str) -> PathBuf {
     database_path.with_file_name(format!("{stem}.pre-restore-{operation_id}.sqlite3"))
 }
 
+fn upgrade_candidate_file(path: &Path) -> Result<(), AppError> {
+    let mut connection = Connection::open(path).map_err(|error| {
+        AppError::database("The restore candidate could not be upgraded", error)
+    })?;
+    super::configure(&connection)?;
+    super::upgrade_open_connection_to_current(&mut connection)?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(|error| {
+            AppError::database(
+                "The upgraded restore candidate could not be checkpointed",
+                error,
+            )
+        })?;
+    drop(connection);
+    remove_database_sidecars(path)?;
+    verify_snapshot(path)?;
+    Ok(())
+}
+
 fn create_verified_candidate(
     data_dir: &Path,
     source_path: &Path,
+    requires_upgrade: bool,
 ) -> Result<(PathBuf, String), AppError> {
     let candidate = restore_candidate_path(data_dir);
     let temp = restore_candidate_temp_path(data_dir);
@@ -577,12 +602,16 @@ fn create_verified_candidate(
                 "The restore candidate did not match the selected backup checksum.",
             ));
         }
+        if requires_upgrade {
+            upgrade_candidate_file(&temp)?;
+        }
+        let expected_candidate_sha = sha256_file(&temp)?;
         remove_database_sidecars(&temp)?;
         replace_file(&temp, &candidate)?;
         let candidate_sha = sha256_file(&candidate)?;
-        if candidate_sha != source_sha {
+        if candidate_sha != expected_candidate_sha {
             return Err(AppError::restore_failed(
-                "The installed restore candidate did not match the selected backup checksum.",
+                "The installed restore candidate did not match the prepared candidate.",
             ));
         }
         Ok(candidate_sha)
@@ -998,7 +1027,8 @@ pub fn apply_restore(
         ));
     }
 
-    let (candidate_path, candidate_sha) = create_verified_candidate(data_dir, source_path)?;
+    let (candidate_path, candidate_sha) =
+        create_verified_candidate(data_dir, source_path, preview.requires_upgrade)?;
     let operation_id = Uuid::new_v4().simple().to_string();
     let safety_path =
         safety_backup_directory(data_dir).join(format!("pre-restore-{operation_id}.ptbackup"));
@@ -1125,42 +1155,6 @@ pub fn get_restore_recovery(data_dir: &Path) -> Result<V2RestoreRecovery, AppErr
     Ok(V2RestoreRecovery {
         safety_directory: directory.display().to_string(),
         files: list_backup_files(&directory)?,
-    })
-}
-
-pub fn restore_recovery_safety(
-    connection: &mut Connection,
-    data_dir: &Path,
-    input: V2RestoreInput,
-) -> Result<V2RestoreResult, AppError> {
-    let path = Path::new(input.path.trim());
-    if !path.starts_with(safety_backup_directory(data_dir)) {
-        return Err(AppError::validation(
-            "path",
-            "Choose a safety backup from the V2 recovery folder.",
-        ));
-    }
-    let preview = verify_backup_file(path)?;
-    let safety_path = path.display().to_string();
-    let source = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|error| AppError::database("The safety backup could not be opened", error))?;
-    let backup = rusqlite::backup::Backup::new(&source, connection)
-        .map_err(|error| AppError::database("The safety backup could not be attached", error))?;
-    backup
-        .run_to_completion(5, Duration::from_millis(5), None)
-        .map_err(|error| AppError::database("The safety backup could not be restored", error))?;
-    drop(backup);
-    super::prepare_connection(connection)?;
-    let (schema_version, exam_count, integrity_check) = verify_connection(connection)?;
-    Ok(V2RestoreResult {
-        restored_from: preview.path,
-        safety_backup: safety_path,
-        schema_version,
-        exam_count,
-        integrity_check,
     })
 }
 
@@ -1298,6 +1292,19 @@ fn write_manifest(
     })
 }
 
+fn supported_restore_schema(version: i64) -> bool {
+    (1..=V2_SCHEMA_VERSION).contains(&version)
+}
+
+fn expected_schema_checksum(version: i64) -> Option<String> {
+    match version {
+        1 => Some(SCHEMA_1_CHECKSUM.to_owned()),
+        2 => Some(SCHEMA_2_CHECKSUM.to_owned()),
+        V2_SCHEMA_VERSION => Some(super::initial_schema_checksum()),
+        _ => None,
+    }
+}
+
 fn verify_manifest(path: &Path, size_bytes: u64) -> Result<(), AppError> {
     let text = fs::read_to_string(manifest_path(path)).map_err(|error| {
         AppError::restore_failed(format!("The backup manifest could not be read: {error}"))
@@ -1310,7 +1317,7 @@ fn verify_manifest(path: &Path, size_bytes: u64) -> Result<(), AppError> {
             "The backup manifest format version is unsupported.",
         ));
     }
-    if manifest.schema_version != V2_SCHEMA_VERSION || manifest.exam_count != 4 {
+    if !supported_restore_schema(manifest.schema_version) || manifest.exam_count != 4 {
         return Err(AppError::restore_failed(
             "The backup manifest schema or exam count is invalid.",
         ));
@@ -1368,9 +1375,9 @@ fn verify_backup_file(path: &Path) -> Result<V2RestorePreview, AppError> {
         .map_err(|error| {
             AppError::restore_failed(format!("The backup schema could not be read: {error}"))
         })?;
-    if schema_version != V2_SCHEMA_VERSION {
+    if !supported_restore_schema(schema_version) {
         return Err(AppError::restore_failed(format!(
-            "The backup schema version {schema_version} does not match {V2_SCHEMA_VERSION}."
+            "The backup schema version {schema_version} is not supported."
         )));
     }
     let exam_count: i64 = connection
@@ -1393,7 +1400,7 @@ fn verify_backup_file(path: &Path) -> Result<V2RestorePreview, AppError> {
         .map_err(|error| {
             AppError::restore_failed(format!("The backup metadata could not be read: {error}"))
         })?;
-    if metadata_version != Some(V2_SCHEMA_VERSION) {
+    if metadata_version != Some(schema_version) {
         return Err(AppError::restore_failed(
             "The backup schema metadata is missing or unsupported.",
         ));
@@ -1418,7 +1425,7 @@ fn verify_backup_file(path: &Path) -> Result<V2RestorePreview, AppError> {
     let checksum: Option<String> = connection
         .query_row(
             "SELECT checksum FROM schema_migrations WHERE version=?1",
-            [V2_SCHEMA_VERSION],
+            [schema_version],
             |row| row.get(0),
         )
         .optional()
@@ -1427,7 +1434,9 @@ fn verify_backup_file(path: &Path) -> Result<V2RestorePreview, AppError> {
                 "The backup migration checksum could not be read: {error}"
             ))
         })?;
-    let expected_checksum = super::initial_schema_checksum();
+    let expected_checksum = expected_schema_checksum(schema_version).ok_or_else(|| {
+        AppError::restore_failed("The backup schema version does not have a known checksum.")
+    })?;
     if checksum.as_deref() != Some(expected_checksum.as_str()) {
         return Err(AppError::restore_failed(
             "The backup migration checksum does not match the expected schema.",
@@ -1454,6 +1463,8 @@ fn verify_backup_file(path: &Path) -> Result<V2RestorePreview, AppError> {
             .to_owned(),
         size_bytes: metadata.len() as i64,
         schema_version,
+        target_schema_version: V2_SCHEMA_VERSION,
+        requires_upgrade: schema_version != V2_SCHEMA_VERSION,
         exam_count,
         integrity_check,
     })
@@ -2173,5 +2184,386 @@ mod tests {
             });
         assert!(preserved_journal, "the damaged journal must be preserved");
         drop(root);
+    }
+
+    fn legacy_backup(
+        state: &V2State,
+        data_dir: &Path,
+        schema_version: i64,
+        file_name: &str,
+    ) -> PathBuf {
+        state
+            .with_connection(|connection| {
+                if schema_version <= 2 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS flashcard_reviews;
+                             DROP TABLE IF EXISTS flashcard_schedule;
+                             DROP TABLE IF EXISTS flashcard_exam_links;
+                             DROP TABLE IF EXISTS flashcards;",
+                        )
+                        .map_err(|error| AppError::database("drop flashcards", error))?;
+                }
+                if schema_version <= 1 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS quick_start_config_allocations;
+                             DROP TABLE IF EXISTS quick_start_configs;",
+                        )
+                        .map_err(|error| AppError::database("drop quick start", error))?;
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(1,'v1_initial_schema_fixture',?1,?2)",
+                            params![SCHEMA_1_CHECKSUM, at(0).to_rfc3339()],
+                        )
+                        .map_err(|error| AppError::database("legacy v1 ledger", error))?;
+                }
+                if schema_version == 2 {
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(2,'v2_quick_start_configs',?1,?2)",
+                            params![SCHEMA_2_CHECKSUM, at(0).to_rfc3339()],
+                        )
+                        .map_err(|error| AppError::database("legacy v2 ledger", error))?;
+                }
+                connection
+                    .execute(
+                        "UPDATE app_metadata SET schema_version=?1 WHERE id=1",
+                        [schema_version],
+                    )
+                    .map_err(|error| AppError::database("update legacy schema", error))?;
+                connection
+                    .execute_batch(&format!("PRAGMA user_version = {schema_version};"))
+                    .map_err(|error| AppError::database("set legacy version", error))?;
+                connection
+                    .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                    .map_err(|error| AppError::database("checkpoint legacy", error))?;
+                Ok::<(), AppError>(())
+            })
+            .expect("legacy schema");
+        let database_path = state.database_path().expect("source database");
+        let backup_path = data_dir.join(file_name);
+        fs::copy(&database_path, &backup_path).expect("copy legacy backup");
+        write_manifest(&backup_path, schema_version, 4, at(10)).expect("legacy manifest");
+        backup_path
+    }
+
+    #[test]
+    fn schema_one_and_two_backups_restore_by_migrating_a_candidate_copy() {
+        for schema_version in [1_i64, 2] {
+            let (source_root, source_state) = state();
+            let data_dir = source_state.data_directory().expect("source data dir");
+            source_state
+                .with_connection(|connection| {
+                    admin::update_settings(
+                        connection,
+                        admin::V2UpdateAppSettingsInput {
+                            preparation_start_date: Some("2026-10-01".to_owned()),
+                            daily_study_target_minutes: 180,
+                        },
+                        at(0),
+                    )
+                })
+                .expect("source settings");
+            let backup_path = legacy_backup(
+                &source_state,
+                &data_dir,
+                schema_version,
+                &format!("legacy-schema-{schema_version}.ptbackup"),
+            );
+            let source_sha = sha256_file(&backup_path).expect("source sha");
+
+            let preview = verify_backup_file(&backup_path).expect("legacy preview");
+            assert_eq!(preview.schema_version, schema_version);
+            assert_eq!(preview.target_schema_version, V2_SCHEMA_VERSION);
+            assert!(preview.requires_upgrade);
+
+            let target_root = tempfile::tempdir().expect("target directory");
+            let target_dir = target_root.path().join("v2");
+            let target_state = V2State::initialize(&target_dir);
+            let target_database = target_state.database_path().expect("target database");
+            drop(target_state);
+
+            let result = apply_restore(
+                &target_dir,
+                &target_database,
+                V2RestoreInput {
+                    path: backup_path.display().to_string(),
+                },
+                at(20),
+            )
+            .expect("legacy restore");
+            assert_eq!(result.schema_version, V2_SCHEMA_VERSION);
+            assert_eq!(
+                sha256_file(&backup_path).expect("source sha after"),
+                source_sha
+            );
+
+            let restored = V2State::initialize(&target_dir);
+            let settings = restored
+                .with_connection(|connection| admin::load_settings(connection))
+                .expect("restored settings");
+            assert_eq!(settings.daily_study_target_minutes, 180);
+            let (version, flashcard_table): (i64, i64) = restored
+                .with_connection(|connection| {
+                    connection
+                        .query_row(
+                            "SELECT (SELECT user_version FROM pragma_user_version),
+                                    (SELECT COUNT(*) FROM sqlite_master
+                                      WHERE type='table' AND name='flashcards')",
+                            [],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .map_err(|error| AppError::database("restored schema check", error))
+                })
+                .expect("restored schema check");
+            assert_eq!(version, V2_SCHEMA_VERSION);
+            assert_eq!(flashcard_table, 1);
+            drop(restored);
+            drop(source_state);
+            drop(source_root);
+            drop(target_root);
+        }
+    }
+
+    fn install_safety_copy(
+        target_dir: &Path,
+        source_path: &Path,
+        schema_version: i64,
+        file_name: &str,
+    ) -> PathBuf {
+        let safety_dir = safety_backup_directory(target_dir);
+        fs::create_dir_all(&safety_dir).expect("safety dir");
+        let target = safety_dir.join(file_name);
+        fs::copy(source_path, &target).expect("copy safety backup");
+        write_manifest(&target, schema_version, 4, at(10)).expect("safety manifest");
+        target
+    }
+
+    fn set_live_target(state: &V2State, minutes: i64) {
+        state
+            .with_connection(|connection| {
+                admin::update_settings(
+                    connection,
+                    admin::V2UpdateAppSettingsInput {
+                        preparation_start_date: None,
+                        daily_study_target_minutes: minutes,
+                    },
+                    at(0),
+                )
+            })
+            .expect("live settings");
+    }
+
+    #[test]
+    fn safety_recovery_migrates_schema_one_two_and_three_on_candidate_copies() {
+        for schema_version in [1_i64, 2, 3] {
+            let (source_root, source_state) = state();
+            let source_dir = source_state.data_directory().expect("source data dir");
+            set_live_target(&source_state, 180);
+            let source_path = if schema_version == V2_SCHEMA_VERSION {
+                PathBuf::from(
+                    source_state
+                        .with_connection(|connection| {
+                            create_manual_backup(connection, &source_dir, at(1))
+                        })
+                        .expect("current backup")
+                        .path,
+                )
+            } else {
+                legacy_backup(
+                    &source_state,
+                    &source_dir,
+                    schema_version,
+                    &format!("legacy-safety-{schema_version}.ptbackup"),
+                )
+            };
+
+            let target_root = tempfile::tempdir().expect("target directory");
+            let target_dir = target_root.path().join("v2");
+            let target_state = V2State::initialize(&target_dir);
+            set_live_target(&target_state, 240);
+            let safety_copy = install_safety_copy(
+                &target_dir,
+                &source_path,
+                schema_version,
+                &format!("pre-restore-schema-{schema_version}.ptbackup"),
+            );
+            let safety_sha = sha256_file(&safety_copy).expect("safety sha");
+
+            let result = target_state
+                .restore_recovery_safety(
+                    V2RestoreInput {
+                        path: safety_copy.display().to_string(),
+                    },
+                    at(20),
+                )
+                .expect("safety restore");
+            assert_eq!(result.schema_version, V2_SCHEMA_VERSION);
+            assert_eq!(
+                sha256_file(&safety_copy).expect("safety sha after"),
+                safety_sha
+            );
+
+            let (version, target, flashcard_table): (i64, i64, i64) = target_state
+                .with_connection(|connection| {
+                    connection
+                        .query_row(
+                            "SELECT (SELECT user_version FROM pragma_user_version),
+                                    (SELECT daily_study_target_minutes FROM settings WHERE id=1),
+                                    (SELECT COUNT(*) FROM sqlite_master
+                                      WHERE type='table' AND name='flashcards')",
+                            [],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        )
+                        .map_err(|error| AppError::database("safety restore check", error))
+                })
+                .expect("safety restore check");
+            assert_eq!(version, V2_SCHEMA_VERSION);
+            assert_eq!(target, 180);
+            assert_eq!(flashcard_table, 1);
+            assert!(!restore_operation_path(&target_dir).exists());
+            assert!(!restore_candidate_path(&target_dir).exists());
+
+            drop(source_state);
+            drop(source_root);
+            drop(target_state);
+            drop(target_root);
+        }
+    }
+
+    #[test]
+    fn safety_recovery_migration_failure_preserves_the_live_database() {
+        let (source_root, source_state) = state();
+        let source_dir = source_state.data_directory().expect("source data dir");
+        let source_path = legacy_backup(&source_state, &source_dir, 2, "bad-migration.ptbackup");
+        {
+            let connection = Connection::open(&source_path).expect("open bad migration backup");
+            connection
+                .execute_batch("CREATE TABLE flashcards (id INTEGER PRIMARY KEY);")
+                .expect("incompatible flashcard table");
+            connection
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .expect("checkpoint bad migration backup");
+        }
+        write_manifest(&source_path, 2, 4, at(10)).expect("bad migration manifest");
+        let source_sha = sha256_file(&source_path).expect("source sha");
+
+        let target_root = tempfile::tempdir().expect("target directory");
+        let target_dir = target_root.path().join("v2");
+        let target_state = V2State::initialize(&target_dir);
+        set_live_target(&target_state, 240);
+        let safety_copy = install_safety_copy(&target_dir, &source_path, 2, "bad-safety.ptbackup");
+
+        let error = target_state
+            .restore_recovery_safety(
+                V2RestoreInput {
+                    path: safety_copy.display().to_string(),
+                },
+                at(20),
+            )
+            .expect_err("migration failure");
+        assert!(error.code == "migration_error" || error.code == "restore_failed");
+        assert_eq!(sha256_file(&safety_copy).expect("safety sha"), source_sha);
+        let target: i64 = target_state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT daily_study_target_minutes FROM settings WHERE id=1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("live settings after failure", error))
+            })
+            .expect("live settings after failure");
+        assert_eq!(target, 240);
+        assert!(!restore_operation_path(&target_dir).exists());
+        assert!(!restore_candidate_path(&target_dir).exists());
+
+        drop(source_state);
+        drop(source_root);
+        drop(target_state);
+        drop(target_root);
+    }
+
+    #[test]
+    fn safety_recovery_verification_failure_rolls_back_to_the_live_database() {
+        let (source_root, source_state) = state();
+        let source_dir = source_state.data_directory().expect("source data dir");
+        set_live_target(&source_state, 180);
+        let source_path = PathBuf::from(
+            source_state
+                .with_connection(|connection| create_manual_backup(connection, &source_dir, at(1)))
+                .expect("current backup")
+                .path,
+        );
+
+        let target_root = tempfile::tempdir().expect("target directory");
+        let target_dir = target_root.path().join("v2");
+        let target_state = V2State::initialize(&target_dir);
+        set_live_target(&target_state, 240);
+        let safety_copy = install_safety_copy(
+            &target_dir,
+            &source_path,
+            V2_SCHEMA_VERSION,
+            "bad-verification.ptbackup",
+        );
+        {
+            let connection = Connection::open(&safety_copy).expect("open bad verification backup");
+            connection
+                .execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     DROP TRIGGER trg_exams_code_immutable;
+                     UPDATE exams SET code='invalid-exam' WHERE id=4;
+                     PRAGMA wal_checkpoint(TRUNCATE);",
+                )
+                .expect("invalid exam fixture");
+        }
+        write_manifest(&safety_copy, V2_SCHEMA_VERSION, 4, at(10))
+            .expect("bad verification manifest");
+        let safety_sha = sha256_file(&safety_copy).expect("safety sha");
+
+        let error = target_state
+            .restore_recovery_safety(
+                V2RestoreInput {
+                    path: safety_copy.display().to_string(),
+                },
+                at(20),
+            )
+            .expect_err("verification failure");
+        assert!(error.code == "schema_integrity_error" || error.code == "restore_failed");
+        assert_eq!(
+            sha256_file(&safety_copy).expect("safety sha after"),
+            safety_sha
+        );
+        let target: i64 = target_state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT daily_study_target_minutes FROM settings WHERE id=1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| {
+                        AppError::database("live settings after verification failure", error)
+                    })
+            })
+            .expect("live settings after verification failure");
+        assert_eq!(target, 240);
+        assert!(!restore_operation_path(&target_dir).exists());
+        assert!(!restore_candidate_path(&target_dir).exists());
+        let recovery = get_restore_recovery(&target_dir).expect("recovery after rollback");
+        assert_eq!(
+            recovery.files.len(),
+            2,
+            "the original safety copy and the pre-recovery safety snapshot should both remain"
+        );
+
+        drop(source_state);
+        drop(source_root);
+        drop(target_state);
+        drop(target_root);
     }
 }

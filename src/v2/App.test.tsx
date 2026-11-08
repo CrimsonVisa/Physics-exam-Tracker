@@ -87,6 +87,13 @@ vi.mock('./api', () => ({
   resetV2DashboardSections: vi.fn(),
   getV2PracticeAnalytics: vi.fn(),
   globalSearchV2: vi.fn(),
+  listV2Flashcards: vi.fn(),
+  getV2FlashcardStats: vi.fn(),
+  getV2FlashcardDetail: vi.fn(),
+  setV2FlashcardArchived: vi.fn(),
+  saveV2Flashcard: vi.fn(),
+  getV2FlashcardReviewQueue: vi.fn(),
+  reviewV2Flashcard: vi.fn(),
 }));
 
 import * as api from './api';
@@ -454,6 +461,33 @@ describe('V2 application shell', () => {
         'No concepts match these filters. Clear the search or choose a different examination.',
       ),
     ).toBeInTheDocument();
+  });
+
+  it('navigates to the flashcards workspace from the sidebar', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listV2Flashcards).mockResolvedValue({
+      cards: [],
+      total: 0,
+      subjects: [],
+    });
+    vi.mocked(api.getV2FlashcardStats).mockResolvedValue({
+      totalCards: 0,
+      dueCards: 0,
+      reviewedCards: 0,
+      newCards: 0,
+      totalReviews: 0,
+      reviewsLast30Days: 0,
+      successfulLast30Days: 0,
+      retentionPercent: null,
+    });
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Flashcards' }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Flashcards' }),
+    ).toBeInTheDocument();
+    expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'flashcards');
   });
 
   it('shows missing, future, today, and passed exam date states', async () => {

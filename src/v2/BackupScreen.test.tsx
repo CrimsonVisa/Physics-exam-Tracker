@@ -118,6 +118,8 @@ describe('V2 backup and restore', () => {
       fileName: OVERVIEW.files[0].fileName,
       sizeBytes: 4096,
       schemaVersion: 1,
+      targetSchemaVersion: 3,
+      requiresUpgrade: true,
       examCount: 4,
       integrityCheck: 'ok',
     });
@@ -133,6 +135,9 @@ describe('V2 backup and restore', () => {
 
     await user.click(screen.getByRole('button', { name: 'Preview restore' }));
     expect(await screen.findByText('Restore preview')).toBeInTheDocument();
+    expect(
+      screen.getByText(/will be upgraded to schema 3 on a temporary copy/),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirm restore' }));
     await waitFor(() => expect(mockedApply).toHaveBeenCalledWith(OVERVIEW.files[0].path));
     expect(onChanged).toHaveBeenCalled();

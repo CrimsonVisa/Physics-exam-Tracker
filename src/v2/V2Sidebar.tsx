@@ -63,6 +63,13 @@ const STUDY_NAV_ITEMS: V2NavItem[] = [
     view: { kind: 'practice', examCode: null },
   },
   {
+    key: 'flashcards',
+    label: 'Flashcards',
+    ariaLabel: 'Flashcards',
+    icon: 'flashcards',
+    view: { kind: 'flashcards' },
+  },
+  {
     key: 'planner',
     label: 'Planner',
     ariaLabel: 'Planner and calendar',

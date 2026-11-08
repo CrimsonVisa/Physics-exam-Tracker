@@ -21,6 +21,7 @@ import { CombinedDashboard } from './CombinedDashboard';
 import { ConceptsScreen } from './ConceptsScreen';
 import { DatabaseStateScreen } from './DatabaseStateScreen';
 import { ExamWorkspace } from './ExamWorkspace';
+import { FlashcardsScreen } from './FlashcardsScreen';
 import { BackupScreen } from './BackupScreen';
 import { AnalyticsScreen } from './AnalyticsScreen';
 import { GlobalSearch } from './GlobalSearch';
@@ -47,6 +48,8 @@ function viewWorkspace(view: V2View): string {
       return 'exam';
     case 'concepts':
       return 'concepts';
+    case 'flashcards':
+      return 'flashcards';
     case 'syllabus':
       return 'syllabus';
     case 'practice':
@@ -300,6 +303,9 @@ export default function V2App({ today: fixedToday }: V2AppProps) {
           initialConceptSlug={view.conceptSlug ?? null}
           initialExamCode={view.examCode}
           key={`${view.examCode ?? 'combined'}:${view.conceptSlug ?? ''}`}
+          onOpenFlashcards={(conceptSlug, conceptTitle) =>
+            setView({ kind: 'flashcards', conceptSlug, conceptTitle })
+          }
           today={today}
         />
       );
@@ -312,6 +318,28 @@ export default function V2App({ today: fixedToday }: V2AppProps) {
           initialExamCode={view.examCode}
           initialFocusNodeId={view.focusNodeId ?? null}
           key={`${view.examCode ?? 'combined'}:${view.focusNodeId ?? ''}`}
+          onOpenFlashcards={(examCode, nodeId, nodeTitle) =>
+            setView({ kind: 'flashcards', examCode, nodeId, nodeTitle })
+          }
+        />
+      );
+    }
+
+    if (view.kind === 'flashcards') {
+      return (
+        <FlashcardsScreen
+          exams={currentStatus.exams}
+          initialConceptSlug={view.conceptSlug ?? null}
+          initialConceptTitle={view.conceptTitle ?? null}
+          initialExamCode={view.examCode ?? null}
+          initialFlashcardId={view.flashcardId ?? null}
+          initialNodeId={view.nodeId ?? null}
+          initialNodeTitle={view.nodeTitle ?? null}
+          initialQuery={view.query ?? null}
+          key={`${view.examCode ?? ''}:${view.nodeId ?? ''}:${view.conceptSlug ?? ''}:${
+            view.flashcardId ?? ''
+          }:${view.query ?? ''}`}
+          today={today}
         />
       );
     }

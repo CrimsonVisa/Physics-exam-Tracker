@@ -325,6 +325,14 @@ html[data-font-size='comfortable'] {
   --ws-on-accent: #05130d;
 }
 
+[data-workspace='flashcards'] {
+  --ws-accent: #e98bbb;
+  --ws-accent-strong: #ffc7dd;
+  --ws-soft: rgb(233 139 187 / 12%);
+  --ws-border: rgb(233 139 187 / 34%);
+  --ws-on-accent: #1a0711;
+}
+
 [data-workspace='practice'] {
   --ws-accent: #b49cff;
   --ws-accent-strong: #d5c9ff;
@@ -443,6 +451,14 @@ html[data-font-size='comfortable'] {
   --ws-accent-strong: #065f46;
   --ws-soft: #e5f5ee;
   --ws-border: #a7d9c5;
+  --ws-on-accent: #ffffff;
+}
+
+[data-theme='light'] [data-workspace='flashcards'] {
+  --ws-accent: #be185d;
+  --ws-accent-strong: #9d174d;
+  --ws-soft: #fce7f1;
+  --ws-border: #f3b8d2;
   --ws-on-accent: #ffffff;
 }
 
