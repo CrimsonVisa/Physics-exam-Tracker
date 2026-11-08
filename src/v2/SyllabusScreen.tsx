@@ -11,8 +11,10 @@ import {
 type SyllabusScreenProps = {
   exams: V2ExamSummary[];
   initialExamCode?: string | null;
+  initialFocusNodeCode?: string | null;
   initialFocusNodeId?: number | null;
   onOpenFlashcards?: (examCode: string, nodeId: number, nodeTitle: string) => void;
+  onOpenFormulas?: (examCode: string, nodeCode: string, nodeTitle: string) => void;
 };
 
 const PROGRESS_LABELS: Record<string, string> = {
@@ -31,8 +33,10 @@ const KIND_LABELS: Record<string, string> = {
 export function SyllabusScreen({
   exams,
   initialExamCode = null,
+  initialFocusNodeCode = null,
   initialFocusNodeId = null,
   onOpenFlashcards,
+  onOpenFormulas,
 }: SyllabusScreenProps) {
   const initialExam = exams.find((exam) => exam.code === initialExamCode) ?? exams[0];
   const [examId, setExamId] = useState(String(initialExam?.id ?? ''));
@@ -44,6 +48,16 @@ export function SyllabusScreen({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const focusNodeId = useMemo(() => {
+    if (initialFocusNodeId !== null) {
+      return initialFocusNodeId;
+    }
+    if (initialFocusNodeCode === null || !syllabus) {
+      return null;
+    }
+    return syllabus.nodes.find((node) => node.code === initialFocusNodeCode)?.id ?? null;
+  }, [initialFocusNodeCode, initialFocusNodeId, syllabus]);
 
   useEffect(() => {
     if (!examId) {
@@ -60,9 +74,13 @@ export function SyllabusScreen({
         const nextExpanded = new Set(
           next.nodes.filter((node) => node.nodeKind !== 'topic').map((node) => node.id),
         );
-        if (initialFocusNodeId !== null) {
+        if (initialFocusNodeId !== null || initialFocusNodeCode !== null) {
           const parentById = new Map(next.nodes.map((node) => [node.id, node.parentId]));
-          const target = next.nodes.find((node) => node.id === initialFocusNodeId);
+          const target = next.nodes.find(
+            (node) =>
+              node.id === initialFocusNodeId ||
+              (initialFocusNodeCode !== null && node.code === initialFocusNodeCode),
+          );
           if (target) {
             const seen = new Set<number>();
             let parent = target.parentId;
@@ -88,14 +106,14 @@ export function SyllabusScreen({
     return () => {
       cancelled = true;
     };
-  }, [examId, initialFocusNodeId]);
+  }, [examId, initialFocusNodeCode, initialFocusNodeId]);
 
   useEffect(() => {
-    if (!syllabus || initialFocusNodeId === null) {
+    if (!syllabus || focusNodeId === null) {
       return undefined;
     }
     const timer = window.setTimeout(() => {
-      const element = document.getElementById(`v2-syllabus-node-${initialFocusNodeId}`);
+      const element = document.getElementById(`v2-syllabus-node-${focusNodeId}`);
       if (!element) {
         return;
       }
@@ -109,7 +127,7 @@ export function SyllabusScreen({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [syllabus, initialFocusNodeId]);
+  }, [focusNodeId, syllabus]);
 
   async function changeProgress(node: V2SyllabusNode, status: string) {
     setBusy(true);
@@ -202,11 +220,11 @@ export function SyllabusScreen({
       <li className="v2-syllabus-row" key={node.id}>
         <div
           className={`v2-syllabus-node${
-            initialFocusNodeId === node.id ? ' v2-syllabus-node-focused' : ''
+            focusNodeId === node.id ? ' v2-syllabus-node-focused' : ''
           }`}
           id={`v2-syllabus-node-${node.id}`}
           style={{ paddingLeft: `${Math.min(depth, 5) * 18}px` }}
-          tabIndex={initialFocusNodeId === node.id ? -1 : undefined}
+          tabIndex={focusNodeId === node.id ? -1 : undefined}
         >
           <div className="v2-syllabus-node-main">
             <div className="v2-session-heading">
@@ -236,15 +254,29 @@ export function SyllabusScreen({
               <span className="v2-status-badge v2-status-active">Official verified</span>{' '}
               {node.sourceReference}
             </p>
-            {onOpenFlashcards && syllabus && node.nodeKind === 'topic' && (
-              <button
-                aria-label={`Open flashcards for ${node.title}`}
-                className="secondary-button v2-syllabus-flashcard-link"
-                onClick={() => onOpenFlashcards(syllabus.examCode, node.id, node.title)}
-                type="button"
-              >
-                Flashcards for this topic
-              </button>
+            {(onOpenFlashcards || onOpenFormulas) && syllabus && node.nodeKind === 'topic' && (
+              <div className="v2-syllabus-topic-links">
+                {onOpenFlashcards ? (
+                  <button
+                    aria-label={`Open flashcards for ${node.title}`}
+                    className="secondary-button v2-syllabus-flashcard-link"
+                    onClick={() => onOpenFlashcards(syllabus.examCode, node.id, node.title)}
+                    type="button"
+                  >
+                    Flashcards for this topic
+                  </button>
+                ) : null}
+                {onOpenFormulas ? (
+                  <button
+                    aria-label={`Open formulas for ${node.title}`}
+                    className="secondary-button v2-syllabus-flashcard-link"
+                    onClick={() => onOpenFormulas(syllabus.examCode, node.code, node.title)}
+                    type="button"
+                  >
+                    Formulas for this topic
+                  </button>
+                ) : null}
+              </div>
             )}
           </div>
           {node.nodeKind === 'topic' && (

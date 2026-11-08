@@ -1,0 +1,187 @@
+import type { FormulaEntry } from '../types';
+import { CSIR, GATE, JEST, TIFR, link } from './syllabus';
+import { TEXTBOOKS, textbook } from './sources';
+
+export const CLASSICAL_MECHANICS_FORMULAS: FormulaEntry[] = [
+  {
+    id: 'classical-mechanics-newton-second-law',
+    title: "Newton's second law (momentum form)",
+    latex: String.raw`\mathbf{F}_{\mathrm{net}}=\frac{d\mathbf{p}}{dt}`,
+    plainText: 'F_net = dp/dt',
+    subject: 'classical-mechanics',
+    topic: 'Newtonian mechanics',
+    subtopic: 'Equation of motion',
+    summary:
+      'The net external force on a particle equals the rate of change of its momentum in an inertial frame.',
+    symbols: [
+      {
+        symbol: String.raw`\mathbf{F}_{\mathrm{net}}`,
+        meaning: 'net external force',
+        unit: 'N',
+        dimensions: 'M L T^-2',
+      },
+      {
+        symbol: String.raw`\mathbf{p}`,
+        meaning: 'linear momentum',
+        unit: 'kg m s^-1',
+        dimensions: 'M L T^-1',
+      },
+      { symbol: 't', meaning: 'time', unit: 's', dimensions: 'T' },
+    ],
+    conditions: [
+      'Force and momentum are measured in the same inertial frame.',
+      'For a closed system, p includes all matter in the system.',
+      'Variable-mass systems require a control-volume treatment rather than F = ma alone.',
+    ],
+    exactness: 'exact',
+    framework: 'classical',
+    syllabusLinks: [
+      link('csir-net-physics', 'explicit', [CSIR.newton]),
+      link('gate-physics', 'implicit', [GATE.classical]),
+      link('tifr-gs-physics', 'implicit', [TIFR.classical]),
+      link('jest-physics', 'explicit', [JEST.newton]),
+    ],
+    sources: [textbook(TEXTBOOKS.goldstein, 'Ch. 1'), textbook(TEXTBOOKS.taylorClassical, 'Ch. 1')],
+    relatedIds: ['classical-mechanics-work-energy-theorem'],
+    specialCases: ['For constant mass, F_net = m a.', 'For zero net force, p is conserved.'],
+    conventions: ['Bold symbols denote vectors; the frame is inertial.'],
+    keywords: ['force', 'momentum', 'newton', 'inertial frame', 'F=ma'],
+  },
+  {
+    id: 'classical-mechanics-work-energy-theorem',
+    title: 'Work-energy theorem',
+    latex: String.raw`W_{\mathrm{net}}=\Delta K=\frac{1}{2}mv_f^2-\frac{1}{2}mv_i^2`,
+    plainText: 'W_net = Delta K = 1/2 m v_f^2 - 1/2 m v_i^2',
+    subject: 'classical-mechanics',
+    topic: 'Work and energy',
+    subtopic: 'Work-energy theorem',
+    summary:
+      'The net work done on a particle by all forces equals the change in its kinetic energy.',
+    symbols: [
+      {
+        symbol: String.raw`W_{\mathrm{net}}`,
+        meaning: 'net work done on the particle',
+        unit: 'J',
+        dimensions: 'M L^2 T^-2',
+      },
+      {
+        symbol: 'K',
+        meaning: 'kinetic energy',
+        unit: 'J',
+        dimensions: 'M L^2 T^-2',
+      },
+      { symbol: 'm', meaning: 'particle mass', unit: 'kg', dimensions: 'M' },
+      {
+        symbol: String.raw`v_i, v_f`,
+        meaning: 'initial and final speeds',
+        unit: 'm s^-1',
+        dimensions: 'L T^-1',
+      },
+    ],
+    conditions: [
+      'The particle has constant mass.',
+      'The frame is inertial.',
+      'W_net includes the work done by every force acting on the particle.',
+      'The expression is the non-relativistic kinetic energy.',
+    ],
+    exactness: 'exact',
+    framework: 'classical',
+    syllabusLinks: [
+      link('csir-net-physics', 'implicit', [CSIR.classicalCore]),
+      link('gate-physics', 'implicit', [GATE.classical]),
+      link('tifr-gs-physics', 'implicit', [TIFR.classical]),
+      link('jest-physics', 'implicit', [JEST.classical]),
+    ],
+    sources: [textbook(TEXTBOOKS.goldstein, 'Ch. 1'), textbook(TEXTBOOKS.taylorClassical, 'Ch. 4')],
+    relatedIds: ['classical-mechanics-newton-second-law'],
+    specialCases: [
+      'For a conservative force, W = -Delta U and K + U is conserved.',
+      'For zero net work, the kinetic energy is unchanged.',
+    ],
+    keywords: ['work', 'energy', 'kinetic', 'conservation', 'force'],
+  },
+  {
+    id: 'classical-mechanics-euler-lagrange-equation',
+    title: 'Euler-Lagrange equation',
+    latex: String.raw`\frac{d}{dt}\left(\frac{\partial L}{\partial \dot q_i}\right)-\frac{\partial L}{\partial q_i}=0`,
+    plainText: 'd/dt (dL/dqdot_i) - dL/dq_i = 0',
+    subject: 'classical-mechanics',
+    topic: 'Lagrangian mechanics',
+    subtopic: 'Euler-Lagrange equations',
+    summary:
+      'Stationarity of the action for a Lagrangian system gives one equation of motion for each independent generalized coordinate.',
+    symbols: [
+      { symbol: 'L', meaning: 'Lagrangian, usually L = T - V' },
+      { symbol: String.raw`q_i`, meaning: 'independent generalized coordinates' },
+      { symbol: String.raw`\dot q_i`, meaning: 'generalized velocities' },
+    ],
+    conditions: [
+      'The constraints are holonomic and can be eliminated by independent generalized coordinates.',
+      'The forces are conservative or arise from a velocity-dependent generalized potential included in L.',
+      'L is sufficiently smooth for the derivatives to exist.',
+      'The standard Lagrangian convention L = T - V is used unless stated otherwise.',
+    ],
+    exactness: 'exact',
+    framework: 'classical',
+    syllabusLinks: [
+      link('csir-net-physics', 'explicit', [CSIR.eulerLagrange]),
+      link('gate-physics', 'explicit', [GATE.eulerLagrange]),
+      link('tifr-gs-physics', 'implicit', [TIFR.classical]),
+      link('jest-physics', 'explicit', [JEST.eulerLagrange]),
+    ],
+    sources: [textbook(TEXTBOOKS.goldstein, 'Ch. 2'), textbook(TEXTBOOKS.landauMechanics, 'Ch. 1')],
+    relatedIds: ['classical-mechanics-newton-second-law'],
+    conventions: [
+      'Generalized coordinates are independent; L = T - V in the usual conservative case.',
+    ],
+    keywords: ['lagrangian', 'action', 'euler-lagrange', 'generalized coordinates'],
+  },
+  {
+    id: 'classical-mechanics-kepler-third-law',
+    title: "Kepler's third law",
+    latex: String.raw`T^2=\frac{4\pi^2}{GM}a^3`,
+    plainText: 'T^2 = (4 pi^2 / (G M)) a^3',
+    subject: 'classical-mechanics',
+    topic: 'Central forces and gravitation',
+    subtopic: "Kepler's third law",
+    summary:
+      'For a bound two-body orbit under Newtonian gravity, the square of the orbital period is proportional to the cube of the semimajor axis.',
+    symbols: [
+      { symbol: 'T', meaning: 'orbital period', unit: 's', dimensions: 'T' },
+      { symbol: 'a', meaning: 'semimajor axis of the relative orbit', unit: 'm', dimensions: 'L' },
+      {
+        symbol: 'G',
+        meaning: 'Newtonian gravitational constant',
+        unit: 'm^3 kg^-1 s^-2',
+        dimensions: 'M^-1 L^3 T^-2',
+      },
+      {
+        symbol: 'M',
+        meaning: 'total mass of the two-body system',
+        unit: 'kg',
+        dimensions: 'M',
+      },
+    ],
+    conditions: [
+      'Newtonian gravity and a bound elliptical orbit.',
+      'M is the total mass m1 + m2 for the relative two-body orbit.',
+      'Perturbations from other bodies and non-gravitational forces are neglected.',
+      'a is the semimajor axis; for a circular orbit a equals the orbital radius.',
+    ],
+    exactness: 'exact',
+    framework: 'classical',
+    syllabusLinks: [
+      link('csir-net-physics', 'explicit', [CSIR.centralForce]),
+      link('gate-physics', 'explicit', [GATE.centralForce]),
+      link('tifr-gs-physics', 'implicit', [TIFR.classical]),
+      link('jest-physics', 'explicit', [JEST.centralForce]),
+    ],
+    sources: [textbook(TEXTBOOKS.goldstein, 'Ch. 3'), textbook(TEXTBOOKS.taylorClassical, 'Ch. 8')],
+    relatedIds: ['classical-mechanics-newton-second-law'],
+    specialCases: ['For a circular orbit, a = r and T = 2 pi sqrt(r^3/(G M)).'],
+    conventions: [
+      'M is the total two-body mass; for a small satellite around a much larger body, M is approximately the larger mass.',
+    ],
+    keywords: ['kepler', 'orbit', 'central force', 'gravity', 'period'],
+  },
+];

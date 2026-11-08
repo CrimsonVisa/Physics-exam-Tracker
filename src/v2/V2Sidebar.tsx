@@ -77,6 +77,13 @@ const STUDY_NAV_ITEMS: V2NavItem[] = [
     view: { kind: 'calculator' },
   },
   {
+    key: 'formulas',
+    label: 'Formulas',
+    ariaLabel: 'Formula reference',
+    icon: 'formula',
+    view: { kind: 'formulas' },
+  },
+  {
     key: 'planner',
     label: 'Planner',
     ariaLabel: 'Planner and calendar',

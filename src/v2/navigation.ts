@@ -13,7 +13,22 @@ export type V2View =
       query?: string | null;
     }
   | { kind: 'calculator' }
-  | { kind: 'syllabus'; examCode: string | null; focusNodeId?: number | null }
+  | {
+      kind: 'formulas';
+      examCode?: string | null;
+      formulaId?: string | null;
+      subject?: string | null;
+      topic?: string | null;
+      nodeCode?: string | null;
+      nodeTitle?: string | null;
+      query?: string | null;
+    }
+  | {
+      kind: 'syllabus';
+      examCode: string | null;
+      focusNodeId?: number | null;
+      focusNodeCode?: string | null;
+    }
   | { kind: 'practice'; examCode: string | null; questionId?: number | null }
   | { kind: 'planner' }
   | { kind: 'revision' }

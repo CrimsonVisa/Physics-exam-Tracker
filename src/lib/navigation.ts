@@ -18,6 +18,7 @@ export type NavIconName =
   | 'concepts'
   | 'flashcards'
   | 'calculator'
+  | 'formula'
   | 'search'
   | 'keyboard'
   | 'sun'

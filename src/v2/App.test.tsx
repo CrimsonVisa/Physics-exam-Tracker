@@ -6,6 +6,7 @@ import type {
   V2DatabaseState,
   V2DatabaseStatus,
   V2ExamSummary,
+  V2ExamSyllabus,
   V2StudyTotals,
   V2TimerSnapshot,
 } from './api';
@@ -109,6 +110,7 @@ const mockedSaveDashboardSections = vi.mocked(api.saveV2DashboardSections);
 const mockedPlannerDay = vi.mocked(api.getV2PlannerDay);
 const mockedRevisionDashboard = vi.mocked(api.getV2RevisionDashboard);
 const mockedAppSettings = vi.mocked(api.getV2AppSettings);
+const mockedSyllabus = vi.mocked(api.getV2ExamSyllabus);
 const TODAY = '2026-11-04';
 
 function dashboardSections() {
@@ -198,6 +200,47 @@ const EXAMS: V2ExamSummary[] = [
     examDate: '2026-11-01',
   }),
 ];
+
+const CSIR_FORMULA_SYLLABUS: V2ExamSyllabus = {
+  examId: 1,
+  examCode: 'csir-net-physics',
+  examName: 'CSIR-UGC NET Physical Sciences',
+  examIsActive: true,
+  configured: true,
+  contentVersionLabel: 'v1',
+  contentReviewStatus: 'verified',
+  nodes: [
+    {
+      id: 1,
+      examId: 1,
+      parentId: null,
+      code: 'csir-part-a-core-electromagnetic-theory-t004-maxwell-equations-in-free-space-and-linear-isotrop',
+      title: 'Maxwell equations in free space and linear isotropic media',
+      nodeKind: 'topic',
+      category: 'Electromagnetic Theory',
+      displayOrder: 1,
+      readinessWeight: 1,
+      isArchived: false,
+      sourceTitle: 'Official source',
+      sourceVerifiedOn: '2026-11-04',
+      sourceUrl: 'https://example.com/syllabus.pdf',
+      sourceReference: 'Official source reference',
+      contentVersionLabel: 'v1',
+      contentReviewStatus: 'verified',
+      progressStatus: 'not_started',
+      priority: 'normal',
+      confidence: 3,
+      notes: '',
+      nodePath: ['Maxwell equations in free space and linear isotropic media'],
+    },
+  ],
+  summary: {
+    nodeCount: 1,
+    topicCount: 1,
+    revisedOrConfidentCount: 0,
+    mappedConceptCount: 0,
+  },
+};
 
 function timerSnapshot(): V2TimerSnapshot {
   return {
@@ -503,6 +546,19 @@ describe('V2 application shell', () => {
     expect(screen.getByText('Practice — not an examination simulation')).toBeInTheDocument();
   });
 
+  it('navigates to the formula reference from the sidebar', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Formula reference' }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Physics Formula Reference' }),
+    ).toBeInTheDocument();
+    expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'formulas');
+    expect(screen.getByText('47 formulas')).toBeInTheDocument();
+  });
+
   it('preserves calculator session state across workspace navigation', async () => {
     const user = userEvent.setup();
     await renderHealthy();
@@ -602,6 +658,54 @@ describe('V2 application shell', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Combined dashboard' }),
     ).toBeInTheDocument();
+  });
+
+  it('opens the formula reference filtered to an examination workspace', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(within(card('gate-physics')).getByRole('button', { name: 'Open workspace' }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Browse formula reference for this exam',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Physics Formula Reference' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Examination filter')).toHaveValue('gate-physics');
+  });
+
+  it('round-trips from a formula to its syllabus node and back', async () => {
+    const user = userEvent.setup();
+    mockedSyllabus.mockResolvedValue(CSIR_FORMULA_SYLLABUS);
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Formula reference' }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Open formula Maxwell-Faraday law (differential form)',
+      }),
+    );
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Open syllabus topic Maxwell equations in free space and linear isotropic media',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Exam syllabus' }),
+    ).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Open formulas for Maxwell equations in free space and linear isotropic media',
+      }),
+    );
+
+    expect(await screen.findByText(/Showing formulas linked to/)).toBeInTheDocument();
+    expect(screen.getByText('1 formula')).toBeInTheDocument();
+    expect(screen.getByLabelText('Examination filter')).toHaveValue('csir-net-physics');
   });
 
   it('resolves workspaces by code even when the API order changes', async () => {

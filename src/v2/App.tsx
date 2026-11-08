@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { toCommandError } from '../lib/commandError';
 import { BrandLockup } from '../components/BrandMark';
 import { useAppShortcuts } from '../lib/appShortcuts';
@@ -22,6 +22,7 @@ import { ConceptsScreen } from './ConceptsScreen';
 import { DatabaseStateScreen } from './DatabaseStateScreen';
 import { ExamWorkspace } from './ExamWorkspace';
 import { FlashcardsScreen } from './FlashcardsScreen';
+import { FormulaRouteErrorBoundary } from './FormulaRouteErrorBoundary';
 import { CalculatorScreen } from './CalculatorScreen';
 import { CalculatorSessionProvider } from './calculator/CalculatorSessionProvider';
 import { BackupScreen } from './BackupScreen';
@@ -36,6 +37,12 @@ import { ShortcutsDialog } from './ShortcutsDialog';
 import { SyllabusScreen } from './SyllabusScreen';
 import type { V2View } from './navigation';
 import { V2Sidebar, type V2SidebarMode } from './V2Sidebar';
+
+const FormulaReferenceScreen = lazy(() =>
+  import('./formulas/FormulaReferenceScreen').then((module) => ({
+    default: module.FormulaReferenceScreen,
+  })),
+);
 
 type V2AppProps = {
   today?: string;
@@ -54,6 +61,8 @@ function viewWorkspace(view: V2View): string {
       return 'flashcards';
     case 'calculator':
       return 'calculator';
+    case 'formulas':
+      return 'formulas';
     case 'syllabus':
       return 'syllabus';
     case 'practice':
@@ -153,6 +162,21 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
             next.exams.some((exam) => exam.code === current.examCode)
             ? current
             : { kind: current.kind, examCode: null };
+        }
+        if (current.kind === 'formulas') {
+          if (
+            current.examCode === null ||
+            current.examCode === undefined ||
+            next.exams.some((exam) => exam.code === current.examCode)
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            examCode: null,
+            nodeCode: null,
+            nodeTitle: null,
+          };
         }
         if (
           current.kind === 'planner' ||
@@ -329,10 +353,16 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
         <SyllabusScreen
           exams={currentStatus.exams}
           initialExamCode={view.examCode}
+          initialFocusNodeCode={view.focusNodeCode ?? null}
           initialFocusNodeId={view.focusNodeId ?? null}
-          key={`${view.examCode ?? 'combined'}:${view.focusNodeId ?? ''}`}
+          key={`${view.examCode ?? 'combined'}:${view.focusNodeId ?? ''}:${
+            view.focusNodeCode ?? ''
+          }`}
           onOpenFlashcards={(examCode, nodeId, nodeTitle) =>
             setView({ kind: 'flashcards', examCode, nodeId, nodeTitle })
+          }
+          onOpenFormulas={(examCode, nodeCode, nodeTitle) =>
+            setView({ kind: 'formulas', examCode, nodeCode, nodeTitle })
           }
         />
       );
@@ -359,6 +389,37 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
 
     if (view.kind === 'calculator') {
       return <CalculatorScreen />;
+    }
+
+    if (view.kind === 'formulas') {
+      return (
+        <FormulaRouteErrorBoundary onBack={() => setView({ kind: 'dashboard' })}>
+          <Suspense
+            fallback={
+              <div className="page-container" role="status">
+                <p className="v2-empty-copy">Loading formula reference…</p>
+              </div>
+            }
+          >
+            <FormulaReferenceScreen
+              exams={currentStatus.exams}
+              initialExamCode={view.examCode ?? null}
+              initialFormulaId={view.formulaId ?? null}
+              initialNodeCode={view.nodeCode ?? null}
+              initialNodeTitle={view.nodeTitle ?? null}
+              initialQuery={view.query ?? null}
+              initialSubject={view.subject ?? null}
+              initialTopic={view.topic ?? null}
+              key={`${view.examCode ?? 'combined'}:${view.formulaId ?? ''}:${
+                view.nodeCode ?? ''
+              }:${view.subject ?? ''}:${view.topic ?? ''}:${view.query ?? ''}`}
+              onOpenSyllabus={(examCode, nodeCode) =>
+                setView({ kind: 'syllabus', examCode, focusNodeCode: nodeCode })
+              }
+            />
+          </Suspense>
+        </FormulaRouteErrorBoundary>
+      );
     }
 
     if (view.kind === 'practice') {
@@ -410,6 +471,7 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
           exams={currentStatus.exams}
           onBack={() => setView({ kind: 'dashboard' })}
           onOpenConcepts={(examCode) => setView({ kind: 'concepts', examCode })}
+          onOpenFormulas={(examCode) => setView({ kind: 'formulas', examCode })}
           onOpenSyllabus={(examCode) => setView({ kind: 'syllabus', examCode })}
           today={today}
         />

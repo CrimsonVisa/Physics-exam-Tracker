@@ -191,4 +191,35 @@ describe('Syllabus deep links', () => {
     await user.click(await screen.findByRole('button', { name: 'Open flashcards for Kinematics' }));
     expect(onOpenFlashcards).toHaveBeenCalledWith('csir-net-physics', 2, 'Kinematics');
   });
+
+  it('navigates to formulas for a topic using the stable node code', async () => {
+    const user = userEvent.setup();
+    const onOpenFormulas = vi.fn();
+    mockedSyllabus.mockResolvedValue(CONFIGURED);
+    render(
+      <SyllabusScreen
+        exams={EXAMS}
+        initialExamCode="csir-net-physics"
+        onOpenFormulas={onOpenFormulas}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Open formulas for Kinematics' }));
+    expect(onOpenFormulas).toHaveBeenCalledWith('csir-net-physics', 'T1', 'Kinematics');
+  });
+
+  it('resolves a syllabus deep link by stable node code', async () => {
+    mockedSyllabus.mockResolvedValue(CONFIGURED);
+    render(
+      <SyllabusScreen exams={EXAMS} initialExamCode="csir-net-physics" initialFocusNodeCode="T1" />,
+    );
+
+    const node = await waitFor(() => {
+      const element = document.getElementById('v2-syllabus-node-2');
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    await waitFor(() => expect(node).toHaveFocus());
+    expect(node).toHaveClass('v2-syllabus-node-focused');
+  });
 });

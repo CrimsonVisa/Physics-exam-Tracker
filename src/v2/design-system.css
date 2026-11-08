@@ -341,6 +341,14 @@ html[data-font-size='comfortable'] {
   --ws-on-accent: #06202e;
 }
 
+[data-workspace='formulas'] {
+  --ws-accent: #e7b45f;
+  --ws-accent-strong: #f6d49a;
+  --ws-soft: rgb(231 180 95 / 12%);
+  --ws-border: rgb(231 180 95 / 34%);
+  --ws-on-accent: #1a1204;
+}
+
 [data-workspace='practice'] {
   --ws-accent: #b49cff;
   --ws-accent-strong: #d5c9ff;
@@ -475,6 +483,14 @@ html[data-font-size='comfortable'] {
   --ws-accent-strong: #075985;
   --ws-soft: #e0f2fe;
   --ws-border: #bae6fd;
+  --ws-on-accent: #ffffff;
+}
+
+[data-theme='light'] [data-workspace='formulas'] {
+  --ws-accent: #a16207;
+  --ws-accent-strong: #854d0e;
+  --ws-soft: #fbf3dc;
+  --ws-border: #e5d5a6;
   --ws-on-accent: #ffffff;
 }
 

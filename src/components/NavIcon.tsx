@@ -110,6 +110,12 @@ const ICON_PATHS: Record<NavIconName, ReactNode> = {
       <path d="M7.5 10.5h2M12 10.5h2M16.5 10.5h2M7.5 14h2M12 14h2M16.5 14h2M7.5 17.5h2M12 17.5h2M16.5 17.5h2" />
     </>
   ),
+  formula: (
+    <>
+      <path d="M4 13h3l2-7 4 12 2-5h5" />
+      <path d="M4 5h6M4 19h6" />
+    </>
+  ),
   resources: (
     <>
       <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5v8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z" />

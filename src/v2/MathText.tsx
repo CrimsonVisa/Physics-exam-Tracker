@@ -1,21 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { loadKatex, type KatexRenderer } from './katex';
 
 type MathSegment = {
   math: boolean;
   value: string;
   display: boolean;
 };
-
-type KatexRenderer = typeof import('katex').default;
-
-let katexPromise: Promise<KatexRenderer> | null = null;
-
-function loadKatex(): Promise<KatexRenderer> {
-  if (!katexPromise) {
-    katexPromise = import('katex').then((module) => module.default);
-  }
-  return katexPromise;
-}
 
 function parseMath(text: string): MathSegment[] {
   const segments: MathSegment[] = [];
@@ -69,10 +59,19 @@ function parseMath(text: string): MathSegment[] {
   return segments;
 }
 
-function renderMath(segment: MathSegment, key: string, katex: KatexRenderer | null): ReactNode {
+function renderMath(
+  segment: MathSegment,
+  key: string,
+  katex: KatexRenderer | null,
+  loadFailed: boolean,
+): ReactNode {
   if (!katex) {
     return (
-      <span className="v2-math-fallback" key={key} title="LaTeX is loading">
+      <span
+        className="v2-math-fallback"
+        key={key}
+        title={loadFailed ? 'LaTeX rendering unavailable' : 'LaTeX is loading'}
+      >
         {segment.display ? `$$${segment.value}$$` : `$${segment.value}$`}
       </span>
     );
@@ -108,14 +107,21 @@ function renderMath(segment: MathSegment, key: string, katex: KatexRenderer | nu
  */
 export function MathText({ text }: { text: string }) {
   const [katex, setKatex] = useState<KatexRenderer | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    void loadKatex().then((loaded) => {
-      if (!cancelled) {
-        setKatex(() => loaded);
-      }
-    });
+    void loadKatex()
+      .then((loaded) => {
+        if (!cancelled) {
+          setKatex(() => loaded);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadFailed(true);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -125,12 +131,12 @@ export function MathText({ text }: { text: string }) {
     const segments = parseMath(text);
     return segments.map((segment, index) =>
       segment.math ? (
-        renderMath(segment, `math-${index}`, katex)
+        renderMath(segment, `math-${index}`, katex, loadFailed)
       ) : (
         <span key={`text-${index}`}>{segment.value}</span>
       ),
     );
-  }, [text, katex]);
+  }, [text, katex, loadFailed]);
 
   return <span className="v2-math-text">{nodes}</span>;
 }

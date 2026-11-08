@@ -1,0 +1,161 @@
+import type { FormulaEntry } from '../types';
+import { CSIR, GATE, JEST, TIFR, link } from './syllabus';
+import { TEXTBOOKS, textbook } from './sources';
+
+export const WAVES_OSCILLATIONS_FORMULAS: FormulaEntry[] = [
+  {
+    id: 'waves-oscillations-damped-frequency',
+    title: 'Underdamped oscillator frequency',
+    latex: String.raw`\omega_d=\sqrt{\omega_0^2-\gamma^2}`,
+    plainText: 'omega_d = sqrt(omega0^2 - gamma^2)',
+    subject: 'waves-oscillations',
+    topic: 'Oscillations',
+    subtopic: 'Damped harmonic oscillator',
+    summary: 'The oscillation frequency of a linear damped oscillator in the underdamped regime.',
+    symbols: [
+      {
+        symbol: String.raw`\omega_d`,
+        meaning: 'damped angular frequency',
+        unit: 'rad s^-1',
+        dimensions: 'T^-1',
+      },
+      {
+        symbol: String.raw`\omega_0`,
+        meaning: 'natural angular frequency',
+        unit: 'rad s^-1',
+        dimensions: 'T^-1',
+      },
+      {
+        symbol: String.raw`\gamma`,
+        meaning: 'damping rate',
+        unit: 's^-1',
+        dimensions: 'T^-1',
+      },
+    ],
+    conditions: [
+      'Linear viscous damping with constant coefficients.',
+      'Underdamped regime: gamma < omega_0.',
+      'Small oscillations about a stable equilibrium.',
+      'The displacement has the form A exp(-gamma t) cos(omega_d t + phi).',
+    ],
+    exactness: 'exact',
+    framework: 'classical',
+    syllabusLinks: [
+      link('csir-net-physics', 'explicit', [CSIR.smallOscillations]),
+      link('gate-physics', 'explicit', [GATE.smallOscillations]),
+      link('tifr-gs-physics', 'implicit', [TIFR.classical]),
+      link('jest-physics', 'implicit', [JEST.classical]),
+    ],
+    sources: [textbook(TEXTBOOKS.french, 'Ch. 3'), textbook(TEXTBOOKS.crawford, 'Ch. 1')],
+    relatedIds: ['waves-oscillations-quality-factor'],
+    specialCases: [
+      'For no damping, gamma = 0 and omega_d = omega_0.',
+      'Critical damping occurs at gamma = omega_0.',
+    ],
+    conventions: ['Omega and gamma are angular rates in rad s^-1.'],
+    keywords: ['damped oscillator', 'omega', 'gamma', 'underdamped', 'frequency', 'ω'],
+  },
+  {
+    id: 'waves-oscillations-group-velocity',
+    title: 'Phase and group velocity',
+    latex: String.raw`v_p=\frac{\omega}{k},\qquad v_g=\frac{d\omega}{dk}`,
+    plainText: 'v_p = omega / k, v_g = d omega / dk',
+    subject: 'waves-oscillations',
+    topic: 'Wave propagation',
+    subtopic: 'Phase and group velocity',
+    summary:
+      'The phase velocity describes a constant-phase surface, while the group velocity describes the envelope of a narrowband wave packet.',
+    symbols: [
+      {
+        symbol: String.raw`v_p`,
+        meaning: 'phase velocity',
+        unit: 'm s^-1',
+        dimensions: 'L T^-1',
+      },
+      {
+        symbol: String.raw`v_g`,
+        meaning: 'group velocity',
+        unit: 'm s^-1',
+        dimensions: 'L T^-1',
+      },
+      {
+        symbol: String.raw`\omega`,
+        meaning: 'angular frequency',
+        unit: 'rad s^-1',
+        dimensions: 'T^-1',
+      },
+      {
+        symbol: 'k',
+        meaning: 'angular wavenumber',
+        unit: 'rad m^-1',
+        dimensions: 'L^-1',
+      },
+    ],
+    conditions: [
+      'Linear wave propagation in a homogeneous medium.',
+      'The wave packet has a narrow bandwidth so that the envelope is slowly varying.',
+      'Group velocity is most meaningful when dispersion is weak; strong absorption requires a more careful treatment.',
+    ],
+    exactness: 'definition',
+    framework: 'classical',
+    syllabusLinks: [
+      link('csir-net-physics', 'implicit', [CSIR.emCore]),
+      link('gate-physics', 'explicit', [GATE.waves]),
+      link('tifr-gs-physics', 'implicit', [TIFR.general]),
+      link('jest-physics', 'implicit', [JEST.emOptics]),
+    ],
+    sources: [textbook(TEXTBOOKS.crawford, 'Ch. 6'), textbook(TEXTBOOKS.french, 'Ch. 7')],
+    relatedIds: ['waves-oscillations-damped-frequency'],
+    specialCases: ['In a non-dispersive medium, v_p = v_g.'],
+    conventions: ['Angular frequency omega and angular wavenumber k; one-dimensional propagation.'],
+    keywords: ['phase velocity', 'group velocity', 'dispersion', 'wave packet', 'omega', 'k', 'ω'],
+  },
+  {
+    id: 'waves-oscillations-quality-factor',
+    title: 'Quality factor (high-Q power-resonance FWHM)',
+    latex: String.raw`Q=\frac{\omega_0}{\Delta\omega_{\mathrm{FWHM}}}`,
+    plainText: 'Q = omega0 / Delta omega_FWHM',
+    subject: 'waves-oscillations',
+    topic: 'Resonance',
+    subtopic: 'Quality factor',
+    summary:
+      'For a high-Q resonance, the quality factor is defined as the resonant angular frequency divided by the full width at half maximum of the power resonance.',
+    symbols: [
+      { symbol: 'Q', meaning: 'quality factor (dimensionless)' },
+      {
+        symbol: String.raw`\omega_0`,
+        meaning: 'resonant angular frequency',
+        unit: 'rad s^-1',
+        dimensions: 'T^-1',
+      },
+      {
+        symbol: String.raw`\Delta\omega_{\mathrm{FWHM}}`,
+        meaning: 'full width at half maximum of the power resonance',
+        unit: 'rad s^-1',
+        dimensions: 'T^-1',
+      },
+    ],
+    conditions: [
+      'A linear resonant system with a well-defined power resonance.',
+      'The high-Q/narrowband limit is used; the definition is not exact for strongly damped or overlapping resonances.',
+      'Delta omega_FWHM is the full width at half maximum of the power response, not the half-width.',
+      'The approximate relation Q = omega_0/(2 gamma) requires light damping.',
+      'Steady-state driven response, not transient ringing alone.',
+    ],
+    exactness: 'definition',
+    framework: 'classical',
+    syllabusLinks: [
+      link('csir-net-physics', 'explicit', [CSIR.smallOscillations]),
+      link('gate-physics', 'explicit', [GATE.smallOscillations]),
+      link('tifr-gs-physics', 'implicit', [TIFR.classical]),
+      link('jest-physics', 'implicit', [JEST.classical]),
+    ],
+    sources: [textbook(TEXTBOOKS.french, 'Ch. 4'), textbook(TEXTBOOKS.crawford, 'Ch. 3')],
+    relatedIds: ['waves-oscillations-damped-frequency', 'electronics-lc-resonance-frequency'],
+    specialCases: ['For a lightly damped oscillator, Q is approximately omega_0/(2 gamma).'],
+    conventions: [
+      'Delta omega_FWHM is the full width at half maximum of the power resonance, not the half-width.',
+    ],
+    keywords: ['quality factor', 'high Q', 'resonance', 'bandwidth', 'Q', 'omega', 'ω'],
+  },
+];

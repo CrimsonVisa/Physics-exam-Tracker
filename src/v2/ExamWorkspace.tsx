@@ -8,6 +8,7 @@ type ExamWorkspaceProps = {
   today: string;
   onBack: () => void;
   onOpenConcepts: (examCode: string) => void;
+  onOpenFormulas: (examCode: string) => void;
   onOpenSyllabus: (examCode: string) => void;
 };
 
@@ -24,6 +25,7 @@ export function ExamWorkspace({
   today,
   onBack,
   onOpenConcepts,
+  onOpenFormulas,
   onOpenSyllabus,
 }: ExamWorkspaceProps) {
   const date = examDateDisplay(exam.examDate, today);
@@ -67,6 +69,13 @@ export function ExamWorkspace({
           type="button"
         >
           Open exam syllabus and progress
+        </button>
+        <button
+          className="secondary-button v2-back-button"
+          onClick={() => onOpenFormulas(exam.code)}
+          type="button"
+        >
+          Browse formula reference for this exam
         </button>
       </div>
 
