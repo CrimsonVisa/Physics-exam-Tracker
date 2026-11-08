@@ -10,6 +10,7 @@ import './v2/design-system.css';
 import './v2/workspaces.css';
 import './v2/global-search.css';
 import './v2/flashcards.css';
+import './v2/calculator.css';
 
 applyTheme(getStoredTheme());
 applyAppearance(getStoredFontFamily(), getStoredFontSize());

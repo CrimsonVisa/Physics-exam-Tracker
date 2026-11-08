@@ -490,6 +490,85 @@ describe('V2 application shell', () => {
     expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'flashcards');
   });
 
+  it('navigates to the calculator workspace from the sidebar', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Scientific calculator' }),
+    ).toBeInTheDocument();
+    expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'calculator');
+    expect(screen.getByText('Practice — not an examination simulation')).toBeInTheDocument();
+  });
+
+  it('preserves calculator session state across workspace navigation', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+    await user.click(screen.getByRole('button', { name: 'Radians' }));
+    await user.click(screen.getByRole('button', { name: 'Two' }));
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    await user.click(screen.getByRole('button', { name: 'Three' }));
+    await user.click(screen.getByRole('button', { name: 'Equals' }));
+    await user.click(screen.getByRole('button', { name: 'Memory store' }));
+
+    await user.click(screen.getByRole('button', { name: 'Combined dashboard' }));
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+
+    expect(screen.getByRole('button', { name: 'Radians' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Memory stored')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reuse expression 2+3' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Previous answer' }));
+    await user.click(screen.getByRole('button', { name: 'Equals' }));
+    expect(screen.getByLabelText('Result 5')).toBeInTheDocument();
+  });
+
+  it('keeps global shortcuts working while the calculator is focused', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+    const root = document.querySelector('.v2-calculator-page');
+    expect(root).toBeInstanceOf(HTMLElement);
+    (root as HTMLElement).focus();
+
+    fireEvent.keyDown(root as HTMLElement, { bubbles: true, ctrlKey: true, key: 'k' });
+    expect(await screen.findByRole('dialog', { name: 'Global search' })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Global search' })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(root as HTMLElement, { bubbles: true, ctrlKey: true, key: '2' });
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'GATE Physics (PH)' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps global shortcuts working in policy-only calculator modes', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Calculator mode' }),
+      'csir-net-physics',
+    );
+    const root = document.querySelector('.v2-calculator-page');
+    expect(root).toBeInstanceOf(HTMLElement);
+    (root as HTMLElement).focus();
+
+    fireEvent.keyDown(root as HTMLElement, { bubbles: true, ctrlKey: true, key: 'k' });
+    expect(await screen.findByRole('dialog', { name: 'Global search' })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Global search' })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(root as HTMLElement, { bubbles: true, ctrlKey: true, key: '/' });
+    expect(await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })).toBeInTheDocument();
+  });
+
   it('shows missing, future, today, and passed exam date states', async () => {
     await renderHealthy();
 

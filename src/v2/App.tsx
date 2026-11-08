@@ -22,6 +22,8 @@ import { ConceptsScreen } from './ConceptsScreen';
 import { DatabaseStateScreen } from './DatabaseStateScreen';
 import { ExamWorkspace } from './ExamWorkspace';
 import { FlashcardsScreen } from './FlashcardsScreen';
+import { CalculatorScreen } from './CalculatorScreen';
+import { CalculatorSessionProvider } from './calculator/CalculatorSessionProvider';
 import { BackupScreen } from './BackupScreen';
 import { AnalyticsScreen } from './AnalyticsScreen';
 import { GlobalSearch } from './GlobalSearch';
@@ -50,6 +52,8 @@ function viewWorkspace(view: V2View): string {
       return 'concepts';
     case 'flashcards':
       return 'flashcards';
+    case 'calculator':
+      return 'calculator';
     case 'syllabus':
       return 'syllabus';
     case 'practice':
@@ -98,7 +102,15 @@ function BootstrapError({ message, busy, onRetry }: BootstrapErrorProps) {
   );
 }
 
-export default function V2App({ today: fixedToday }: V2AppProps) {
+export default function V2App(props: V2AppProps) {
+  return (
+    <CalculatorSessionProvider>
+      <V2AppShell {...props} />
+    </CalculatorSessionProvider>
+  );
+}
+
+function V2AppShell({ today: fixedToday }: V2AppProps) {
   const today = useTodayDateOnly(fixedToday);
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
   const [status, setStatus] = useState<V2DatabaseStatus | null>(null);
@@ -148,7 +160,8 @@ export default function V2App({ today: fixedToday }: V2AppProps) {
           current.kind === 'analytics' ||
           current.kind === 'resources' ||
           current.kind === 'backup' ||
-          current.kind === 'settings'
+          current.kind === 'settings' ||
+          current.kind === 'calculator'
         ) {
           return current;
         }
@@ -342,6 +355,10 @@ export default function V2App({ today: fixedToday }: V2AppProps) {
           today={today}
         />
       );
+    }
+
+    if (view.kind === 'calculator') {
+      return <CalculatorScreen />;
     }
 
     if (view.kind === 'practice') {

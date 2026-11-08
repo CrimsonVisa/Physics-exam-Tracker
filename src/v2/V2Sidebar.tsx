@@ -70,6 +70,13 @@ const STUDY_NAV_ITEMS: V2NavItem[] = [
     view: { kind: 'flashcards' },
   },
   {
+    key: 'calculator',
+    label: 'Calculator',
+    ariaLabel: 'Scientific calculator',
+    icon: 'calculator',
+    view: { kind: 'calculator' },
+  },
+  {
     key: 'planner',
     label: 'Planner',
     ariaLabel: 'Planner and calendar',

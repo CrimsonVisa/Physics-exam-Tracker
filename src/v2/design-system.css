@@ -333,6 +333,14 @@ html[data-font-size='comfortable'] {
   --ws-on-accent: #1a0711;
 }
 
+[data-workspace='calculator'] {
+  --ws-accent: #7dd3fc;
+  --ws-accent-strong: #bae6fd;
+  --ws-soft: rgb(125 211 252 / 12%);
+  --ws-border: rgb(125 211 252 / 34%);
+  --ws-on-accent: #06202e;
+}
+
 [data-workspace='practice'] {
   --ws-accent: #b49cff;
   --ws-accent-strong: #d5c9ff;
@@ -459,6 +467,14 @@ html[data-font-size='comfortable'] {
   --ws-accent-strong: #9d174d;
   --ws-soft: #fce7f1;
   --ws-border: #f3b8d2;
+  --ws-on-accent: #ffffff;
+}
+
+[data-theme='light'] [data-workspace='calculator'] {
+  --ws-accent: #0369a1;
+  --ws-accent-strong: #075985;
+  --ws-soft: #e0f2fe;
+  --ws-border: #bae6fd;
   --ws-on-accent: #ffffff;
 }
 

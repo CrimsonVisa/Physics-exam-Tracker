@@ -17,6 +17,7 @@ export type NavIconName =
   | AppView
   | 'concepts'
   | 'flashcards'
+  | 'calculator'
   | 'search'
   | 'keyboard'
   | 'sun'

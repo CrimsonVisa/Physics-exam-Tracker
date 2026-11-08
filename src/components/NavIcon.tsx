@@ -103,6 +103,13 @@ const ICON_PATHS: Record<NavIconName, ReactNode> = {
       <path d="M6.5 10h7M6.5 13.5h5" />
     </>
   ),
+  calculator: (
+    <>
+      <rect x="4" y="2.5" width="16" height="19" rx="2.5" />
+      <path d="M7.5 6.5h9" />
+      <path d="M7.5 10.5h2M12 10.5h2M16.5 10.5h2M7.5 14h2M12 14h2M16.5 14h2M7.5 17.5h2M12 17.5h2M16.5 17.5h2" />
+    </>
+  ),
   resources: (
     <>
       <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5v8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z" />

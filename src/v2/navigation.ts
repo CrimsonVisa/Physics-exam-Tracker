@@ -12,6 +12,7 @@ export type V2View =
       flashcardId?: number | null;
       query?: string | null;
     }
+  | { kind: 'calculator' }
   | { kind: 'syllabus'; examCode: string | null; focusNodeId?: number | null }
   | { kind: 'practice'; examCode: string | null; questionId?: number | null }
   | { kind: 'planner' }
