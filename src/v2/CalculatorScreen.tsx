@@ -7,24 +7,12 @@ import {
   type CalculatorKeyAction,
   type MemoryOperation,
 } from './calculator/CalculatorKeypad';
-import { CalculatorPolicyPanel } from './calculator/CalculatorPolicyPanel';
 import { applyRepeatedEquals, evaluate } from './calculator/engine';
 import { calculationErrorMessage } from './calculator/errors';
 import { formatNumber } from './calculator/format';
 import { createHistoryEntry } from './calculator/history';
 import { useCalculatorSession } from './calculator/session';
-import {
-  CALCULATOR_MODE_OPTIONS,
-  DEFAULT_CALCULATOR_MODE,
-  evidenceStatusLabel,
-  getCalculatorProfile,
-} from './calculator/profiles';
-import type {
-  BinaryOperator,
-  CalculatorModeId,
-  HistoryEntry,
-  LastBinaryOperation,
-} from './calculator/types';
+import type { BinaryOperator, HistoryEntry, LastBinaryOperation } from './calculator/types';
 
 type DisplayResult = {
   value: number;
@@ -58,7 +46,6 @@ function fallbackCopyText(text: string): void {
 }
 
 export function CalculatorScreen() {
-  const [mode, setMode] = useState<CalculatorModeId>(DEFAULT_CALCULATOR_MODE);
   const [expression, setExpression] = useState('');
   const [previousExpression, setPreviousExpression] = useState<string | null>(null);
   const [result, setResult] = useState<DisplayResult | null>(null);
@@ -78,7 +65,6 @@ export function CalculatorScreen() {
     setAnswer,
   } = useCalculatorSession();
   const rootRef = useRef<HTMLDivElement>(null);
-  const profile = getCalculatorProfile(mode);
 
   useEffect(() => {
     rootRef.current?.focus();
@@ -99,12 +85,11 @@ export function CalculatorScreen() {
           expression: expressionText,
           result: resultText,
           value,
-          mode,
           timestamp: Date.now(),
         }),
       );
     },
-    [addHistory, mode],
+    [addHistory],
   );
 
   const copyText = useCallback(async (text: string, successMessage: string) => {
@@ -349,9 +334,6 @@ export function CalculatorScreen() {
       if (isEditableTarget(event.target)) {
         return;
       }
-      if (!getCalculatorProfile(mode).hasKeypad) {
-        return;
-      }
       const target = event.target;
       if (
         target instanceof HTMLElement &&
@@ -396,18 +378,8 @@ export function CalculatorScreen() {
         appendToken(event.key);
       }
     },
-    [allClear, appendToken, backspace, clearEntry, handleEvaluate, mode],
+    [allClear, appendToken, backspace, clearEntry, handleEvaluate],
   );
-
-  const handleModeChange = useCallback((nextMode: CalculatorModeId) => {
-    setMode(nextMode);
-    setError(null);
-  }, []);
-
-  const usePracticeCalculator = useCallback(() => {
-    setMode('practice');
-    setError(null);
-  }, []);
 
   const handleReuseHistory = useCallback((entry: HistoryEntry) => {
     setExpression(entry.expression);
@@ -428,9 +400,6 @@ export function CalculatorScreen() {
     }
   }, [copyText, result]);
 
-  const isPractice = profile.modeType === 'practice';
-  const isExamCalculator = profile.modeType === 'exam-calculator';
-
   return (
     <div
       className="page-container v2-calculator-page"
@@ -442,119 +411,51 @@ export function CalculatorScreen() {
         <p className="eyebrow">Physics Tracker · Calculator</p>
         <h1>Scientific calculator</h1>
         <p className="page-lede">
-          A precise calculation workspace with examination-policy modes. Practice is always
-          available; examination modes show only what the authorities document.
+          A precise general-purpose scientific calculator with memory, previous-answer recall, angle
+          modes and session history.
         </p>
       </header>
 
       <div className="v2-calculator-toolbar">
-        <label className="v2-field v2-calculator-mode-field">
-          <span>Calculator mode</span>
-          <select
-            aria-label="Calculator mode"
-            onChange={(event) => handleModeChange(event.target.value as CalculatorModeId)}
-            value={mode}
+        <div aria-label="Angle mode" className="v2-calculator-angle" role="group">
+          <span className="v2-calculator-toolbar-label">Angle</span>
+          <button
+            aria-pressed={angleMode === 'deg'}
+            className="v2-calculator-angle-button"
+            onClick={() => setAngleMode('deg')}
+            type="button"
           >
-            {CALCULATOR_MODE_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {profile.hasKeypad && (
-          <div aria-label="Angle mode" className="v2-calculator-angle" role="group">
-            <span className="v2-calculator-toolbar-label">Angle</span>
-            <button
-              aria-pressed={angleMode === 'deg'}
-              className="v2-calculator-angle-button"
-              onClick={() => setAngleMode('deg')}
-              type="button"
-            >
-              Degrees
-            </button>
-            <button
-              aria-pressed={angleMode === 'rad'}
-              className="v2-calculator-angle-button"
-              onClick={() => setAngleMode('rad')}
-              type="button"
-            >
-              Radians
-            </button>
-          </div>
-        )}
-
-        <p className="v2-calculator-mode-label" data-mode={mode}>
-          {isPractice ? 'Practice — not an examination simulation' : profile.shortLabel}
-        </p>
+            Degrees
+          </button>
+          <button
+            aria-pressed={angleMode === 'rad'}
+            className="v2-calculator-angle-button"
+            onClick={() => setAngleMode('rad')}
+            type="button"
+          >
+            Radians
+          </button>
+        </div>
       </div>
-
-      {isPractice && (
-        <p className="v2-calculator-combined-note" role="note">
-          Combined view has no single examination calculator policy. Practice mode is active. Select
-          an examination to view its documented calculator rules.
-        </p>
-      )}
-
-      {isExamCalculator && (
-        <section aria-label="GATE policy qualification" className="v2-calculator-gate-banner">
-          <div>
-            <p className="eyebrow">{profile.applicableYear} qualification</p>
-            <p>
-              <strong>Physical calculator:</strong>{' '}
-              {evidenceStatusLabel(profile.physicalCalculator)}
-            </p>
-            <p>
-              <strong>On-screen scientific calculator:</strong>{' '}
-              {evidenceStatusLabel(profile.onScreenCalculator)}
-            </p>
-            <p>
-              <strong>Function-level capabilities:</strong>{' '}
-              {evidenceStatusLabel(profile.functionSet)}
-            </p>
-          </div>
-          <p>
-            Advanced functions are based on the official GATE 2026 mock reference and may differ in
-            GATE 2027. This is not an exact official GATE replica.
-          </p>
-        </section>
-      )}
 
       <div className="v2-calculator-layout">
         <section aria-label="Calculation workspace" className="v2-calculator-main">
           <CalculatorDisplay
-            angleMode={profile.hasKeypad ? angleMode : null}
+            angleMode={angleMode}
             approximate={result?.approximate ?? false}
             error={error}
             expression={expression}
+            label="Scientific"
             memory={memory}
-            modeLabel={profile.shortLabel}
             onCopy={handleCopyResult}
             previousExpression={previousExpression}
             resultText={result?.text ?? null}
           />
 
-          {profile.hasKeypad ? (
-            <CalculatorKeypad onAction={handleAction} profile={profile} />
-          ) : (
-            <section className="v2-concept-card v2-calculator-policy-fallback">
-              <p className="eyebrow">Policy-only mode</p>
-              <h2>No examination calculator keypad</h2>
-              <p>{profile.summary}</p>
-              <p>
-                Your current expression is preserved. Use Practice to continue calculating without
-                implying an official examination calculator.
-              </p>
-              <button className="primary-button" onClick={usePracticeCalculator} type="button">
-                Use Practice Calculator
-              </button>
-            </section>
-          )}
+          <CalculatorKeypad onAction={handleAction} />
         </section>
 
-        <aside aria-label="Calculator policy and history" className="v2-calculator-side">
-          <CalculatorPolicyPanel profile={profile} />
+        <aside aria-label="Calculator history and shortcuts" className="v2-calculator-side">
           <CalculatorHistory
             entries={history}
             onClear={clearHistory}

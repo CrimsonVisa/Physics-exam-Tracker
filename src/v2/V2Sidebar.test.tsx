@@ -1,5 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { V2ExamSummary } from './api';
 import type { V2View } from './navigation';
@@ -41,6 +43,16 @@ const EXAMS: V2ExamSummary[] = [
     officialUrl: 'https://www.jest.org.in/',
     displayOrder: 3,
     isActive: false,
+  }),
+  exam({
+    id: 4,
+    code: 'tifr-gs-physics',
+    name: 'TIFR Graduate School Physics',
+    shortName: 'TIFR GS',
+    authority: 'TIFR',
+    officialUrl: 'https://www.tifr.res.in/',
+    displayOrder: 4,
+    isActive: true,
   }),
 ];
 
@@ -98,6 +110,7 @@ describe('V2Sidebar', () => {
     expect(screen.getByText('CSIR-NET')).toBeInTheDocument();
     expect(screen.getByText('GATE PH')).toBeInTheDocument();
     expect(screen.getByText('JEST')).toBeInTheDocument();
+    expect(screen.getByText('TIFR GS')).toBeInTheDocument();
     expect(screen.getByText('Inactive')).toBeInTheDocument();
     expect(screen.getByText(/One local V2 database/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute(
@@ -105,10 +118,68 @@ describe('V2Sidebar', () => {
       'true',
     );
     // The shared stylesheet hides icons by default; the V2 shell renders them.
-    expect(document.querySelectorAll('.nav-icon')).toHaveLength(17);
+    expect(document.querySelectorAll('.nav-icon')).toHaveLength(18);
 
     // Expanded navigation relies on the visible label, not a title tooltip.
     expect(screen.getByRole('button', { name: 'Practice systems' })).not.toHaveAttribute('title');
+  });
+
+  it('keeps the brand copy and header controls in separate regions', () => {
+    renderSidebar('expanded');
+
+    const header = document.querySelector('.sidebar-header');
+    expect(header).not.toBeNull();
+    expect(header).toContainElement(screen.getByText('Physics Tracker'));
+    expect(header).toContainElement(screen.getByText('Four-exam foundation'));
+    expect(header).toContainElement(screen.getByRole('button', { name: 'Open global search' }));
+    expect(header).toContainElement(screen.getByRole('button', { name: 'Collapse sidebar' }));
+
+    const brand = header?.querySelector(':scope > .brand');
+    const controls = header?.querySelector(':scope > .sidebar-controls');
+    expect(brand).toContainElement(screen.getByText('Physics Tracker'));
+    expect(controls).toContainElement(screen.getByRole('button', { name: 'Open global search' }));
+    expect(controls).toContainElement(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    expect(brand).not.toContainElement(screen.getByRole('button', { name: 'Open global search' }));
+  });
+
+  it('renders distinct C, G, T and J monograms for all four exams', () => {
+    renderSidebar('expanded');
+
+    const expected: Record<string, string> = {
+      'csir-net-physics': 'C',
+      'gate-physics': 'G',
+      'tifr-gs-physics': 'T',
+      'jest-physics': 'J',
+    };
+
+    for (const [code, initial] of Object.entries(expected)) {
+      const button = document.querySelector(`button[data-exam-code="${code}"]`);
+      expect(button).toBeInstanceOf(HTMLElement);
+      const monogram = button?.querySelector('.v2-exam-monogram');
+      expect(monogram).toHaveTextContent(initial);
+      expect(monogram).toHaveClass('nav-icon');
+    }
+  });
+
+  it('marks the active exam monogram with the active navigation state', () => {
+    renderSidebar('expanded', { kind: 'exam', examCode: 'gate-physics' });
+
+    const activeButton = screen.getByRole('button', { name: 'GATE Physics (PH)' });
+    expect(activeButton).toHaveClass('nav-item-active');
+    expect(activeButton.querySelector('.v2-exam-monogram')).toHaveTextContent('G');
+  });
+
+  it('keeps the sidebar spacing and monogram CSS contracts', () => {
+    const css = readFileSync(join(process.cwd(), 'src/v2/design-system.css'), 'utf8');
+
+    expect(css).toContain('.v2-app-frame .sidebar-header .brand-copy');
+    expect(css).toContain('white-space: normal');
+    expect(css).toContain('overflow-wrap: break-word');
+    expect(css).toContain('.v2-app-frame .nav-item .v2-exam-monogram');
+    expect(css).toContain('display: inline-grid');
+    expect(css).toContain('place-items: center');
+    expect(css).toContain('.v2-app-frame .nav-item.nav-item-active .v2-exam-monogram');
+    expect(css).toContain('color: var(--ws-on-accent)');
   });
 
   it('marks the active navigation item', () => {

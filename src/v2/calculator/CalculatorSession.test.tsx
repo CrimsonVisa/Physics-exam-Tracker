@@ -16,7 +16,6 @@ function entry(index: number) {
     expression: `${index} + 1`,
     result: String(index + 1),
     value: index + 1,
-    mode: 'practice',
     timestamp: 1_700_000_000_000 + index,
   });
 }

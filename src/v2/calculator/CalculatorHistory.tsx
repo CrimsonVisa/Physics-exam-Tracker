@@ -1,5 +1,4 @@
 import { formatHistoryTime } from './history';
-import { CALCULATOR_PROFILES } from './profiles';
 import type { HistoryEntry } from './types';
 
 type CalculatorHistoryProps = {
@@ -46,10 +45,7 @@ export function CalculatorHistory({ entries, onClear, onCopy, onReuse }: Calcula
                   {entry.expression}
                 </button>
                 <p className="v2-calculator-history-result">{entry.result}</p>
-                <p className="v2-calculator-history-meta">
-                  {CALCULATOR_PROFILES[entry.mode].shortLabel} ·{' '}
-                  {formatHistoryTime(entry.timestamp)}
-                </p>
+                <p className="v2-calculator-history-meta">{formatHistoryTime(entry.timestamp)}</p>
               </div>
               <button
                 aria-label={`Copy result ${entry.result}`}

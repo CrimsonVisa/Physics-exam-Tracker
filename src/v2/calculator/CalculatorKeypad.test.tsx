@@ -2,13 +2,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { CalculatorKeypad } from './CalculatorKeypad';
-import { getCalculatorProfile } from './profiles';
 
 describe('CalculatorKeypad', () => {
   it('emits append and command actions for scientific keys', async () => {
     const user = userEvent.setup();
     const onAction = vi.fn();
-    render(<CalculatorKeypad onAction={onAction} profile={getCalculatorProfile('practice')} />);
+    render(<CalculatorKeypad onAction={onAction} />);
 
     await user.click(screen.getByRole('button', { name: 'Sine' }));
     expect(onAction).toHaveBeenLastCalledWith({ type: 'append', value: 'sin(' });
@@ -41,35 +40,26 @@ describe('CalculatorKeypad', () => {
     expect(onAction).toHaveBeenLastCalledWith({ type: 'append', value: ',' });
   });
 
-  it('enables all GATE mock-observed functions', () => {
-    render(
-      <CalculatorKeypad
-        onAction={() => undefined}
-        profile={getCalculatorProfile('gate-physics')}
-      />,
-    );
-    expect(screen.getByRole('button', { name: 'Sine' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Hyperbolic sine' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Arbitrary root' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Memory recall' })).toBeEnabled();
-  });
+  it('makes every scientific, memory and numeric function available immediately', () => {
+    render(<CalculatorKeypad onAction={() => undefined} />);
 
-  it('disables functions that a policy profile does not document', () => {
-    render(
-      <CalculatorKeypad
-        onAction={() => undefined}
-        profile={getCalculatorProfile('csir-net-physics')}
-      />,
-    );
-    expect(screen.getByRole('button', { name: 'Sine' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Equals' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'All clear' })).toBeEnabled();
+    for (const name of [
+      'Sine',
+      'Hyperbolic sine',
+      'Inverse hyperbolic tangent',
+      'Arbitrary base logarithm',
+      'Arbitrary root',
+      'Factorial',
+      'Memory recall',
+      'Previous answer',
+      'Equals',
+    ]) {
+      expect(screen.getByRole('button', { name })).toBeEnabled();
+    }
   });
 
   it('provides readable accessible names for symbols', () => {
-    render(
-      <CalculatorKeypad onAction={() => undefined} profile={getCalculatorProfile('practice')} />,
-    );
+    render(<CalculatorKeypad onAction={() => undefined} />);
     expect(screen.getByRole('button', { name: 'Inverse hyperbolic tangent' })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Scientific notation exponent' }),

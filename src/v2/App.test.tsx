@@ -543,7 +543,8 @@ describe('V2 application shell', () => {
       await screen.findByRole('heading', { level: 1, name: 'Scientific calculator' }),
     ).toBeInTheDocument();
     expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'calculator');
-    expect(screen.getByText('Practice — not an examination simulation')).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Calculator mode' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sine' })).toBeEnabled();
   });
 
   it('navigates to the formula reference from the sidebar', async () => {
@@ -655,28 +656,6 @@ describe('V2 application shell', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'GATE Physics (PH)' }),
     ).toBeInTheDocument();
-  });
-
-  it('keeps global shortcuts working in policy-only calculator modes', async () => {
-    const user = userEvent.setup();
-    await renderHealthy();
-    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Calculator mode' }),
-      'csir-net-physics',
-    );
-    const root = document.querySelector('.v2-calculator-page');
-    expect(root).toBeInstanceOf(HTMLElement);
-    (root as HTMLElement).focus();
-
-    fireEvent.keyDown(root as HTMLElement, { bubbles: true, ctrlKey: true, key: 'k' });
-    expect(await screen.findByRole('dialog', { name: 'Global search' })).toBeInTheDocument();
-
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: 'Global search' })).not.toBeInTheDocument();
-
-    fireEvent.keyDown(root as HTMLElement, { bubbles: true, ctrlKey: true, key: '/' });
-    expect(await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })).toBeInTheDocument();
   });
 
   it('shows missing, future, today, and passed exam date states', async () => {

@@ -1,8 +1,8 @@
 import type { AngleMode } from './types';
 
 type CalculatorDisplayProps = {
-  modeLabel: string;
-  angleMode: AngleMode | null;
+  label: string;
+  angleMode: AngleMode;
   expression: string;
   previousExpression: string | null;
   resultText: string | null;
@@ -13,7 +13,7 @@ type CalculatorDisplayProps = {
 };
 
 export function CalculatorDisplay({
-  modeLabel,
+  label,
   angleMode,
   expression,
   previousExpression,
@@ -26,12 +26,10 @@ export function CalculatorDisplay({
   return (
     <section className="v2-calculator-display" aria-label="Calculator display">
       <div className="v2-calculator-display-header">
-        <span className="v2-calculator-display-mode">{modeLabel}</span>
-        {angleMode && (
-          <span className="v2-calculator-display-angle" aria-label="Display angle mode">
-            {angleMode === 'deg' ? 'DEG' : 'RAD'}
-          </span>
-        )}
+        <span className="v2-calculator-display-mode">{label}</span>
+        <span className="v2-calculator-display-angle" aria-label="Display angle mode">
+          {angleMode === 'deg' ? 'DEG' : 'RAD'}
+        </span>
         {memory !== null && (
           <span className="v2-calculator-memory-indicator" aria-label="Memory stored">
             M

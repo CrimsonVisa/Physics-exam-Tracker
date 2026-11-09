@@ -4,7 +4,6 @@ import {
   addHistoryEntry,
   createHistoryEntry,
   formatHistoryTime,
-  historyModeLabel,
 } from './history';
 import type { HistoryEntry } from './types';
 
@@ -14,7 +13,6 @@ function entry(index: number): HistoryEntry {
     expression: `${index} + 1`,
     result: String(index + 1),
     value: index + 1,
-    mode: 'practice',
     timestamp: 1_700_000_000_000 + index,
   };
 }
@@ -35,14 +33,12 @@ describe('calculator history', () => {
       expression: '2 + 3',
       result: '5',
       value: 5,
-      mode: 'practice',
       timestamp: 1_700_000_000_000,
     });
     const second = createHistoryEntry({
       expression: '2 + 3',
       result: '5',
       value: 5,
-      mode: 'practice',
       timestamp: 1_700_000_000_000,
     });
     expect(first.id).toMatch(/^calc-/);
@@ -50,16 +46,7 @@ describe('calculator history', () => {
     expect(first.id).not.toBe(second.id);
   });
 
-  it('formats a local session timestamp and mode label', () => {
+  it('formats a local session timestamp', () => {
     expect(formatHistoryTime(1_700_000_000_000)).toMatch(/\d{1,2}:\d{2}/);
-    expect(
-      historyModeLabel('gate-physics', {
-        practice: 'Practice',
-        'csir-net-physics': 'CSIR NET',
-        'gate-physics': 'GATE PH',
-        'tifr-gs-physics': 'TIFR GS',
-        'jest-physics': 'JEST',
-      }),
-    ).toBe('GATE PH');
   });
 });

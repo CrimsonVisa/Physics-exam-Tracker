@@ -1,6 +1,3 @@
-import { isFunctionEnabled } from './profiles';
-import type { CalculatorFunctionId, CalculatorProfile } from './types';
-
 export type MemoryOperation = 'clear' | 'recall' | 'store' | 'add' | 'subtract';
 
 export type CalculatorKeyAction =
@@ -20,7 +17,6 @@ type CalculatorKeyDefinition = {
   ariaLabel: string;
   action: CalculatorKeyAction;
   variant: KeyVariant;
-  functionId?: CalculatorFunctionId;
 };
 
 const MEMORY_KEYS: CalculatorKeyDefinition[] = [
@@ -30,7 +26,6 @@ const MEMORY_KEYS: CalculatorKeyDefinition[] = [
     ariaLabel: 'Memory clear',
     action: { type: 'memory', operation: 'clear' },
     variant: 'memory',
-    functionId: 'memory',
   },
   {
     id: 'memory-recall',
@@ -38,7 +33,6 @@ const MEMORY_KEYS: CalculatorKeyDefinition[] = [
     ariaLabel: 'Memory recall',
     action: { type: 'memory', operation: 'recall' },
     variant: 'memory',
-    functionId: 'memory',
   },
   {
     id: 'memory-store',
@@ -46,7 +40,6 @@ const MEMORY_KEYS: CalculatorKeyDefinition[] = [
     ariaLabel: 'Memory store',
     action: { type: 'memory', operation: 'store' },
     variant: 'memory',
-    functionId: 'memory',
   },
   {
     id: 'memory-add',
@@ -54,7 +47,6 @@ const MEMORY_KEYS: CalculatorKeyDefinition[] = [
     ariaLabel: 'Memory add',
     action: { type: 'memory', operation: 'add' },
     variant: 'memory',
-    functionId: 'memory',
   },
 ];
 
@@ -66,7 +58,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Memory subtract',
       action: { type: 'memory', operation: 'subtract' },
       variant: 'memory',
-      functionId: 'memory',
     },
     {
       id: 'sin',
@@ -74,7 +65,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Sine',
       action: { type: 'append', value: 'sin(' },
       variant: 'function',
-      functionId: 'sin',
     },
     {
       id: 'cos',
@@ -82,7 +72,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Cosine',
       action: { type: 'append', value: 'cos(' },
       variant: 'function',
-      functionId: 'cos',
     },
     {
       id: 'tan',
@@ -90,7 +79,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Tangent',
       action: { type: 'append', value: 'tan(' },
       variant: 'function',
-      functionId: 'tan',
     },
   ],
   [
@@ -100,7 +88,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Inverse sine',
       action: { type: 'append', value: 'asin(' },
       variant: 'function',
-      functionId: 'asin',
     },
     {
       id: 'acos',
@@ -108,7 +95,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Inverse cosine',
       action: { type: 'append', value: 'acos(' },
       variant: 'function',
-      functionId: 'acos',
     },
     {
       id: 'atan',
@@ -116,7 +102,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Inverse tangent',
       action: { type: 'append', value: 'atan(' },
       variant: 'function',
-      functionId: 'atan',
     },
     {
       id: 'sinh',
@@ -124,7 +109,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Hyperbolic sine',
       action: { type: 'append', value: 'sinh(' },
       variant: 'function',
-      functionId: 'sinh',
     },
   ],
   [
@@ -134,7 +118,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Hyperbolic cosine',
       action: { type: 'append', value: 'cosh(' },
       variant: 'function',
-      functionId: 'cosh',
     },
     {
       id: 'tanh',
@@ -142,7 +125,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Hyperbolic tangent',
       action: { type: 'append', value: 'tanh(' },
       variant: 'function',
-      functionId: 'tanh',
     },
     {
       id: 'asinh',
@@ -150,7 +132,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Inverse hyperbolic sine',
       action: { type: 'append', value: 'asinh(' },
       variant: 'function',
-      functionId: 'asinh',
     },
     {
       id: 'acosh',
@@ -158,7 +139,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Inverse hyperbolic cosine',
       action: { type: 'append', value: 'acosh(' },
       variant: 'function',
-      functionId: 'acosh',
     },
   ],
   [
@@ -168,7 +148,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Inverse hyperbolic tangent',
       action: { type: 'append', value: 'atanh(' },
       variant: 'function',
-      functionId: 'atanh',
     },
     {
       id: 'ln',
@@ -176,7 +155,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Natural logarithm',
       action: { type: 'append', value: 'ln(' },
       variant: 'function',
-      functionId: 'ln',
     },
     {
       id: 'log10',
@@ -184,7 +162,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Base ten logarithm',
       action: { type: 'append', value: 'log(' },
       variant: 'function',
-      functionId: 'log10',
     },
     {
       id: 'log2',
@@ -192,7 +169,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Base two logarithm',
       action: { type: 'append', value: 'log2(' },
       variant: 'function',
-      functionId: 'log2',
     },
   ],
   [
@@ -202,7 +178,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Arbitrary base logarithm',
       action: { type: 'append', value: 'logb(' },
       variant: 'function',
-      functionId: 'logb',
     },
     {
       id: 'exp',
@@ -210,7 +185,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'e raised to the power x',
       action: { type: 'append', value: 'exp(' },
       variant: 'function',
-      functionId: 'exp',
     },
     {
       id: 'pow10',
@@ -218,7 +192,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Ten raised to the power x',
       action: { type: 'append', value: 'pow10(' },
       variant: 'function',
-      functionId: 'pow10',
     },
     {
       id: 'square',
@@ -226,7 +199,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Square',
       action: { type: 'append', value: '^2' },
       variant: 'function',
-      functionId: 'square',
     },
   ],
   [
@@ -236,7 +208,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Cube',
       action: { type: 'append', value: '^3' },
       variant: 'function',
-      functionId: 'cube',
     },
     {
       id: 'power',
@@ -244,7 +215,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Raise to a power',
       action: { type: 'append', value: '^' },
       variant: 'operator',
-      functionId: 'power',
     },
     {
       id: 'sqrt',
@@ -252,7 +222,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Square root',
       action: { type: 'append', value: 'sqrt(' },
       variant: 'function',
-      functionId: 'sqrt',
     },
     {
       id: 'cbrt',
@@ -260,7 +229,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Cube root',
       action: { type: 'append', value: 'cbrt(' },
       variant: 'function',
-      functionId: 'cbrt',
     },
   ],
   [
@@ -270,7 +238,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Arbitrary root',
       action: { type: 'append', value: 'root(' },
       variant: 'function',
-      functionId: 'root',
     },
     {
       id: 'pi',
@@ -278,7 +245,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Pi',
       action: { type: 'append', value: 'π' },
       variant: 'function',
-      functionId: 'pi',
     },
     {
       id: 'e',
@@ -286,7 +252,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Euler number',
       action: { type: 'append', value: 'e' },
       variant: 'function',
-      functionId: 'e',
     },
     {
       id: 'abs',
@@ -294,7 +259,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Absolute value',
       action: { type: 'append', value: 'abs(' },
       variant: 'function',
-      functionId: 'abs',
     },
   ],
   [
@@ -304,7 +268,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Factorial',
       action: { type: 'append', value: '!' },
       variant: 'function',
-      functionId: 'factorial',
     },
     {
       id: 'mod',
@@ -312,7 +275,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Modulus remainder',
       action: { type: 'append', value: ' mod ' },
       variant: 'operator',
-      functionId: 'mod',
     },
     {
       id: 'exp-entry',
@@ -320,7 +282,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Scientific notation exponent',
       action: { type: 'append', value: 'E' },
       variant: 'function',
-      functionId: 'scientific-notation',
     },
     {
       id: 'reciprocal',
@@ -328,7 +289,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Reciprocal',
       action: { type: 'append', value: 'recip(' },
       variant: 'function',
-      functionId: 'reciprocal',
     },
   ],
   [
@@ -338,7 +298,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Open parenthesis',
       action: { type: 'append', value: '(' },
       variant: 'operator',
-      functionId: 'parentheses',
     },
     {
       id: 'rparen',
@@ -346,7 +305,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Close parenthesis',
       action: { type: 'append', value: ')' },
       variant: 'operator',
-      functionId: 'parentheses',
     },
     {
       id: 'percent',
@@ -354,7 +312,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Percentage',
       action: { type: 'append', value: '%' },
       variant: 'operator',
-      functionId: 'percentage',
     },
     {
       id: 'ans',
@@ -362,7 +319,6 @@ const FUNCTION_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Previous answer',
       action: { type: 'append', value: 'Ans' },
       variant: 'function',
-      functionId: 'ans',
     },
   ],
 ];
@@ -396,7 +352,6 @@ const NUMERIC_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Divide',
       action: { type: 'append', value: '/' },
       variant: 'operator',
-      functionId: 'divide',
     },
   ],
   [
@@ -427,7 +382,6 @@ const NUMERIC_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Multiply',
       action: { type: 'append', value: '*' },
       variant: 'operator',
-      functionId: 'multiply',
     },
   ],
   [
@@ -458,7 +412,6 @@ const NUMERIC_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Subtract',
       action: { type: 'append', value: '-' },
       variant: 'operator',
-      functionId: 'subtract',
     },
   ],
   [
@@ -489,7 +442,6 @@ const NUMERIC_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Add',
       action: { type: 'append', value: '+' },
       variant: 'operator',
-      functionId: 'add',
     },
   ],
   [
@@ -499,7 +451,6 @@ const NUMERIC_ROWS: CalculatorKeyDefinition[][] = [
       ariaLabel: 'Change sign',
       action: { type: 'toggle-sign' },
       variant: 'command',
-      functionId: 'sign',
     },
     {
       id: 'zero',
@@ -526,29 +477,20 @@ const NUMERIC_ROWS: CalculatorKeyDefinition[][] = [
 ];
 
 type CalculatorKeypadProps = {
-  profile: CalculatorProfile;
   onAction: (action: CalculatorKeyAction) => void;
 };
 
-function keyEnabled(profile: CalculatorProfile, key: CalculatorKeyDefinition): boolean {
-  return key.functionId === undefined || isFunctionEnabled(profile, key.functionId);
-}
-
 function CalculatorKey({
-  profile,
   keyDefinition,
   onAction,
 }: {
-  profile: CalculatorProfile;
   keyDefinition: CalculatorKeyDefinition;
   onAction: (action: CalculatorKeyAction) => void;
 }) {
-  const enabled = keyEnabled(profile, keyDefinition);
   return (
     <button
       aria-label={keyDefinition.ariaLabel}
       className={`v2-calculator-key is-${keyDefinition.variant}`}
-      disabled={!enabled}
       onClick={() => onAction(keyDefinition.action)}
       title={keyDefinition.ariaLabel}
       type="button"
@@ -558,7 +500,7 @@ function CalculatorKey({
   );
 }
 
-export function CalculatorKeypad({ profile, onAction }: CalculatorKeypadProps) {
+export function CalculatorKeypad({ onAction }: CalculatorKeypadProps) {
   return (
     <section aria-label="Calculator keypad" className="v2-calculator-keypad">
       <div
@@ -567,15 +509,15 @@ export function CalculatorKeypad({ profile, onAction }: CalculatorKeypadProps) {
         role="group"
       >
         {MEMORY_KEYS.map((key) => (
-          <CalculatorKey key={key.id} keyDefinition={key} onAction={onAction} profile={profile} />
+          <CalculatorKey key={key.id} keyDefinition={key} onAction={onAction} />
         ))}
         {FUNCTION_ROWS.flat().map((key) => (
-          <CalculatorKey key={key.id} keyDefinition={key} onAction={onAction} profile={profile} />
+          <CalculatorKey key={key.id} keyDefinition={key} onAction={onAction} />
         ))}
       </div>
       <div aria-label="Number pad" className="v2-calculator-key-grid is-numeric" role="group">
         {NUMERIC_ROWS.flat().map((key) => (
-          <CalculatorKey key={key.id} keyDefinition={key} onAction={onAction} profile={profile} />
+          <CalculatorKey key={key.id} keyDefinition={key} onAction={onAction} />
         ))}
       </div>
       <div className="v2-calculator-keypad-utility">

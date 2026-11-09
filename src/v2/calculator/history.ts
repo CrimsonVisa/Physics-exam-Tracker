@@ -1,4 +1,4 @@
-import type { CalculatorModeId, HistoryEntry } from './types';
+import type { HistoryEntry } from './types';
 
 export const MAX_HISTORY_ENTRIES = 50;
 
@@ -18,11 +18,4 @@ export function formatHistoryTime(timestamp: number): string {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-export function historyModeLabel(
-  mode: CalculatorModeId,
-  labels: Record<CalculatorModeId, string>,
-): string {
-  return labels[mode];
 }

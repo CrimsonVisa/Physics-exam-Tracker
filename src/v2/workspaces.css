@@ -46,10 +46,8 @@
 
 /* ---------------------------------------------------------- calculator */
 
-.v2-calculator-page .v2-calculator-policy,
 .v2-calculator-page .v2-calculator-history,
-.v2-calculator-page .v2-calculator-help,
-.v2-calculator-page .v2-calculator-policy-fallback {
+.v2-calculator-page .v2-calculator-help {
   border-top: 2px solid var(--accent);
 }
 

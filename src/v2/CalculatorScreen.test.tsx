@@ -43,17 +43,23 @@ describe('CalculatorScreen', () => {
     }
   });
 
-  it('opens in Practice mode with the combined-policy notice', () => {
+  it('opens directly in the general scientific calculator without a mode selector', () => {
     renderScreen();
     expect(
       screen.getByRole('heading', { level: 1, name: 'Scientific calculator' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Calculator mode' })).toHaveValue('practice');
-    expect(screen.getByText('Practice — not an examination simulation')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Combined view has no single examination calculator policy/),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Calculator mode' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Calculator mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Calculator policy/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Practice/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/CSIR/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/GATE/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/TIFR/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/JEST/i)).not.toBeInTheDocument();
     expect(key('Sine')).toBeEnabled();
+    expect(key('Hyperbolic sine')).toBeEnabled();
+    expect(key('Arbitrary base logarithm')).toBeEnabled();
+    expect(key('Memory recall')).toBeEnabled();
     expect(screen.getByLabelText('No result')).toHaveAttribute('aria-live', 'polite');
   });
 
@@ -294,128 +300,6 @@ describe('CalculatorScreen', () => {
     expect(screen.getByLabelText(/^(Approximately|Result) 3$/)).toBeInTheDocument();
   });
 
-  it('switches to policy-only modes without discarding the expression', async () => {
-    const user = userEvent.setup();
-    renderScreen();
-    const mode = screen.getByRole('combobox', { name: 'Calculator mode' });
-
-    await user.click(key('Two'));
-    await user.click(key('Add'));
-    await user.click(key('Three'));
-
-    await user.selectOptions(mode, 'csir-net-physics');
-    expect(
-      screen.getByRole('heading', { name: 'No examination calculator keypad' }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/June 2025/).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: 'Sine' })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Display angle mode')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Current expression: 2+3')).toBeInTheDocument();
-
-    await user.click(key('Use Practice Calculator'));
-    expect(screen.getByRole('combobox', { name: 'Calculator mode' })).toHaveValue('practice');
-    expect(screen.getByLabelText('Current expression: 2+3')).toBeInTheDocument();
-    await user.click(key('Equals'));
-    expect(screen.getByLabelText('Result 5')).toBeInTheDocument();
-  });
-
-  it('supports keyboard arithmetic in GATE mode', async () => {
-    const user = userEvent.setup();
-    renderScreen();
-
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Calculator mode' }),
-      'gate-physics',
-    );
-    calculatorRoot();
-    await user.keyboard('2+3{Enter}');
-    expect(screen.getByLabelText('Result 5')).toBeInTheDocument();
-  });
-
-  it.each(['csir-net-physics', 'tifr-gs-physics', 'jest-physics'])(
-    'ignores keyboard calculation in %s mode',
-    async (mode) => {
-      const user = userEvent.setup();
-      renderScreen();
-
-      await user.selectOptions(screen.getByRole('combobox', { name: 'Calculator mode' }), mode);
-      calculatorRoot();
-      await user.keyboard('2+3{Enter}');
-      expect(screen.getByLabelText('Current expression: empty')).toBeInTheDocument();
-      expect(screen.getByLabelText('No result')).toBeInTheDocument();
-    },
-  );
-
-  it('does not evaluate an existing expression with Enter in policy-only mode', async () => {
-    const user = userEvent.setup();
-    renderScreen();
-
-    await user.click(key('Two'));
-    await user.click(key('Add'));
-    await user.click(key('Three'));
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Calculator mode' }),
-      'csir-net-physics',
-    );
-    calculatorRoot();
-    await user.keyboard('{Enter}');
-    expect(screen.getByLabelText('Current expression: 2+3')).toBeInTheDocument();
-    expect(screen.getByLabelText('No result')).toBeInTheDocument();
-  });
-
-  it('restores keyboard calculation after returning to Practice', async () => {
-    const user = userEvent.setup();
-    renderScreen();
-
-    await user.click(key('Two'));
-    await user.click(key('Add'));
-    await user.click(key('Three'));
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Calculator mode' }),
-      'csir-net-physics',
-    );
-    calculatorRoot();
-    await user.keyboard('9{Enter}');
-    expect(screen.getByLabelText('Current expression: 2+3')).toBeInTheDocument();
-
-    await user.click(key('Use Practice Calculator'));
-    expect(screen.getByRole('combobox', { name: 'Calculator mode' })).toHaveValue('practice');
-    expect(screen.getByLabelText('Current expression: 2+3')).toBeInTheDocument();
-    calculatorRoot();
-    await user.keyboard('+4{Enter}');
-    expect(screen.getByLabelText('Result 9')).toBeInTheDocument();
-  });
-
-  it('renders GATE scientific mode with the qualification banner', async () => {
-    const user = userEvent.setup();
-    renderScreen();
-
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Calculator mode' }),
-      'gate-physics',
-    );
-    expect(screen.getByText('GATE 2027 qualification')).toBeInTheDocument();
-    expect(screen.getAllByText(/not an exact official GATE replica/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/keyboard operation is disabled/)).toBeInTheDocument();
-    expect(key('Hyperbolic sine')).toBeEnabled();
-    expect(key('Arbitrary base logarithm')).toBeEnabled();
-  });
-
-  it('renders TIFR and JEST policy-only cards', async () => {
-    const user = userEvent.setup();
-    renderScreen();
-    const mode = screen.getByRole('combobox', { name: 'Calculator mode' });
-
-    await user.selectOptions(mode, 'tifr-gs-physics');
-    expect(screen.getAllByText(/GS 2024/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/GS 2027/).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: 'Sine' })).not.toBeInTheDocument();
-
-    await user.selectOptions(mode, 'jest-physics');
-    expect(screen.getAllByText(/JEST 2026/).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'Use Practice Calculator' })).toBeInTheDocument();
-  });
-
   it('switches between degree and radian modes', async () => {
     const user = userEvent.setup();
     renderScreen();
@@ -448,6 +332,11 @@ describe('CalculatorScreen', () => {
     await user.click(key('Add'));
     await user.click(key('Three'));
     await user.click(key('Equals'));
+
+    const historyMeta = document.querySelector('.v2-calculator-history-meta');
+    expect(historyMeta).not.toBeNull();
+    expect(historyMeta?.textContent).toMatch(/\d{1,2}:\d{2}/);
+    expect(historyMeta?.textContent).not.toMatch(/Practice|CSIR|GATE|TIFR|JEST/);
 
     await user.click(screen.getByRole('button', { name: 'Reuse expression 2+3' }));
     expect(screen.getByLabelText('Current expression: 2+3')).toBeInTheDocument();
