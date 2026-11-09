@@ -349,6 +349,14 @@ html[data-font-size='comfortable'] {
   --ws-on-accent: #1a1204;
 }
 
+[data-workspace='terms'] {
+  --ws-accent: #7cc8d8;
+  --ws-accent-strong: #b9eaf2;
+  --ws-soft: rgb(124 200 216 / 12%);
+  --ws-border: rgb(124 200 216 / 34%);
+  --ws-on-accent: #041418;
+}
+
 [data-workspace='practice'] {
   --ws-accent: #b49cff;
   --ws-accent-strong: #d5c9ff;
@@ -491,6 +499,14 @@ html[data-font-size='comfortable'] {
   --ws-accent-strong: #854d0e;
   --ws-soft: #fbf3dc;
   --ws-border: #e5d5a6;
+  --ws-on-accent: #ffffff;
+}
+
+[data-theme='light'] [data-workspace='terms'] {
+  --ws-accent: #0e7490;
+  --ws-accent-strong: #155e75;
+  --ws-soft: #e4f6fa;
+  --ws-border: #abdce8;
   --ws-on-accent: #ffffff;
 }
 

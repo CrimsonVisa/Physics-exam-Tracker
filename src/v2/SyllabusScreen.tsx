@@ -15,6 +15,7 @@ type SyllabusScreenProps = {
   initialFocusNodeId?: number | null;
   onOpenFlashcards?: (examCode: string, nodeId: number, nodeTitle: string) => void;
   onOpenFormulas?: (examCode: string, nodeCode: string, nodeTitle: string) => void;
+  onOpenTerms?: (examCode: string, nodeCode: string, nodeTitle: string) => void;
 };
 
 const PROGRESS_LABELS: Record<string, string> = {
@@ -37,6 +38,7 @@ export function SyllabusScreen({
   initialFocusNodeId = null,
   onOpenFlashcards,
   onOpenFormulas,
+  onOpenTerms,
 }: SyllabusScreenProps) {
   const initialExam = exams.find((exam) => exam.code === initialExamCode) ?? exams[0];
   const [examId, setExamId] = useState(String(initialExam?.id ?? ''));
@@ -254,30 +256,42 @@ export function SyllabusScreen({
               <span className="v2-status-badge v2-status-active">Official verified</span>{' '}
               {node.sourceReference}
             </p>
-            {(onOpenFlashcards || onOpenFormulas) && syllabus && node.nodeKind === 'topic' && (
-              <div className="v2-syllabus-topic-links">
-                {onOpenFlashcards ? (
-                  <button
-                    aria-label={`Open flashcards for ${node.title}`}
-                    className="secondary-button v2-syllabus-flashcard-link"
-                    onClick={() => onOpenFlashcards(syllabus.examCode, node.id, node.title)}
-                    type="button"
-                  >
-                    Flashcards for this topic
-                  </button>
-                ) : null}
-                {onOpenFormulas ? (
-                  <button
-                    aria-label={`Open formulas for ${node.title}`}
-                    className="secondary-button v2-syllabus-flashcard-link"
-                    onClick={() => onOpenFormulas(syllabus.examCode, node.code, node.title)}
-                    type="button"
-                  >
-                    Formulas for this topic
-                  </button>
-                ) : null}
-              </div>
-            )}
+            {(onOpenFlashcards || onOpenFormulas || onOpenTerms) &&
+              syllabus &&
+              node.nodeKind === 'topic' && (
+                <div className="v2-syllabus-topic-links">
+                  {onOpenFlashcards ? (
+                    <button
+                      aria-label={`Open flashcards for ${node.title}`}
+                      className="secondary-button v2-syllabus-flashcard-link"
+                      onClick={() => onOpenFlashcards(syllabus.examCode, node.id, node.title)}
+                      type="button"
+                    >
+                      Flashcards for this topic
+                    </button>
+                  ) : null}
+                  {onOpenFormulas ? (
+                    <button
+                      aria-label={`Open formulas for ${node.title}`}
+                      className="secondary-button v2-syllabus-flashcard-link"
+                      onClick={() => onOpenFormulas(syllabus.examCode, node.code, node.title)}
+                      type="button"
+                    >
+                      Formulas for this topic
+                    </button>
+                  ) : null}
+                  {onOpenTerms ? (
+                    <button
+                      aria-label={`Open terms for ${node.title}`}
+                      className="secondary-button v2-syllabus-flashcard-link"
+                      onClick={() => onOpenTerms(syllabus.examCode, node.code, node.title)}
+                      type="button"
+                    >
+                      Terms and units for this topic
+                    </button>
+                  ) : null}
+                </div>
+              )}
           </div>
           {node.nodeKind === 'topic' && (
             <label className="v2-field">

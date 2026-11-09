@@ -12,6 +12,7 @@ import './v2/global-search.css';
 import './v2/flashcards.css';
 import './v2/calculator.css';
 import './v2/formulas.css';
+import './v2/terms.css';
 
 applyTheme(getStoredTheme());
 applyAppearance(getStoredFontFamily(), getStoredFontSize());

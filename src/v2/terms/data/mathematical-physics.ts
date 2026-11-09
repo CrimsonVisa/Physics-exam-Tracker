@@ -1,0 +1,178 @@
+import type { TermEntry } from '../types';
+import { CSIR, GATE, JEST, TEXTBOOKS, TIFR, link, textbook } from './shared';
+
+const vectorCalculusLinks = () => [
+  link('csir-net-physics', 'implicit', [CSIR.divergence]),
+  link('gate-physics', 'implicit', [GATE.math]),
+  link('tifr-gs-physics', 'implicit', [TIFR.math]),
+  link('jest-physics', 'implicit', [JEST.vectorCalculus]),
+];
+
+const mathLinks = () => [
+  link('csir-net-physics', 'implicit', [CSIR.mathCore]),
+  link('gate-physics', 'implicit', [GATE.math]),
+  link('tifr-gs-physics', 'implicit', [TIFR.math]),
+  link('jest-physics', 'implicit', [JEST.math]),
+];
+
+export const MATHEMATICAL_PHYSICS_TERMS: TermEntry[] = [
+  {
+    id: 'mathematical-physics-gradient',
+    term: 'gradient',
+    kind: 'concept',
+    subject: 'mathematical-physics',
+    topic: 'Vector calculus',
+    definition:
+      'The vector derivative of a scalar field whose component in a direction gives the rate of change of the field in that direction.',
+    symbol: String.raw`\nabla f`,
+    symbolPlainText: 'grad f',
+    notationVariants: [String.raw`\operatorname{grad} f`, String.raw`\partial_i f`],
+    conditions: [
+      'The scalar field must be differentiable at the point considered.',
+      'The gradient has the dimensions of the field divided by length.',
+    ],
+    relatedTermIds: ['foundations-scalar', 'foundations-field', 'foundations-vector'],
+    syllabusLinks: vectorCalculusLinks(),
+    sources: [textbook(TEXTBOOKS.arfken, 'Ch. 3'), textbook(TEXTBOOKS.riley, 'Ch. 10')],
+    keywords: ['gradient', 'grad', 'scalar field', 'vector derivative'],
+  },
+  {
+    id: 'mathematical-physics-divergence',
+    term: 'divergence',
+    kind: 'concept',
+    subject: 'mathematical-physics',
+    topic: 'Vector calculus',
+    definition: 'The scalar measure of the outward flux density of a vector field at a point.',
+    symbol: String.raw`\nabla\cdot\mathbf{F}`,
+    symbolPlainText: 'div F',
+    notationVariants: [String.raw`\operatorname{div}\mathbf{F}`, String.raw`\partial_i F_i`],
+    conditions: [
+      'The vector field must be differentiable at the point considered.',
+      'The divergence has the dimensions of the field divided by length.',
+    ],
+    relatedTermIds: ['foundations-vector', 'foundations-field', 'mathematical-physics-gradient'],
+    relatedFormulaIds: ['mathematical-physics-divergence-theorem'],
+    syllabusLinks: vectorCalculusLinks(),
+    sources: [textbook(TEXTBOOKS.arfken, 'Ch. 3'), textbook(TEXTBOOKS.riley, 'Ch. 10')],
+    keywords: ['divergence', 'div', 'flux', 'vector field'],
+  },
+  {
+    id: 'mathematical-physics-curl',
+    term: 'curl',
+    aliases: ['rotor'],
+    kind: 'concept',
+    subject: 'mathematical-physics',
+    topic: 'Vector calculus',
+    definition: 'The vector measure of local rotation or circulation of a vector field.',
+    symbol: String.raw`\nabla\times\mathbf{F}`,
+    symbolPlainText: 'curl F',
+    notationVariants: [
+      String.raw`\operatorname{curl}\mathbf{F}`,
+      String.raw`\epsilon_{ijk}\partial_j F_k`,
+    ],
+    conditions: [
+      'The vector field must be differentiable at the point considered.',
+      'The curl has the dimensions of the field divided by length.',
+    ],
+    relatedTermIds: ['foundations-vector', 'mathematical-physics-divergence'],
+    syllabusLinks: vectorCalculusLinks(),
+    sources: [textbook(TEXTBOOKS.arfken, 'Ch. 3'), textbook(TEXTBOOKS.riley, 'Ch. 10')],
+    keywords: ['curl', 'rotor', 'circulation', 'rotation', 'vector field'],
+  },
+  {
+    id: 'mathematical-physics-laplacian',
+    term: 'Laplacian',
+    kind: 'concept',
+    subject: 'mathematical-physics',
+    topic: 'Vector calculus',
+    definition:
+      'The divergence of the gradient of a scalar field, or the corresponding second spatial derivative of a vector field.',
+    symbol: String.raw`\nabla^2 f`,
+    symbolPlainText: 'laplacian f',
+    notationVariants: [String.raw`\Delta f`, String.raw`\partial_i\partial_i f`],
+    conditions: [
+      'The field must be twice differentiable at the point considered.',
+      'The Laplacian has the dimensions of the field divided by length squared.',
+    ],
+    relatedTermIds: ['mathematical-physics-gradient', 'mathematical-physics-divergence'],
+    relatedFormulaIds: ['mathematical-physics-green-function-poisson'],
+    syllabusLinks: vectorCalculusLinks(),
+    sources: [textbook(TEXTBOOKS.arfken, 'Ch. 3'), textbook(TEXTBOOKS.riley, 'Ch. 10')],
+    keywords: ['laplacian', 'second derivative', 'scalar field', 'vector field'],
+  },
+  {
+    id: 'mathematical-physics-eigenvalue',
+    term: 'eigenvalue',
+    kind: 'concept',
+    subject: 'mathematical-physics',
+    topic: 'Linear algebra',
+    definition:
+      'A scalar for which a linear operator maps a nonzero vector to a scalar multiple of itself.',
+    symbol: String.raw`A\psi=\lambda\psi`,
+    symbolPlainText: 'A psi = lambda psi',
+    conditions: [
+      'The eigenvector must be nonzero.',
+      'The operator and vector space must be specified; the spectrum may be discrete or continuous.',
+    ],
+    relatedTermIds: ['quantum-mechanics-eigenstate', 'mathematical-physics-orthogonal-functions'],
+    syllabusLinks: [
+      link('csir-net-physics', 'explicit', [CSIR.eigenvalue]),
+      link('gate-physics', 'implicit', [GATE.math]),
+      link('tifr-gs-physics', 'implicit', [TIFR.math]),
+      link('jest-physics', 'implicit', [JEST.math]),
+    ],
+    sources: [textbook(TEXTBOOKS.arfken, 'Ch. 6'), textbook(TEXTBOOKS.riley, 'Ch. 8')],
+    keywords: ['eigenvalue', 'eigenvector', 'linear operator', 'spectrum'],
+  },
+  {
+    id: 'mathematical-physics-fourier-transform',
+    term: 'Fourier transform',
+    kind: 'concept',
+    subject: 'mathematical-physics',
+    topic: 'Integral transforms',
+    definition:
+      'An integral transform that represents a function as a continuous superposition of complex exponential components.',
+    symbol: String.raw`F(k)=\frac{1}{\sqrt{2\pi}}\int_{-\infty}^{\infty}f(x)e^{-ikx}\,dx`,
+    symbolPlainText: 'F(k) = (1/sqrt(2 pi)) integral f(x) exp(-i k x) dx',
+    notationVariants: [String.raw`\mathcal{F}\{f\}(k)`, String.raw`\hat f(k)`],
+    conditions: [
+      'The unitary convention shown uses the same 1/sqrt(2 pi) factor for the forward and inverse transforms.',
+      'When x is position, k is the angular wavenumber; when x is time, k is the angular frequency.',
+    ],
+    relatedTermIds: ['mathematical-physics-orthogonal-functions'],
+    relatedFormulaIds: ['mathematical-physics-fourier-transform'],
+    syllabusLinks: [
+      link('csir-net-physics', 'explicit', [CSIR.fourier]),
+      link('gate-physics', 'implicit', [GATE.fourierAnalysis]),
+      link('tifr-gs-physics', 'implicit', [TIFR.math]),
+      link('jest-physics', 'explicit', [JEST.fourierTransforms]),
+    ],
+    sources: [textbook(TEXTBOOKS.arfken, 'Ch. 20'), textbook(TEXTBOOKS.riley, 'Ch. 13')],
+    keywords: [
+      'Fourier transform',
+      'integral transform',
+      'spectrum',
+      'angular wavenumber',
+      'angular frequency',
+    ],
+  },
+  {
+    id: 'mathematical-physics-orthogonal-functions',
+    term: 'orthogonal functions',
+    kind: 'concept',
+    subject: 'mathematical-physics',
+    topic: 'Function spaces',
+    definition:
+      'Functions whose inner product vanishes when they are distinct and whose norm is nonzero.',
+    symbol: String.raw`\langle f_m,f_n\rangle=0\quad(m\ne n)`,
+    symbolPlainText: '<f_m, f_n> = 0 for m != n',
+    conditions: [
+      'The inner product and weight function must be specified.',
+      'Orthogonality is defined on a stated interval or domain.',
+    ],
+    relatedTermIds: ['mathematical-physics-eigenvalue', 'mathematical-physics-fourier-transform'],
+    syllabusLinks: mathLinks(),
+    sources: [textbook(TEXTBOOKS.arfken, 'Ch. 8'), textbook(TEXTBOOKS.riley, 'Ch. 17')],
+    keywords: ['orthogonal functions', 'inner product', 'basis', 'completeness'],
+  },
+];

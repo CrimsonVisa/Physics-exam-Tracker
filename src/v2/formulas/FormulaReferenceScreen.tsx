@@ -23,6 +23,7 @@ type FormulaReferenceScreenProps = {
   initialNodeTitle?: string | null;
   initialQuery?: string | null;
   onOpenSyllabus?: (examCode: ExamCode, nodeCode: string, nodeTitle: string) => void;
+  onOpenTerms?: (formulaId: string, formulaTitle: string) => void;
 };
 
 const EXAM_CODES = Object.keys(EXAM_META) as ExamCode[];
@@ -53,6 +54,7 @@ export function FormulaReferenceScreen({
   initialNodeTitle = null,
   initialQuery = null,
   onOpenSyllabus,
+  onOpenTerms,
 }: FormulaReferenceScreenProps) {
   const [query, setQuery] = useState(initialQuery ?? '');
   const [examCode, setExamCode] = useState<ExamCode | 'all'>(() =>
@@ -151,6 +153,7 @@ export function FormulaReferenceScreen({
         onBack={backToList}
         onOpenRelated={openFormula}
         onOpenSyllabus={onOpenSyllabus}
+        onOpenTerms={onOpenTerms}
       />
     );
   }

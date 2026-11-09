@@ -27,6 +27,10 @@ export const CSIR = {
     'csir-part-b-advanced-mathematical-methods-of-physics',
     'Mathematical Methods of Physics',
   ),
+  eigenvalue: node(
+    'csir-part-a-core-mathematical-methods-of-physics-t004-eigenvalues-and-eigenvectors',
+    'Eigenvalues and eigenvectors',
+  ),
   classicalCore: node('csir-part-a-core-classical-mechanics', 'Classical Mechanics'),
   classicalAdvanced: node('csir-part-b-advanced-classical-mechanics', 'Classical Mechanics'),
   emCore: node('csir-part-a-core-electromagnetic-theory', 'Electromagnetic Theory'),

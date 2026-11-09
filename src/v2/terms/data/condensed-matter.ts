@@ -1,0 +1,187 @@
+import type { TermEntry } from '../types';
+import { CSIR, GATE, TEXTBOOKS, TIFR, link, textbook } from './shared';
+
+const condensedLinks = () => [
+  link('csir-net-physics', 'implicit', [CSIR.condensed]),
+  link('gate-physics', 'implicit', [GATE.solidState]),
+  link(
+    'tifr-gs-physics',
+    'uncertain',
+    [TIFR.modern],
+    'TIFR lists Modern Physics broadly; this is not claimed as an explicit TIFR topic.',
+  ),
+];
+
+export const CONDENSED_MATTER_TERMS: TermEntry[] = [
+  {
+    id: 'condensed-matter-lattice',
+    term: 'crystal lattice',
+    aliases: ['lattice'],
+    kind: 'concept',
+    subject: 'condensed-matter',
+    topic: 'Crystal structure',
+    definition:
+      'A periodic array of points in space such that the arrangement around every point is identical.',
+    conditions: [
+      'A lattice is a geometrical abstraction; the crystal structure is the lattice plus the basis.',
+      'The lattice vectors must be linearly independent in the dimension of the crystal.',
+    ],
+    relatedTermIds: ['condensed-matter-reciprocal-lattice', 'condensed-matter-brillouin-zone'],
+    relatedFormulaIds: ['condensed-matter-bragg-law'],
+    syllabusLinks: condensedLinks(),
+    sources: [textbook(TEXTBOOKS.kittel, 'Ch. 1'), textbook(TEXTBOOKS.ashcroftMermin, 'Ch. 4')],
+    keywords: ['crystal lattice', 'Bravais lattice', 'basis', 'periodic structure'],
+  },
+  {
+    id: 'condensed-matter-reciprocal-lattice',
+    term: 'reciprocal lattice',
+    kind: 'concept',
+    subject: 'condensed-matter',
+    topic: 'Crystal structure',
+    definition:
+      'The lattice of wavevectors whose plane waves have the periodicity of a given direct crystal lattice.',
+    symbol: String.raw`\mathbf{G}`,
+    symbolPlainText: 'G',
+    conditions: [
+      'Reciprocal lattice vectors satisfy G dot R = 2 pi times an integer for every direct lattice vector R.',
+      'The reciprocal lattice depends on the direct lattice and the chosen convention for the 2 pi factor.',
+    ],
+    relatedTermIds: ['condensed-matter-lattice', 'condensed-matter-brillouin-zone'],
+    syllabusLinks: condensedLinks(),
+    sources: [textbook(TEXTBOOKS.kittel, 'Ch. 2'), textbook(TEXTBOOKS.ashcroftMermin, 'Ch. 5')],
+    keywords: ['reciprocal lattice', 'wavevector', 'Fourier space', 'G'],
+  },
+  {
+    id: 'condensed-matter-brillouin-zone',
+    term: 'Brillouin zone',
+    kind: 'concept',
+    subject: 'condensed-matter',
+    topic: 'Crystal structure',
+    definition:
+      'A primitive cell of the reciprocal lattice, conventionally chosen as the Wigner-Seitz cell around the origin.',
+    conditions: [
+      'The first Brillouin zone contains all distinct wavevectors modulo a reciprocal lattice vector.',
+      'Zone boundaries occur where Bragg reflection conditions are satisfied.',
+    ],
+    relatedTermIds: ['condensed-matter-reciprocal-lattice', 'condensed-matter-phonon'],
+    syllabusLinks: condensedLinks(),
+    sources: [textbook(TEXTBOOKS.kittel, 'Ch. 2'), textbook(TEXTBOOKS.ashcroftMermin, 'Ch. 5')],
+    keywords: ['Brillouin zone', 'Wigner-Seitz cell', 'reciprocal lattice', 'zone boundary'],
+  },
+  {
+    id: 'condensed-matter-fermi-energy',
+    term: 'Fermi energy',
+    kind: 'quantity',
+    subject: 'condensed-matter',
+    topic: 'Free-electron theory',
+    definition:
+      'The zero-temperature chemical potential of an ideal Fermi gas, separating occupied from unoccupied single-particle states.',
+    symbol: String.raw`E_F`,
+    symbolPlainText: 'E_F',
+    siUnit: 'J',
+    siUnitLatex: String.raw`\mathrm{J}`,
+    dimensions: 'M L^2 T^-2',
+    dimensionFormula: String.raw`[E_F]=M L^{2} T^{-2}`,
+    conditions: [
+      'The Fermi energy is defined at zero temperature.',
+      'In a metal it is measured relative to the band edge or the bottom of the relevant band.',
+    ],
+    relatedTermIds: ['thermodynamics-chemical-potential', 'condensed-matter-density-of-states'],
+    relatedFormulaIds: ['condensed-matter-fermi-energy-3d'],
+    syllabusLinks: [
+      link('csir-net-physics', 'implicit', [CSIR.freeElectron]),
+      link('gate-physics', 'implicit', [GATE.freeElectron]),
+      link(
+        'tifr-gs-physics',
+        'uncertain',
+        [TIFR.modern],
+        'TIFR lists Modern Physics broadly; this is not claimed as an explicit TIFR topic.',
+      ),
+    ],
+    sources: [textbook(TEXTBOOKS.kittel, 'Ch. 6'), textbook(TEXTBOOKS.ashcroftMermin, 'Ch. 2')],
+    keywords: ['Fermi energy', 'Fermi gas', 'chemical potential', 'zero temperature'],
+  },
+  {
+    id: 'condensed-matter-density-of-states',
+    term: 'density of states',
+    kind: 'quantity',
+    subject: 'condensed-matter',
+    topic: 'Free-electron theory',
+    definition:
+      'The number of available quantum states per unit energy at a given energy; volume-normalized variants are also used.',
+    symbol: String.raw`g(E)`,
+    symbolPlainText: 'g(E)',
+    siUnit: 'J^-1',
+    siUnitLatex: String.raw`\mathrm{J}^{-1}`,
+    dimensions: 'M^-1 L^-2 T^2',
+    dimensionFormula: String.raw`[g(E)]=M^{-1} L^{-2} T^{2}`,
+    conditions: [
+      'The normalization (per unit volume, per spin, or total) must be stated; the displayed unit is for states per unit energy.',
+      'A density per unit energy and volume additionally carries dimensions of inverse volume.',
+      'The density of states depends on dimensionality and dispersion relation.',
+    ],
+    relatedTermIds: ['condensed-matter-fermi-energy', 'condensed-matter-phonon'],
+    syllabusLinks: condensedLinks(),
+    sources: [textbook(TEXTBOOKS.kittel, 'Ch. 6'), textbook(TEXTBOOKS.ashcroftMermin, 'Ch. 2')],
+    keywords: ['density of states', 'DOS', 'states per energy', 'dimensionality'],
+  },
+  {
+    id: 'condensed-matter-phonon',
+    term: 'phonon',
+    kind: 'concept',
+    subject: 'condensed-matter',
+    topic: 'Lattice vibrations',
+    definition:
+      'A quantized normal mode of lattice vibration carrying energy hbar omega and crystal momentum hbar k.',
+    conditions: [
+      'Phonons are bosonic quasiparticles.',
+      'The acoustic and optical branches depend on the lattice basis and dimensionality.',
+    ],
+    relatedTermIds: ['condensed-matter-brillouin-zone', 'condensed-matter-density-of-states'],
+    syllabusLinks: condensedLinks(),
+    sources: [textbook(TEXTBOOKS.kittel, 'Ch. 4'), textbook(TEXTBOOKS.ashcroftMermin, 'Ch. 22')],
+    keywords: [
+      'phonon',
+      'lattice vibration',
+      'quantized mode',
+      'acoustic branch',
+      'optical branch',
+    ],
+  },
+  {
+    id: 'condensed-matter-effective-mass',
+    term: 'effective mass',
+    kind: 'quantity',
+    subject: 'condensed-matter',
+    topic: 'Band theory',
+    definition:
+      'The mass parameter that describes the curvature of a band dispersion and the response of a carrier to external forces.',
+    symbol: String.raw`m^*`,
+    symbolPlainText: 'm_star',
+    siUnit: 'kg',
+    siUnitLatex: String.raw`\mathrm{kg}`,
+    dimensions: 'M',
+    dimensionFormula: String.raw`[m^*]=M`,
+    conditions: [
+      'The effective mass may be a scalar or a tensor depending on the band anisotropy.',
+      'It can differ from the free-electron mass and may be energy-dependent.',
+    ],
+    relatedTermIds: ['classical-mechanics-mass', 'condensed-matter-fermi-energy'],
+    relatedFormulaIds: ['condensed-matter-drude-conductivity'],
+    syllabusLinks: [
+      link('csir-net-physics', 'implicit', [CSIR.freeElectron]),
+      link('gate-physics', 'explicit', [GATE.conductivity]),
+      link(
+        'tifr-gs-physics',
+        'uncertain',
+        [TIFR.modern],
+        'TIFR lists Modern Physics broadly; this is not claimed as an explicit TIFR topic.',
+      ),
+    ],
+    sources: [
+      textbook(TEXTBOOKS.kittel, 'Ch. 7'),
+      textbook(TEXTBOOKS.ashcroftMermin, 'Appendix E'),
+    ],
+    keywords: ['effective mass', 'band curvature', 'carrier', 'anisotropy'],
+  },
+];

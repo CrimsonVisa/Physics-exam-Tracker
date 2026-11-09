@@ -44,6 +44,12 @@ const FormulaReferenceScreen = lazy(() =>
   })),
 );
 
+const TermReferenceScreen = lazy(() =>
+  import('./terms/TermReferenceScreen').then((module) => ({
+    default: module.TermReferenceScreen,
+  })),
+);
+
 type V2AppProps = {
   today?: string;
 };
@@ -63,6 +69,8 @@ function viewWorkspace(view: V2View): string {
       return 'calculator';
     case 'formulas':
       return 'formulas';
+    case 'terms':
+      return 'terms';
     case 'syllabus':
       return 'syllabus';
     case 'practice':
@@ -164,6 +172,21 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
             : { kind: current.kind, examCode: null };
         }
         if (current.kind === 'formulas') {
+          if (
+            current.examCode === null ||
+            current.examCode === undefined ||
+            next.exams.some((exam) => exam.code === current.examCode)
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            examCode: null,
+            nodeCode: null,
+            nodeTitle: null,
+          };
+        }
+        if (current.kind === 'terms') {
           if (
             current.examCode === null ||
             current.examCode === undefined ||
@@ -364,6 +387,9 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
           onOpenFormulas={(examCode, nodeCode, nodeTitle) =>
             setView({ kind: 'formulas', examCode, nodeCode, nodeTitle })
           }
+          onOpenTerms={(examCode, nodeCode, nodeTitle) =>
+            setView({ kind: 'terms', examCode, nodeCode, nodeTitle })
+          }
         />
       );
     }
@@ -413,6 +439,50 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
               key={`${view.examCode ?? 'combined'}:${view.formulaId ?? ''}:${
                 view.nodeCode ?? ''
               }:${view.subject ?? ''}:${view.topic ?? ''}:${view.query ?? ''}`}
+              onOpenSyllabus={(examCode, nodeCode) =>
+                setView({ kind: 'syllabus', examCode, focusNodeCode: nodeCode })
+              }
+              onOpenTerms={(formulaId, formulaTitle) =>
+                setView({ kind: 'terms', formulaId, formulaTitle })
+              }
+            />
+          </Suspense>
+        </FormulaRouteErrorBoundary>
+      );
+    }
+
+    if (view.kind === 'terms') {
+      return (
+        <FormulaRouteErrorBoundary
+          message="The terms and units reference could not be loaded. This does not affect your saved study data."
+          onBack={() => setView({ kind: 'dashboard' })}
+          title="Terms and units unavailable"
+        >
+          <Suspense
+            fallback={
+              <div className="page-container" role="status">
+                <p className="v2-empty-copy">Loading terms and units…</p>
+              </div>
+            }
+          >
+            <TermReferenceScreen
+              exams={currentStatus.exams}
+              initialExamCode={view.examCode ?? null}
+              initialFormulaId={view.formulaId ?? null}
+              initialFormulaTitle={view.formulaTitle ?? null}
+              initialKind={view.kindFilter ?? null}
+              initialNodeCode={view.nodeCode ?? null}
+              initialNodeTitle={view.nodeTitle ?? null}
+              initialQuery={view.query ?? null}
+              initialSubject={view.subject ?? null}
+              initialTermId={view.termId ?? null}
+              initialTopic={view.topic ?? null}
+              key={`${view.examCode ?? 'combined'}:${view.termId ?? ''}:${
+                view.formulaId ?? ''
+              }:${view.nodeCode ?? ''}:${view.subject ?? ''}:${view.topic ?? ''}:${
+                view.kindFilter ?? ''
+              }:${view.query ?? ''}`}
+              onOpenFormula={(formulaId) => setView({ kind: 'formulas', formulaId })}
               onOpenSyllabus={(examCode, nodeCode) =>
                 setView({ kind: 'syllabus', examCode, focusNodeCode: nodeCode })
               }
@@ -472,6 +542,7 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
           onBack={() => setView({ kind: 'dashboard' })}
           onOpenConcepts={(examCode) => setView({ kind: 'concepts', examCode })}
           onOpenFormulas={(examCode) => setView({ kind: 'formulas', examCode })}
+          onOpenTerms={(examCode) => setView({ kind: 'terms', examCode })}
           onOpenSyllabus={(examCode) => setView({ kind: 'syllabus', examCode })}
           today={today}
         />

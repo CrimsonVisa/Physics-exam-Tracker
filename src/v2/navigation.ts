@@ -14,6 +14,19 @@ export type V2View =
     }
   | { kind: 'calculator' }
   | {
+      kind: 'terms';
+      examCode?: string | null;
+      termId?: string | null;
+      subject?: string | null;
+      topic?: string | null;
+      kindFilter?: string | null;
+      nodeCode?: string | null;
+      nodeTitle?: string | null;
+      formulaId?: string | null;
+      formulaTitle?: string | null;
+      query?: string | null;
+    }
+  | {
       kind: 'formulas';
       examCode?: string | null;
       formulaId?: string | null;

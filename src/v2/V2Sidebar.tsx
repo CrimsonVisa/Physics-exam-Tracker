@@ -84,6 +84,13 @@ const STUDY_NAV_ITEMS: V2NavItem[] = [
     view: { kind: 'formulas' },
   },
   {
+    key: 'terms',
+    label: 'Terms & Units',
+    ariaLabel: 'Physics terms and SI units',
+    icon: 'terms',
+    view: { kind: 'terms' },
+  },
+  {
     key: 'planner',
     label: 'Planner',
     ariaLabel: 'Planner and calendar',

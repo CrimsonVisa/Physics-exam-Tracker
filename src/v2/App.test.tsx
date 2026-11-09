@@ -559,6 +559,60 @@ describe('V2 application shell', () => {
     expect(screen.getByText('47 formulas')).toBeInTheDocument();
   });
 
+  it('navigates to the terms and units reference from the sidebar', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Physics terms and SI units' }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Physics Terms & SI Units' }),
+    ).toBeInTheDocument();
+    expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'terms');
+    expect(screen.getByText('123 terms')).toBeInTheDocument();
+  });
+
+  it('opens the terms reference filtered to an examination workspace', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(within(card('gate-physics')).getByRole('button', { name: 'Open workspace' }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Browse terms and units for this exam',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Physics Terms & SI Units' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Examination filter')).toHaveValue('gate-physics');
+  });
+
+  it('round-trips from a formula to related terms and back', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Formula reference' }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: "Open formula Newton's second law (momentum form)",
+      }),
+    );
+    await user.click(await screen.findByRole('button', { name: 'Browse related terms and units' }));
+
+    expect(await screen.findByText(/Showing terms related to/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Open term linear momentum' }));
+    await user.click(screen.getByRole('button', { name: "Newton's second law (momentum form)" }));
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: "Newton's second law (momentum form)",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it('preserves calculator session state across workspace navigation', async () => {
     const user = userEvent.setup();
     await renderHealthy();

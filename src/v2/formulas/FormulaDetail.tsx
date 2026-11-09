@@ -18,6 +18,7 @@ type FormulaDetailProps = {
   onBack: () => void;
   onOpenRelated: (formulaId: string) => void;
   onOpenSyllabus?: (examCode: ExamCode, nodeCode: string, nodeTitle: string) => void;
+  onOpenTerms?: (formulaId: string, formulaTitle: string) => void;
   headingRef?: RefObject<HTMLHeadingElement | null>;
 };
 
@@ -36,6 +37,7 @@ export function FormulaDetail({
   onBack,
   onOpenRelated,
   onOpenSyllabus,
+  onOpenTerms,
   headingRef,
 }: FormulaDetailProps) {
   const relatedEntries = (entry.relatedIds ?? [])
@@ -231,6 +233,22 @@ export function FormulaDetail({
               </div>
             )}
           </section>
+
+          {onOpenTerms ? (
+            <section
+              className="v2-concept-card v2-formula-detail-card"
+              aria-labelledby="formula-terms-heading"
+            >
+              <h2 id="formula-terms-heading">Related terminology</h2>
+              <button
+                className="secondary-button v2-formula-related-button"
+                onClick={() => onOpenTerms(entry.id, entry.title)}
+                type="button"
+              >
+                Browse related terms and units
+              </button>
+            </section>
+          ) : null}
 
           <section
             className="v2-concept-card v2-formula-detail-card"

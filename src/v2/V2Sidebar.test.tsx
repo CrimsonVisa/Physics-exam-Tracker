@@ -84,6 +84,7 @@ describe('V2Sidebar', () => {
       'Flashcards',
       'Calculator',
       'Formulas',
+      'Terms & Units',
       'Planner',
       'Revision',
       'Analytics',
@@ -104,7 +105,7 @@ describe('V2Sidebar', () => {
       'true',
     );
     // The shared stylesheet hides icons by default; the V2 shell renders them.
-    expect(document.querySelectorAll('.nav-icon')).toHaveLength(16);
+    expect(document.querySelectorAll('.nav-icon')).toHaveLength(17);
 
     // Expanded navigation relies on the visible label, not a title tooltip.
     expect(screen.getByRole('button', { name: 'Practice systems' })).not.toHaveAttribute('title');
@@ -136,6 +137,9 @@ describe('V2Sidebar', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Formula reference' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'formulas' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Physics terms and SI units' }));
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'terms' });
 
     await userEvent.click(screen.getByRole('button', { name: 'GATE Physics (PH)' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'exam', examCode: 'gate-physics' });

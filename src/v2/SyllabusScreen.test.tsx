@@ -208,6 +208,18 @@ describe('Syllabus deep links', () => {
     expect(onOpenFormulas).toHaveBeenCalledWith('csir-net-physics', 'T1', 'Kinematics');
   });
 
+  it('navigates to terms for a topic using the stable node code', async () => {
+    const user = userEvent.setup();
+    const onOpenTerms = vi.fn();
+    mockedSyllabus.mockResolvedValue(CONFIGURED);
+    render(
+      <SyllabusScreen exams={EXAMS} initialExamCode="csir-net-physics" onOpenTerms={onOpenTerms} />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Open terms for Kinematics' }));
+    expect(onOpenTerms).toHaveBeenCalledWith('csir-net-physics', 'T1', 'Kinematics');
+  });
+
   it('resolves a syllabus deep link by stable node code', async () => {
     mockedSyllabus.mockResolvedValue(CONFIGURED);
     render(

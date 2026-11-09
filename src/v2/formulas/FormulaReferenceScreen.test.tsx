@@ -197,6 +197,22 @@ describe('FormulaReferenceScreen', () => {
     );
   });
 
+  it('opens related terminology from a formula detail', async () => {
+    const user = userEvent.setup();
+    const onOpenTerms = vi.fn();
+    renderScreen({ onOpenTerms });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Open formula Maxwell-Faraday law (differential form)' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Browse related terms and units' }));
+
+    expect(onOpenTerms).toHaveBeenCalledWith(
+      'electromagnetism-maxwell-faraday',
+      'Maxwell-Faraday law (differential form)',
+    );
+  });
+
   it('filters by a syllabus node and clears the syllabus filter', async () => {
     const user = userEvent.setup();
     renderScreen({

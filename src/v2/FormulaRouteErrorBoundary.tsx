@@ -3,6 +3,8 @@ import { Component, type ReactNode } from 'react';
 type FormulaRouteErrorBoundaryProps = {
   children: ReactNode;
   onBack: () => void;
+  title?: string;
+  message?: string;
 };
 
 type FormulaRouteErrorBoundaryState = {
@@ -27,9 +29,10 @@ export class FormulaRouteErrorBoundary extends Component<
     return (
       <div className="page-container">
         <section className="v2-empty-panel" role="alert">
-          <h1>Formula reference unavailable</h1>
+          <h1>{this.props.title ?? 'Formula reference unavailable'}</h1>
           <p>
-            The formula reference could not be loaded. This does not affect your saved study data.
+            {this.props.message ??
+              'The formula reference could not be loaded. This does not affect your saved study data.'}
           </p>
           <button className="secondary-button" onClick={this.props.onBack} type="button">
             Return to dashboard
