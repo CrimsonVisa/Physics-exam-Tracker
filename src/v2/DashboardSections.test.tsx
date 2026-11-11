@@ -34,6 +34,33 @@ import {
   TodayOverviewSection,
   TodayPlanSection,
 } from './DashboardSections';
+import { StudySection } from './StudySection';
+import { TimerProvider } from './timer/TimerProvider';
+import { useV2Timer } from './timer/timerContext';
+
+function MutateTimerButton() {
+  const { runMutation } = useV2Timer();
+  return (
+    <button
+      onClick={() => void runMutation(() => Promise.resolve(timerSnapshot({ status: 'paused' })))}
+      type="button"
+    >
+      Mutate timer
+    </button>
+  );
+}
+
+function QuickStartHarness(props: {
+  exams: V2ExamSummary[];
+  sessions: V2StudySession[];
+  today: string;
+}) {
+  return (
+    <TimerProvider>
+      <QuickStartSection {...props} />
+    </TimerProvider>
+  );
+}
 
 vi.mock('./api', () => ({
   getV2Timer: vi.fn(),
@@ -61,6 +88,7 @@ import * as api from './api';
 
 const mockedTimer = vi.mocked(api.getV2Timer);
 const mockedStartTimer = vi.mocked(api.startV2Timer);
+const mockedPause = vi.mocked(api.pauseV2Timer);
 const mockedSaveQuickStart = vi.mocked(api.saveV2QuickStartConfig);
 const mockedDeleteQuickStart = vi.mocked(api.deleteV2QuickStartConfig);
 const mockedQuickStartList = vi.mocked(api.listV2QuickStartConfigs);
@@ -937,13 +965,48 @@ describe('RecentlyStudiedSection', () => {
 });
 
 describe('QuickStartSection', () => {
+  it('uses the shared provider snapshot and reflects timer mutations without remounting', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue(timerSnapshot({ status: 'running' }));
+    render(
+      <TimerProvider>
+        <QuickStartSection exams={[]} sessions={[]} today={TODAY} />
+        <MutateTimerButton />
+      </TimerProvider>,
+    );
+
+    expect(await screen.findByText('Timer running')).toBeInTheDocument();
+    expect(mockedTimer).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Mutate timer' }));
+    expect(await screen.findByText('Timer paused')).toBeInTheDocument();
+    expect(mockedTimer).toHaveBeenCalledTimes(1);
+  });
+
+  it('reflects a StudySection pause without remounting Quick Start', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue(timerSnapshot({ status: 'running' }));
+    mockedPause.mockResolvedValue(timerSnapshot({ status: 'paused' }));
+
+    render(
+      <TimerProvider>
+        <QuickStartSection exams={[]} sessions={[]} today={TODAY} />
+        <StudySection exams={[]} today={TODAY} />
+      </TimerProvider>,
+    );
+
+    expect(await screen.findByText('Timer running')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Pause timer' }));
+    expect(await screen.findByText('Timer paused')).toBeInTheDocument();
+  });
+
   it('shows and starts the last-used configuration from recorded sessions', async () => {
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
     const user = userEvent.setup();
     mockedQuickStartList.mockResolvedValue([]);
     mockedStartTimer.mockResolvedValue(timerSnapshot({ status: 'running' }));
     render(
-      <QuickStartSection
+      <QuickStartHarness
         exams={[
           {
             id: 2,
@@ -1001,7 +1064,7 @@ describe('QuickStartSection', () => {
     const user = userEvent.setup();
     mockedStartTimer.mockResolvedValue(timerSnapshot({ status: 'running' }));
     render(
-      <QuickStartSection
+      <QuickStartHarness
         exams={[
           {
             id: 2,
@@ -1034,7 +1097,7 @@ describe('QuickStartSection', () => {
   });
 
   it('explains how to restore the timer when the study section is hidden', async () => {
-    render(<QuickStartSection exams={[]} sessions={[]} today={TODAY} />);
+    render(<QuickStartHarness exams={[]} sessions={[]} today={TODAY} />);
     await screen.findByText('Timer idle');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Open the study timer' }));
     expect(screen.getByRole('status').textContent).toMatch(/study timer section is hidden/u);
@@ -1047,7 +1110,7 @@ describe('QuickStartSection', () => {
     document.body.appendChild(heading);
     const user = userEvent.setup();
     try {
-      render(<QuickStartSection exams={[]} sessions={[]} today={TODAY} />);
+      render(<QuickStartHarness exams={[]} sessions={[]} today={TODAY} />);
       await screen.findByText('Timer idle');
       await user.click(screen.getByRole('button', { name: 'Open the study timer' }));
       await user.click(screen.getByRole('button', { name: 'Start focus session' }));
@@ -1080,7 +1143,7 @@ describe('QuickStartSection', () => {
         }),
     );
     render(
-      <QuickStartSection
+      <QuickStartHarness
         exams={[
           {
             id: 2,
@@ -1139,7 +1202,7 @@ describe('QuickStartSection', () => {
         ],
       ),
     );
-    render(<QuickStartSection exams={[]} sessions={[]} today={TODAY} />);
+    render(<QuickStartHarness exams={[]} sessions={[]} today={TODAY} />);
     await screen.findByText('Timer running');
     expect(screen.queryByRole('button', { name: 'Start last used configuration' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Start focus session' })).toBeNull();
@@ -1151,7 +1214,7 @@ describe('QuickStartSection', () => {
   it('offers resume for a paused timer without starting another session', async () => {
     const user = userEvent.setup();
     mockedTimer.mockResolvedValue(timerSnapshot({ status: 'paused' }));
-    render(<QuickStartSection exams={[]} sessions={[]} today={TODAY} />);
+    render(<QuickStartHarness exams={[]} sessions={[]} today={TODAY} />);
     await screen.findByText('Timer paused');
     expect(screen.queryByRole('button', { name: 'Start focus session' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Resume timer' }));
@@ -1167,7 +1230,7 @@ describe('QuickStartSection', () => {
         recoveryExcludedMs: 90_000,
       }),
     );
-    render(<QuickStartSection exams={[]} sessions={[]} today={TODAY} />);
+    render(<QuickStartHarness exams={[]} sessions={[]} today={TODAY} />);
     expect(
       await screen.findByText(/Recovery excluded .* of unverified time after a restart/u),
     ).toBeInTheDocument();
@@ -1177,7 +1240,7 @@ describe('QuickStartSection', () => {
   it('rejects invalid builder allocations before any backend command runs', async () => {
     const user = userEvent.setup();
     render(
-      <QuickStartSection
+      <QuickStartHarness
         exams={[
           {
             id: 2,
@@ -1208,7 +1271,7 @@ describe('QuickStartSection', () => {
     const user = userEvent.setup();
     mockedSyllabus.mockResolvedValue(syllabusScaffold(2, ['Electromagnetism']));
     mockedQuickStartList.mockResolvedValue([]);
-    render(<QuickStartSection exams={EXAMS} sessions={[]} today={TODAY} />);
+    render(<QuickStartHarness exams={EXAMS} sessions={[]} today={TODAY} />);
     await screen.findByText('Timer idle');
     await user.click(screen.getByRole('button', { name: 'Plan a 25 minute session' }));
     await user.click(screen.getByRole('button', { name: 'Add exam/topic allocation' }));
@@ -1271,7 +1334,7 @@ describe('QuickStartSection', () => {
         ],
       },
     ]);
-    render(<QuickStartSection exams={EXAMS} sessions={[]} today={TODAY} />);
+    render(<QuickStartHarness exams={EXAMS} sessions={[]} today={TODAY} />);
     expect(await screen.findByText('Morning drill')).toBeInTheDocument();
     expect(
       screen.getAllByText('GATE PH · Electromagnetism · 45 min').length,
@@ -1327,7 +1390,7 @@ describe('QuickStartSection', () => {
       },
     ]);
     render(
-      <QuickStartSection
+      <QuickStartHarness
         exams={[
           {
             id: 2,
@@ -1375,7 +1438,7 @@ describe('QuickStartSection', () => {
     mockedQuickStartList.mockResolvedValue([]);
     mockedStartTimer.mockResolvedValue(timerSnapshot({ status: 'running' }));
     render(
-      <QuickStartSection
+      <QuickStartHarness
         exams={[
           {
             id: 1,

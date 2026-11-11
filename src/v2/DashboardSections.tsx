@@ -6,7 +6,6 @@ import {
   deleteV2QuickStartConfig,
   getV2ExamSyllabus,
   getV2PracticeAnalytics,
-  getV2Timer,
   listV2QuickStartConfigs,
   resumeV2Timer,
   saveV2QuickStartConfig,
@@ -17,7 +16,6 @@ import {
   type V2PracticeAnalytics,
   type V2QuickStartConfig,
   type V2StudySession,
-  type V2TimerSnapshot,
 } from './api';
 import {
   latestMock,
@@ -28,6 +26,7 @@ import {
   type DailyDashboardData,
 } from './dailyDashboardData';
 import type { V2View } from './navigation';
+import { useV2Timer } from './timer/timerContext';
 
 type Navigate = (view: V2View) => void;
 
@@ -808,8 +807,7 @@ export function QuickStartSection({
   sessions: V2StudySession[];
   today: string;
 }) {
-  const [timer, setTimer] = useState<V2TimerSnapshot | null>(null);
-  const [timerError, setTimerError] = useState<string | null>(null);
+  const { snapshot: timer, loading: timerLoading, error: timerError, runMutation } = useV2Timer();
   const [configs, setConfigs] = useState<V2QuickStartConfig[] | null>(null);
   const [configsError, setConfigsError] = useState<string | null>(null);
   const [syllabi, setSyllabi] = useState<Record<number, V2ExamSyllabus>>({});
@@ -818,25 +816,6 @@ export function QuickStartSection({
   const [actionError, setActionError] = useState<string | null>(null);
   const [scrollNotice, setScrollNotice] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const snapshot = await getV2Timer();
-        if (!cancelled) {
-          setTimer(snapshot);
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setTimerError(toCommandError(loadError).message);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const loadConfigs = useCallback(async () => {
     setBusy((current) => (current === null ? 'configs' : current));
@@ -1005,27 +984,23 @@ export function QuickStartSection({
     setBusy('start');
     setActionError(null);
     try {
-      const snapshot = await startV2Timer({
-        mode: 'focus',
-        sessionDate: today,
-        activeExamId: null,
-        allocations: plan.rows.map((row) => ({
-          examId: row.examId,
-          nodeId: row.nodeId,
-          allocatedSeconds: Math.round(row.minutes * 60),
-        })),
-        durationMinutes: plan.plannedMinutes,
-      });
-      setTimer(snapshot);
+      await runMutation(() =>
+        startV2Timer({
+          mode: 'focus',
+          sessionDate: today,
+          activeExamId: null,
+          allocations: plan.rows.map((row) => ({
+            examId: row.examId,
+            nodeId: row.nodeId,
+            allocatedSeconds: Math.round(row.minutes * 60),
+          })),
+          durationMinutes: plan.plannedMinutes,
+        }),
+      );
       setScrollNotice(null);
       emitTimerUpdated();
     } catch (startError) {
       setActionError(toCommandError(startError).message);
-      try {
-        setTimer(await getV2Timer());
-      } catch {
-        // Keep the previous snapshot when the follow-up read also fails.
-      }
     } finally {
       setBusy(null);
     }
@@ -1038,8 +1013,7 @@ export function QuickStartSection({
     setBusy('start');
     setActionError(null);
     try {
-      const snapshot = await resumeV2Timer();
-      setTimer(snapshot);
+      await runMutation(resumeV2Timer);
       emitTimerUpdated();
     } catch (resumeError) {
       setActionError(toCommandError(resumeError).message);
@@ -1238,7 +1212,9 @@ export function QuickStartSection({
           {actionError}
         </p>
       )}
-      {!timer && !timerError && <p className="v2-empty-copy">Loading the persisted study timer…</p>}
+      {!timer && !timerError && timerLoading && (
+        <p className="v2-empty-copy">Loading the persisted study timer…</p>
+      )}
       {timerState && (
         <>
           <p className="v2-empty-copy">

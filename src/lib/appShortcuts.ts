@@ -11,6 +11,7 @@ export type ShortcutReferenceEntry = {
  */
 export const SHORTCUT_REFERENCE: ShortcutReferenceEntry[] = [
   { keys: ['Ctrl', 'K'], label: 'Open global search (works while typing)' },
+  { keys: ['Ctrl', 'Shift', 'N'], label: 'Open quick sticky notes' },
   {
     keys: ['Ctrl', '1'],
     label: 'Open the CSIR-UGC NET Physical Sciences workspace',
@@ -53,6 +54,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 type AppShortcutHandlers = {
   onOpenSearch: () => void;
   onOpenShortcuts: () => void;
+  onOpenNotes: () => void;
   onOpenExam: (examCode: string) => void;
 };
 
@@ -86,6 +88,12 @@ export function useAppShortcuts(handlers: AppShortcutHandlers, enabled = true) {
       if (withCtrl && withoutShift && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         handlersRef.current.onOpenSearch();
+        return;
+      }
+
+      if (withCtrl && event.shiftKey && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        handlersRef.current.onOpenNotes();
         return;
       }
 

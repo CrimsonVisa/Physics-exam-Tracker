@@ -20,6 +20,7 @@ export type NavIconName =
   | 'calculator'
   | 'formula'
   | 'terms'
+  | 'notes'
   | 'search'
   | 'keyboard'
   | 'sun'

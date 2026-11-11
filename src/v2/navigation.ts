@@ -46,6 +46,7 @@ export type V2View =
   | { kind: 'planner' }
   | { kind: 'revision' }
   | { kind: 'analytics' }
+  | { kind: 'notes' }
   | { kind: 'resources'; query?: string | null }
   | { kind: 'backup' }
   | { kind: 'settings' };

@@ -6,6 +6,8 @@ type ExamWorkspaceProps = {
   exam: V2ExamSummary;
   exams: V2ExamSummary[];
   today: string;
+  focusTimerRequest: number;
+  onTimerFocused: (requestId: number) => void;
   onBack: () => void;
   onOpenConcepts: (examCode: string) => void;
   onOpenFormulas: (examCode: string) => void;
@@ -24,6 +26,8 @@ export function ExamWorkspace({
   exam,
   exams,
   today,
+  focusTimerRequest,
+  onTimerFocused,
   onBack,
   onOpenConcepts,
   onOpenFormulas,
@@ -101,7 +105,9 @@ export function ExamWorkspace({
       <StudySection
         exams={exams}
         focusExamCode={exam.code}
+        focusRequest={focusTimerRequest}
         key={exam.code}
+        onTimerFocused={onTimerFocused}
         readOnly={!exam.isActive}
         today={today}
       />

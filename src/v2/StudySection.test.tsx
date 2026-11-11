@@ -1,6 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   V2ExamSummary,
   V2StudySession,
@@ -10,6 +12,7 @@ import type {
   V2TimerSnapshot,
   V2TimerState,
 } from './api';
+import { TimerProvider } from './timer/TimerProvider';
 import { StudySection } from './StudySection';
 
 vi.mock('./api', () => ({
@@ -239,14 +242,17 @@ async function renderStudy(
   } = {},
 ) {
   render(
-    <StudySection
-      exams={overrides.exams ?? EXAMS}
-      focusExamCode={overrides.focusExamCode}
-      readOnly={overrides.readOnly}
-      today={TODAY}
-    />,
+    <TimerProvider>
+      <StudySection
+        exams={overrides.exams ?? EXAMS}
+        focusExamCode={overrides.focusExamCode}
+        readOnly={overrides.readOnly}
+        today={TODAY}
+      />
+    </TimerProvider>,
   );
   await screen.findByRole('heading', { name: 'Timer and sessions' });
+  await screen.findByRole('timer');
 }
 
 describe('V2 study timer and sessions', () => {
@@ -260,6 +266,84 @@ describe('V2 study timer and sessions', () => {
       const exam = EXAMS.find((candidate) => candidate.id === examId) ?? EXAMS[0];
       return syllabus(exam, exam.id * 10 + 1);
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('waits for the real timer section before handling a focus request', async () => {
+    let resolveTimer!: (value: V2TimerSnapshot) => void;
+    mockedTimer.mockReturnValue(
+      new Promise<V2TimerSnapshot>((resolve) => {
+        resolveTimer = resolve;
+      }),
+    );
+    const onTimerFocused = vi.fn();
+
+    render(
+      <TimerProvider>
+        <StudySection
+          exams={EXAMS}
+          focusRequest={1}
+          onTimerFocused={onTimerFocused}
+          today={TODAY}
+        />
+      </TimerProvider>,
+    );
+
+    expect(await screen.findByText(/Loading the persisted study timer/)).toBeInTheDocument();
+    expect(onTimerFocused).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveTimer(snapshot({ status: 'running', sessionDate: TODAY }));
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Timer and sessions' })).toBeInTheDocument();
+    await waitFor(() => expect(onTimerFocused).toHaveBeenCalledWith(1));
+    expect(onTimerFocused).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles a fresh focus request after the previous request clears', async () => {
+    const onTimerFocused = vi.fn();
+    const view = render(
+      <TimerProvider>
+        <StudySection
+          exams={EXAMS}
+          focusRequest={1}
+          onTimerFocused={onTimerFocused}
+          today={TODAY}
+        />
+      </TimerProvider>,
+    );
+
+    await waitFor(() => expect(onTimerFocused).toHaveBeenCalledWith(1));
+    view.rerender(
+      <TimerProvider>
+        <StudySection
+          exams={EXAMS}
+          focusRequest={0}
+          onTimerFocused={onTimerFocused}
+          today={TODAY}
+        />
+      </TimerProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    view.rerender(
+      <TimerProvider>
+        <StudySection
+          exams={EXAMS}
+          focusRequest={2}
+          onTimerFocused={onTimerFocused}
+          today={TODAY}
+        />
+      </TimerProvider>,
+    );
+
+    await waitFor(() => expect(onTimerFocused).toHaveBeenCalledWith(2));
+    expect(onTimerFocused).toHaveBeenCalledTimes(2);
   });
 
   it('starts a focus timer with the selected examination context', async () => {
@@ -320,6 +404,131 @@ describe('V2 study timer and sessions', () => {
         ],
       }),
     );
+  });
+
+  it('preserves unsaved timer length edits through unchanged heartbeat snapshots', async () => {
+    vi.useFakeTimers();
+    try {
+      mockedTimer.mockResolvedValue(snapshot({ status: 'running', sessionDate: TODAY }));
+      mockedHeartbeat.mockResolvedValue(snapshot({ status: 'running', sessionDate: TODAY }));
+
+      render(
+        <TimerProvider>
+          <StudySection exams={EXAMS} today={TODAY} />
+        </TimerProvider>,
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole('timer')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByText('Timer lengths'));
+      const focus = screen.getByLabelText('Focus minutes');
+      fireEvent.change(focus, { target: { value: '40' } });
+      expect(focus).toHaveValue(40);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(screen.getByLabelText('Focus minutes')).toHaveValue(40);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('updates the draft when persisted timer settings genuinely change', async () => {
+    vi.useFakeTimers();
+    try {
+      mockedTimer.mockResolvedValue(snapshot({ status: 'running', sessionDate: TODAY }));
+      mockedHeartbeat.mockResolvedValue(
+        snapshot({ status: 'running', sessionDate: TODAY }, { focusMinutes: 40 }),
+      );
+
+      render(
+        <TimerProvider>
+          <StudySection exams={EXAMS} today={TODAY} />
+        </TimerProvider>,
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(screen.getByText('Timer lengths'));
+      expect(screen.getByLabelText('Focus minutes')).toHaveValue(25);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(screen.getByLabelText('Focus minutes')).toHaveValue(40);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('synchronizes the timer mode from an idle snapshot', async () => {
+    mockedTimer.mockResolvedValue(snapshot({ status: 'idle', mode: 'shortBreak' }));
+    await renderStudy();
+
+    await waitFor(() => expect(screen.getByLabelText('Timer mode')).toHaveValue('shortBreak'));
+  });
+
+  it('renders the full focus session label in the timer card', async () => {
+    await renderStudy();
+    expect(screen.getByRole('heading', { name: 'Focus session' })).toBeInTheDocument();
+  });
+
+  it('shows a completion-aware message when pause loses to heartbeat completion', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue(snapshot({ status: 'running', sessionDate: TODAY }));
+    mockedPause.mockResolvedValue(
+      snapshot({
+        status: 'idle',
+        lastEvent: 'completed',
+        lastCompletedSessionId: 1,
+        lastEventDurationMs: 1_500_000,
+      }),
+    );
+
+    await renderStudy();
+    await user.click(screen.getByRole('button', { name: 'Pause timer' }));
+
+    expect(
+      await screen.findByText('Timer completed before pause. The session was saved.'),
+    ).toBeInTheDocument();
+  });
+
+  it('surfaces a completion refresh error without an unhandled rejection', async () => {
+    vi.useFakeTimers();
+    try {
+      mockedTimer.mockResolvedValue(snapshot({ status: 'running', sessionDate: TODAY }));
+      mockedHeartbeat.mockResolvedValue(
+        snapshot({
+          status: 'idle',
+          lastEvent: 'completed',
+          lastCompletedSessionId: 1,
+          lastEventDurationMs: 1_500_000,
+        }),
+      );
+      mockedSessions.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('sessions down'));
+      mockedTotals.mockResolvedValue(totals());
+
+      render(
+        <TimerProvider>
+          <StudySection exams={EXAMS} today={TODAY} />
+        </TimerProvider>,
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole('timer')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('pauses and resumes a running timer', async () => {
@@ -446,6 +655,71 @@ describe('V2 study timer and sessions', () => {
     expect(await screen.findByText('csir-net-physics: 25 min')).toBeInTheDocument();
   });
 
+  it('refreshes session history when a heartbeat completes the timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const running = snapshot({
+        status: 'running',
+        elapsedMs: 1_500_000,
+        remainingMs: 0,
+        durationMs: 1_500_000,
+        sessionDate: TODAY,
+        activeExamId: 1,
+      });
+      const completed = snapshot({
+        status: 'idle',
+        lastEvent: 'completed',
+        lastEventDurationMs: 1_500_000,
+        lastCompletedSessionId: 1,
+      });
+      mockedTimer.mockResolvedValue(running);
+      mockedHeartbeat.mockResolvedValue(completed);
+      mockedSessions.mockResolvedValueOnce([]).mockResolvedValue([
+        studySession({
+          allocatedSeconds: 1_500,
+          unallocatedSeconds: 0,
+          allocations: [
+            {
+              examId: 1,
+              examCode: 'csir-net-physics',
+              examName: 'CSIR-UGC NET Physical Sciences',
+              examIsActive: true,
+              allocatedSeconds: 1_500,
+            },
+          ],
+        }),
+      ]);
+      mockedTotals.mockResolvedValueOnce(totals()).mockResolvedValue(
+        totals({
+          totalSeconds: 1_500,
+          sessionCount: 1,
+          allocatedSeconds: 1_500,
+        }),
+      );
+
+      render(
+        <TimerProvider>
+          <StudySection exams={EXAMS} today={TODAY} />
+        </TimerProvider>,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole('timer')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(mockedHeartbeat).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/1 recorded session/)).toBeInTheDocument();
+      expect(screen.getByText('csir-net-physics: 25 min')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('validates allocations before calling the backend', async () => {
     const user = userEvent.setup();
     mockedSessions.mockResolvedValue([studySession()]);
@@ -463,6 +737,34 @@ describe('V2 study timer and sessions', () => {
       ),
     ).toBeInTheDocument();
     expect(mockedSetAllocations).not.toHaveBeenCalled();
+  });
+
+  it('uses the dedicated session action grid without the shared form-actions class', async () => {
+    mockedSessions.mockResolvedValue([
+      studySession({
+        notes: `Long session note ${'that must wrap safely '.repeat(12)}`,
+      }),
+    ]);
+    await renderStudy();
+
+    const allocate = await screen.findByRole('button', { name: 'Allocate time' });
+    const actions = allocate.closest('.v2-session-actions');
+    expect(actions).not.toBeNull();
+    expect(actions).not.toHaveClass('v2-form-actions');
+    const row = actions?.closest('.v2-session-row');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('.v2-session-main')).not.toBeNull();
+    expect(row?.querySelector('.v2-session-notes')).toHaveTextContent(
+      'Long session note that must wrap safely',
+    );
+  });
+
+  it('defines an inline-size container query for earlier session-card stacking', () => {
+    const css = readFileSync(join(process.cwd(), 'src/v2/v2.css'), 'utf8');
+    expect(css).toContain('container-type: inline-size');
+    expect(css).toMatch(
+      /@container\s*\(max-width:\s*620px\)\s*\{[\s\S]*?\.v2-session-row[\s\S]*?\.v2-session-actions[\s\S]*?justify-content:\s*flex-start/,
+    );
   });
 
   it('saves a split allocation across multiple active exams', async () => {
@@ -530,7 +832,11 @@ describe('V2 study timer and sessions', () => {
       message: 'The V2 study timer is unavailable.',
     });
 
-    render(<StudySection exams={EXAMS} today={TODAY} />);
+    render(
+      <TimerProvider>
+        <StudySection exams={EXAMS} today={TODAY} />
+      </TimerProvider>,
+    );
 
     expect(await screen.findByText('The V2 study timer is unavailable.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry study data' })).toBeInTheDocument();
@@ -541,7 +847,7 @@ describe('V2 study timer and sessions', () => {
     mockedSettings.mockResolvedValue(snapshot({}, { focusMinutes: 40 }));
     await renderStudy();
 
-    await user.click(screen.getByText('Timer lengths'));
+    await user.click(await screen.findByText('Timer lengths'));
     const focus = screen.getByLabelText('Focus minutes');
     await user.clear(focus);
     await user.type(focus, '40');

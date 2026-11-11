@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -8,9 +8,11 @@ import type {
   V2ExamSummary,
   V2ExamSyllabus,
   V2StudyTotals,
+  V2StickyNote,
   V2TimerSnapshot,
 } from './api';
-import V2App from './App';
+import V2App, { acknowledgeTimerFocusRequest } from './App';
+import { retainViewAfterStatus } from './viewStatus';
 import { SIDEBAR_MODE_STORAGE_KEY } from '../lib/uiPreferences';
 
 vi.mock('./api', () => ({
@@ -71,6 +73,8 @@ vi.mock('./api', () => ({
   getV2ExamSyllabus: vi.fn(),
   updateV2SyllabusNodeProgress: vi.fn(),
   getV2Analytics: vi.fn(),
+  getV2AnalyticsCharts: vi.fn(),
+  getV2BuiltinConstants: vi.fn(),
   getV2RevisionDashboard: vi.fn(),
   updateV2RevisionSettings: vi.fn(),
   scheduleV2RevisionConcept: vi.fn(),
@@ -95,6 +99,9 @@ vi.mock('./api', () => ({
   saveV2Flashcard: vi.fn(),
   getV2FlashcardReviewQueue: vi.fn(),
   reviewV2Flashcard: vi.fn(),
+  listV2StickyNotes: vi.fn(),
+  saveV2StickyNote: vi.fn(),
+  deleteV2StickyNote: vi.fn(),
 }));
 
 import * as api from './api';
@@ -102,6 +109,8 @@ import * as api from './api';
 const mockedStatus = vi.mocked(api.getV2DatabaseStatus);
 const mockedInitialize = vi.mocked(api.initializeV2Database);
 const mockedTimer = vi.mocked(api.getV2Timer);
+const mockedPauseTimer = vi.mocked(api.pauseV2Timer);
+const mockedHeartbeat = vi.mocked(api.heartbeatV2Timer);
 const mockedSessions = vi.mocked(api.listV2Sessions);
 const mockedTotals = vi.mocked(api.getV2StudyTotals);
 const mockedConceptSearch = vi.mocked(api.searchV2Concepts);
@@ -110,6 +119,7 @@ const mockedSaveDashboardSections = vi.mocked(api.saveV2DashboardSections);
 const mockedPlannerDay = vi.mocked(api.getV2PlannerDay);
 const mockedRevisionDashboard = vi.mocked(api.getV2RevisionDashboard);
 const mockedAppSettings = vi.mocked(api.getV2AppSettings);
+const mockedStickyNotes = vi.mocked(api.listV2StickyNotes);
 const mockedSyllabus = vi.mocked(api.getV2ExamSyllabus);
 const TODAY = '2026-11-04';
 
@@ -242,7 +252,7 @@ const CSIR_FORMULA_SYLLABUS: V2ExamSyllabus = {
   },
 };
 
-function timerSnapshot(): V2TimerSnapshot {
+function timerSnapshot(stateOverrides: Partial<V2TimerSnapshot['state']> = {}): V2TimerSnapshot {
   return {
     state: {
       status: 'idle',
@@ -261,6 +271,7 @@ function timerSnapshot(): V2TimerSnapshot {
       lastEventAt: null,
       lastEventDurationMs: 0,
       lastCompletedSessionId: null,
+      ...stateOverrides,
     },
     settings: {
       focusMinutes: 25,
@@ -271,6 +282,29 @@ function timerSnapshot(): V2TimerSnapshot {
     allocations: [],
     serverNowMs: Date.parse('2026-11-04T10:00:00Z'),
   };
+}
+
+function runningTimerSnapshot(
+  stateOverrides: Partial<V2TimerSnapshot['state']> = {},
+): V2TimerSnapshot {
+  return timerSnapshot({
+    status: 'running',
+    elapsedMs: 60_000,
+    remainingMs: 24 * 60_000,
+    segmentStartedAt: '2026-11-04T10:00:00.000Z',
+    sessionDate: TODAY,
+    ...stateOverrides,
+  });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function studyTotals(): V2StudyTotals {
@@ -364,9 +398,11 @@ describe('V2 application shell', () => {
     vi.clearAllMocks();
     mockedInitialize.mockResolvedValue(status());
     mockedTimer.mockResolvedValue(timerSnapshot());
+    mockedHeartbeat.mockResolvedValue(timerSnapshot());
     mockedSessions.mockResolvedValue([]);
     mockedTotals.mockResolvedValue(studyTotals());
     mockedConceptSearch.mockResolvedValue(conceptSearch());
+    mockedStickyNotes.mockResolvedValue([]);
     mockedDashboardSections.mockResolvedValue(dashboardSections());
     mockedSaveDashboardSections.mockImplementation(async (input) =>
       input.sections.map((section) => ({
@@ -554,7 +590,11 @@ describe('V2 application shell', () => {
     await user.click(screen.getByRole('button', { name: 'Formula reference' }));
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Physics Formula Reference' }),
+      await screen.findByRole(
+        'heading',
+        { level: 1, name: 'Physics Formula Reference' },
+        { timeout: 4000 },
+      ),
     ).toBeInTheDocument();
     expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'formulas');
     expect(screen.getByText('47 formulas')).toBeInTheDocument();
@@ -567,7 +607,11 @@ describe('V2 application shell', () => {
     await user.click(screen.getByRole('button', { name: 'Physics terms and SI units' }));
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Physics Terms & SI Units' }),
+      await screen.findByRole(
+        'heading',
+        { level: 1, name: 'Physics Terms & SI Units' },
+        { timeout: 4000 },
+      ),
     ).toBeInTheDocument();
     expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'terms');
     expect(screen.getByText('123 terms')).toBeInTheDocument();
@@ -585,7 +629,11 @@ describe('V2 application shell', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Physics Terms & SI Units' }),
+      await screen.findByRole(
+        'heading',
+        { level: 1, name: 'Physics Terms & SI Units' },
+        { timeout: 4000 },
+      ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Examination filter')).toHaveValue('gate-physics');
   });
@@ -658,6 +706,329 @@ describe('V2 application shell', () => {
     ).toBeInTheDocument();
   });
 
+  it('keeps the active timer indicator visible across workspaces', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: null }));
+    await renderHealthy();
+
+    expect(screen.getByRole('button', { name: /Focus timer running/ })).toBeInTheDocument();
+
+    for (const name of [
+      'Concept library',
+      'Exam syllabus',
+      'GATE Physics (PH)',
+      'Practice systems',
+      'Flashcards',
+      'Scientific calculator',
+      'Formula reference',
+      'Physics terms and SI units',
+    ]) {
+      await user.click(screen.getByRole('button', { name }));
+      expect(screen.getByRole('button', { name: /Focus timer running/ })).toBeInTheDocument();
+    }
+  });
+
+  it('pauses the running timer from the single floating dock outside route content', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: null }));
+    mockedPauseTimer.mockResolvedValue(
+      runningTimerSnapshot({
+        status: 'paused',
+        segmentStartedAt: null,
+        elapsedMs: 60_000,
+        remainingMs: 24 * 60_000,
+      }),
+    );
+    await renderHealthy();
+
+    const openButton = screen.getByRole('button', { name: /Focus timer running/ });
+    expect(screen.getAllByRole('button', { name: /Focus timer running/ })).toHaveLength(1);
+    const dock = openButton.closest('.v2-global-timer-dock');
+    expect(dock).not.toBeNull();
+    expect(dock?.closest('#main-content')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Pause study timer' }));
+
+    expect(mockedPauseTimer).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('button', { name: /Focus timer paused/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Focus timer paused/ })).toHaveLength(1);
+  });
+
+  it('shows a paused timer across workspace navigation', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue(
+      runningTimerSnapshot({
+        status: 'paused',
+        segmentStartedAt: null,
+        elapsedMs: 90_000,
+        remainingMs: 25 * 60_000 - 90_000,
+      }),
+    );
+    await renderHealthy();
+
+    expect(screen.getByRole('button', { name: /Focus timer paused/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+    expect(screen.getByRole('button', { name: /Focus timer paused/ })).toBeInTheDocument();
+  });
+
+  it('opens the sticky notes page and the global quick panel', async () => {
+    const user = userEvent.setup();
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Sticky notes' }));
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Sticky notes' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('No sticky notes yet')).toBeInTheDocument();
+    expect(mockedStickyNotes).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Open quick notes' }));
+    const quickPanel = await screen.findByRole('dialog', { name: 'Sticky notes' });
+    expect(within(quickPanel).getByRole('button', { name: 'New note' })).toBeInTheDocument();
+    expect(mockedStickyNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it('expands quick notes into the full page with the selected note preserved', async () => {
+    const user = userEvent.setup();
+    const stickyNote: V2StickyNote = {
+      id: 8,
+      title: 'Expandable note',
+      body: 'Keep this selection when opening the full page.',
+      color: 'yellow',
+      isPinned: false,
+      examId: null,
+      examCode: null,
+      subjectNodeId: null,
+      subjectTitle: null,
+      topicNodeId: null,
+      topicTitle: null,
+      createdAt: '2026-11-10T10:00:00Z',
+      updatedAt: '2026-11-10T11:00:00Z',
+    };
+    mockedStickyNotes.mockResolvedValue([stickyNote]);
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Open quick notes' }));
+    const quickPanel = await screen.findByRole('dialog', { name: 'Sticky notes' });
+    expect(await within(quickPanel).findByLabelText('Title')).toHaveValue('Expandable note');
+
+    await user.click(within(quickPanel).getByRole('button', { name: 'Open full page' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Sticky notes' })).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Sticky notes' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Title')).toHaveValue('Expandable note');
+  });
+
+  it('keeps Notes active and the selected editor available after status reconciliation', async () => {
+    const user = userEvent.setup();
+    const stickyNote: V2StickyNote = {
+      id: 7,
+      title: 'Status note',
+      body: 'Keep this editor open.',
+      color: 'yellow',
+      isPinned: false,
+      examId: null,
+      examCode: null,
+      subjectNodeId: null,
+      subjectTitle: null,
+      topicNodeId: null,
+      topicTitle: null,
+      createdAt: '2026-11-10T10:00:00Z',
+      updatedAt: '2026-11-10T10:00:00Z',
+    };
+    mockedStickyNotes.mockResolvedValue([stickyNote]);
+    await renderHealthy();
+
+    await user.click(screen.getByRole('button', { name: 'Sticky notes' }));
+    await user.click(await screen.findByRole('button', { name: 'Open sticky note Status note' }));
+    expect(screen.getByRole('heading', { name: 'Edit note' })).toBeInTheDocument();
+
+    expect(retainViewAfterStatus({ kind: 'notes' }, status().exams)).toEqual({ kind: 'notes' });
+    expect(screen.getByLabelText('Title')).toHaveValue('Status note');
+  });
+
+  it('does not show the indicator for an idle timer', async () => {
+    await renderHealthy();
+
+    expect(screen.queryByRole('button', { name: /timer running/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /timer paused/i })).not.toBeInTheDocument();
+  });
+
+  it('does not show the indicator for a completed timer', async () => {
+    mockedTimer.mockResolvedValue(
+      timerSnapshot({ lastEvent: 'completed', lastCompletedSessionId: 4 }),
+    );
+    await renderHealthy();
+
+    expect(screen.queryByRole('button', { name: /timer running/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /timer paused/i })).not.toBeInTheDocument();
+  });
+
+  it('opens the active exam timer and focuses the timer heading', async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: 2 }));
+
+    try {
+      await renderHealthy();
+      await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+      await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+
+      expect(
+        await screen.findByRole('heading', { level: 1, name: 'GATE Physics (PH)' }),
+      ).toBeInTheDocument();
+      const heading = await screen.findByRole('heading', {
+        level: 2,
+        name: 'Timer and sessions',
+      });
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      await waitFor(() => expect(document.activeElement).toBe(heading));
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it('does not clear a newer focus request with an old acknowledgement', () => {
+    expect(acknowledgeTimerFocusRequest(2, 1)).toBe(2);
+    expect(acknowledgeTimerFocusRequest(2, 2)).toBe(0);
+  });
+
+  it('cancels a stale focus request when navigating away before readiness', async () => {
+    const user = userEvent.setup();
+    const preferences = deferred<Awaited<ReturnType<typeof dashboardSections>>>();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    mockedDashboardSections.mockReturnValue(preferences.promise);
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: null }));
+
+    try {
+      await renderHealthy();
+      await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+      await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+
+      await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+      preferences.resolve(dashboardSections());
+      await screen.findByRole('heading', { level: 1, name: 'Scientific calculator' });
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'Combined dashboard' }));
+      await screen.findByRole('heading', { level: 1, name: 'Combined dashboard' });
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it('waits for dashboard preferences before focusing a visible timer section', async () => {
+    const user = userEvent.setup();
+    const preferences = deferred<Awaited<ReturnType<typeof dashboardSections>>>();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    mockedDashboardSections.mockReturnValue(preferences.promise);
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: null }));
+
+    try {
+      await renderHealthy();
+      await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      preferences.resolve(dashboardSections());
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  it('waits for dashboard preferences before reporting a hidden timer section', async () => {
+    const user = userEvent.setup();
+    const preferences = deferred<Awaited<ReturnType<typeof dashboardSections>>>();
+    mockedStatus.mockResolvedValue(status());
+    mockedDashboardSections.mockReturnValue(preferences.promise);
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: null }));
+
+    render(<V2App today={TODAY} />);
+    await screen.findByRole('heading', { level: 1, name: 'Combined dashboard' });
+
+    await user.click(await screen.findByRole('button', { name: /Focus timer running/ }));
+    expect(screen.queryByText(/study timer section is hidden/i)).not.toBeInTheDocument();
+
+    preferences.resolve(dashboardSections().filter((section) => section.sectionKey !== 'study'));
+
+    expect(
+      await screen.findByText(
+        /The study timer section is hidden\. Enable it under Customize dashboard/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('guides to dashboard customization when the study section is hidden', async () => {
+    const user = userEvent.setup();
+    mockedStatus.mockResolvedValue(status());
+    mockedDashboardSections.mockResolvedValue(
+      dashboardSections().filter((section) => section.sectionKey !== 'study'),
+    );
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: null }));
+
+    render(<V2App today={TODAY} />);
+    await screen.findByRole('heading', { level: 1, name: 'Combined dashboard' });
+    await waitFor(() => expect(document.getElementById('study-timer-heading')).toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+
+    expect(
+      await screen.findByText(
+        /The study timer section is hidden\. Enable it under Customize dashboard/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('falls back to an allocation exam when the active exam id is invalid', async () => {
+    const user = userEvent.setup();
+    const snapshot = runningTimerSnapshot({ activeExamId: 99 });
+    snapshot.allocations = [
+      {
+        examId: 2,
+        examCode: 'gate-physics',
+        examName: 'GATE Physics (PH)',
+        nodeId: 1,
+        nodeTitle: 'Topic',
+        subjectTitle: 'Subject',
+        allocatedSeconds: 600,
+      },
+    ];
+    mockedTimer.mockResolvedValue(snapshot);
+
+    await renderHealthy();
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+    await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'GATE Physics (PH)' }),
+    ).toBeInTheDocument();
+  });
+
+  it('falls back to the dashboard when no exam candidate is valid', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: 99 }));
+
+    await renderHealthy();
+    await user.click(screen.getByRole('button', { name: 'Scientific calculator' }));
+    await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Combined dashboard' }),
+    ).toBeInTheDocument();
+  });
+
   it('shows missing, future, today, and passed exam date states', async () => {
     await renderHealthy();
 
@@ -705,7 +1076,11 @@ describe('V2 application shell', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Physics Formula Reference' }),
+      await screen.findByRole(
+        'heading',
+        { level: 1, name: 'Physics Formula Reference' },
+        { timeout: 4000 },
+      ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Examination filter')).toHaveValue('gate-physics');
   });

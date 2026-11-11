@@ -61,6 +61,7 @@ function renderSidebar(mode: V2SidebarMode, view: V2View = { kind: 'dashboard' }
   const onToggleCollapse = vi.fn();
   const onThemeChange = vi.fn();
   const onOpenSearch = vi.fn();
+  const onOpenNotes = vi.fn();
   const onOpenShortcuts = vi.fn();
 
   render(
@@ -68,6 +69,7 @@ function renderSidebar(mode: V2SidebarMode, view: V2View = { kind: 'dashboard' }
       exams={EXAMS}
       mode={mode}
       onNavigate={onNavigate}
+      onOpenNotes={onOpenNotes}
       onOpenSearch={onOpenSearch}
       onOpenShortcuts={onOpenShortcuts}
       onThemeChange={onThemeChange}
@@ -77,7 +79,14 @@ function renderSidebar(mode: V2SidebarMode, view: V2View = { kind: 'dashboard' }
     />,
   );
 
-  return { onNavigate, onToggleCollapse, onThemeChange, onOpenSearch, onOpenShortcuts };
+  return {
+    onNavigate,
+    onToggleCollapse,
+    onThemeChange,
+    onOpenSearch,
+    onOpenNotes,
+    onOpenShortcuts,
+  };
 }
 
 describe('V2Sidebar', () => {
@@ -118,7 +127,7 @@ describe('V2Sidebar', () => {
       'true',
     );
     // The shared stylesheet hides icons by default; the V2 shell renders them.
-    expect(document.querySelectorAll('.nav-icon')).toHaveLength(18);
+    expect(document.querySelectorAll('.nav-icon')).toHaveLength(19);
 
     // Expanded navigation relies on the visible label, not a title tooltip.
     expect(screen.getByRole('button', { name: 'Practice systems' })).not.toHaveAttribute('title');
@@ -227,13 +236,21 @@ describe('V2Sidebar', () => {
     expect(onThemeChange).toHaveBeenCalledWith('light');
   });
 
-  it('opens global search and the shortcut reference from the sidebar', async () => {
-    const { onOpenSearch, onOpenShortcuts, onNavigate } = renderSidebar('expanded');
+  it('opens global search, quick notes and the shortcut reference from the sidebar', async () => {
+    const { onOpenSearch, onOpenNotes, onOpenShortcuts, onNavigate } = renderSidebar('expanded');
     await userEvent.click(screen.getByRole('button', { name: 'Open global search' }));
     expect(onOpenSearch).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Open quick notes' }));
+    expect(onOpenNotes).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
     expect(onOpenShortcuts).toHaveBeenCalledTimes(1);
     expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('navigates to the sticky notes page from the sidebar', async () => {
+    const { onNavigate } = renderSidebar('expanded');
+    await userEvent.click(screen.getByRole('button', { name: 'Sticky notes' }));
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'notes' });
   });
 
   it('shows a collapsed icon-only sidebar with tooltips on hover and focus', () => {

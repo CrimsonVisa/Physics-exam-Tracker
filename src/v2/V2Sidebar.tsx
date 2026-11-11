@@ -104,6 +104,13 @@ const STUDY_NAV_ITEMS: V2NavItem[] = [
     icon: 'revision',
     view: { kind: 'revision' },
   },
+  {
+    key: 'notes',
+    label: 'Notes',
+    ariaLabel: 'Sticky notes',
+    icon: 'notes',
+    view: { kind: 'notes' },
+  },
 ];
 
 const INSIGHT_NAV_ITEMS: V2NavItem[] = [
@@ -147,6 +154,7 @@ type V2SidebarProps = {
   mode: V2SidebarMode;
   onNavigate: (view: V2View) => void;
   onOpenSearch: () => void;
+  onOpenNotes: () => void;
   onOpenShortcuts: () => void;
   onToggleCollapse: () => void;
   onThemeChange: (theme: Theme) => void;
@@ -159,6 +167,7 @@ export function V2Sidebar({
   mode,
   onNavigate,
   onOpenSearch,
+  onOpenNotes,
   onOpenShortcuts,
   onToggleCollapse,
   onThemeChange,
@@ -267,6 +276,19 @@ export function V2Sidebar({
             type="button"
           >
             <Icon name="search" size={16} />
+          </button>
+          <button
+            aria-label="Open quick notes"
+            className="sidebar-control"
+            onClick={onOpenNotes}
+            onBlur={() => setTooltip(null)}
+            onFocus={(event) => showTooltip('Quick notes (Ctrl+Shift+N)', event.currentTarget)}
+            onMouseEnter={(event) => showTooltip('Quick notes (Ctrl+Shift+N)', event.currentTarget)}
+            onMouseLeave={() => setTooltip(null)}
+            title="Quick notes (Ctrl+Shift+N)"
+            type="button"
+          >
+            <Icon name="notes" size={16} />
           </button>
           <button
             aria-controls="primary-navigation"

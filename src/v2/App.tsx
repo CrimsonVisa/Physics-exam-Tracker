@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toCommandError } from '../lib/commandError';
 import { BrandLockup } from '../components/BrandMark';
 import { useAppShortcuts } from '../lib/appShortcuts';
@@ -36,7 +36,14 @@ import { SettingsScreen } from './SettingsScreen';
 import { ShortcutsDialog } from './ShortcutsDialog';
 import { SyllabusScreen } from './SyllabusScreen';
 import type { V2View } from './navigation';
+import { GlobalTimerIndicator } from './timer/GlobalTimerIndicator';
+import { NotesPanel } from './notes/NotesPanel';
+import { NotesProvider } from './notes/NotesProvider';
+import { NotesScreen } from './notes/NotesScreen';
+import { useNotes } from './notes/notesContext';
+import { TimerProvider } from './timer/TimerProvider';
 import { V2Sidebar, type V2SidebarMode } from './V2Sidebar';
+import { retainViewAfterStatus } from './viewStatus';
 
 const FormulaReferenceScreen = lazy(() =>
   import('./formulas/FormulaReferenceScreen').then((module) => ({
@@ -53,6 +60,15 @@ const TermReferenceScreen = lazy(() =>
 type V2AppProps = {
   today?: string;
 };
+
+function timerViewKey(view: V2View): string {
+  return view.kind === 'exam' ? `exam:${view.examCode}` : view.kind;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function acknowledgeTimerFocusRequest(current: number, requestId: number): number {
+  return current === requestId ? 0 : current;
+}
 
 /** Workspace accent identity for the current view. */
 function viewWorkspace(view: V2View): string {
@@ -81,6 +97,8 @@ function viewWorkspace(view: V2View): string {
       return 'revision';
     case 'analytics':
       return 'analytics';
+    case 'notes':
+      return 'notes';
     case 'resources':
       return 'resources';
     case 'backup':
@@ -122,7 +140,9 @@ function BootstrapError({ message, busy, onRetry }: BootstrapErrorProps) {
 export default function V2App(props: V2AppProps) {
   return (
     <CalculatorSessionProvider>
-      <V2AppShell {...props} />
+      <NotesProvider>
+        <V2AppShell {...props} />
+      </NotesProvider>
     </CalculatorSessionProvider>
   );
 }
@@ -139,6 +159,12 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [timerFocusRequest, setTimerFocusRequest] = useState(0);
+  const [timerNotice, setTimerNotice] = useState<string | null>(null);
+  const { openPanel, closePanel, panelOpen } = useNotes();
+  const [notesSelectionId, setNotesSelectionId] = useState<number | null>(null);
+  const timerFocusSequenceRef = useRef(0);
+  const timerFocusTargetRef = useRef<string | null>(null);
 
   const fetchStatus = useCallback(async (allowInitialize: boolean) => {
     let next = await getV2DatabaseStatus();
@@ -155,65 +181,7 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
       setShortcutsOpen(false);
       setView({ kind: 'dashboard' });
     } else {
-      setView((current) => {
-        if (current.kind === 'exam') {
-          return next.exams.some((exam) => exam.code === current.examCode)
-            ? current
-            : { kind: 'dashboard' };
-        }
-        if (
-          current.kind === 'concepts' ||
-          current.kind === 'syllabus' ||
-          current.kind === 'practice'
-        ) {
-          return current.examCode === null ||
-            next.exams.some((exam) => exam.code === current.examCode)
-            ? current
-            : { kind: current.kind, examCode: null };
-        }
-        if (current.kind === 'formulas') {
-          if (
-            current.examCode === null ||
-            current.examCode === undefined ||
-            next.exams.some((exam) => exam.code === current.examCode)
-          ) {
-            return current;
-          }
-          return {
-            ...current,
-            examCode: null,
-            nodeCode: null,
-            nodeTitle: null,
-          };
-        }
-        if (current.kind === 'terms') {
-          if (
-            current.examCode === null ||
-            current.examCode === undefined ||
-            next.exams.some((exam) => exam.code === current.examCode)
-          ) {
-            return current;
-          }
-          return {
-            ...current,
-            examCode: null,
-            nodeCode: null,
-            nodeTitle: null,
-          };
-        }
-        if (
-          current.kind === 'planner' ||
-          current.kind === 'revision' ||
-          current.kind === 'analytics' ||
-          current.kind === 'resources' ||
-          current.kind === 'backup' ||
-          current.kind === 'settings' ||
-          current.kind === 'calculator'
-        ) {
-          return current;
-        }
-        return { kind: 'dashboard' };
-      });
+      setView((current) => retainViewAfterStatus(current, next.exams));
     }
   }, []);
 
@@ -265,6 +233,33 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
     storeSidebarMode(sidebarMode);
   }, [sidebarMode]);
 
+  const handleTimerFocused = useCallback((requestId: number) => {
+    setTimerFocusRequest((current) => acknowledgeTimerFocusRequest(current, requestId));
+    setTimerNotice(null);
+  }, []);
+
+  const handleTimerUnavailable = useCallback((requestId: number) => {
+    setTimerFocusRequest((current) => acknowledgeTimerFocusRequest(current, requestId));
+    setTimerNotice(
+      'The study timer section is hidden. Enable it under Customize dashboard to open its controls.',
+    );
+  }, []);
+
+  useEffect(() => {
+    if (timerFocusRequest === 0) {
+      return;
+    }
+    const target = timerFocusTargetRef.current;
+    if (!target) {
+      return;
+    }
+    if (timerViewKey(view) !== target) {
+      timerFocusTargetRef.current = null;
+      setTimerFocusRequest(0);
+      setTimerNotice(null);
+    }
+  }, [timerFocusRequest, view]);
+
   const toggleSidebarCollapse = useCallback(() => {
     setSidebarMode((current) => (current === 'collapsed' ? 'expanded' : 'collapsed'));
   }, []);
@@ -278,6 +273,11 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
       onOpenShortcuts: () => {
         setSearchOpen(false);
         setShortcutsOpen(true);
+      },
+      onOpenNotes: () => {
+        setSearchOpen(false);
+        setShortcutsOpen(false);
+        openPanel();
       },
       onOpenExam: (examCode) => {
         if (searchOpen || shortcutsOpen) {
@@ -516,6 +516,16 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
       return <AnalyticsScreen exams={currentStatus.exams} today={today} />;
     }
 
+    if (view.kind === 'notes') {
+      return (
+        <NotesScreen
+          exams={currentStatus.exams}
+          initialSelectedNoteId={notesSelectionId}
+          onSelectNote={setNotesSelectionId}
+        />
+      );
+    }
+
     if (view.kind === 'resources') {
       return (
         <ResourcesScreen
@@ -539,6 +549,8 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
         <ExamWorkspace
           exam={selectedExam}
           exams={currentStatus.exams}
+          focusTimerRequest={timerFocusRequest}
+          onTimerFocused={handleTimerFocused}
           onBack={() => setView({ kind: 'dashboard' })}
           onOpenConcepts={(examCode) => setView({ kind: 'concepts', examCode })}
           onOpenFormulas={(examCode) => setView({ kind: 'formulas', examCode })}
@@ -551,6 +563,9 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
 
     return (
       <CombinedDashboard
+        focusTimerRequest={timerFocusRequest}
+        onTimerFocused={handleTimerFocused}
+        onTimerUnavailable={handleTimerUnavailable}
         onNavigate={setView}
         onOpenExam={openExam}
         status={currentStatus}
@@ -559,54 +574,91 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
     );
   }
 
+  function openTimer(examIds: number[]) {
+    setTimerNotice(null);
+    const targetExam = status?.exams.find((exam) => examIds.includes(exam.id)) ?? null;
+    const headingExists = Boolean(document.getElementById('study-timer-heading'));
+    const targetView: V2View = headingExists
+      ? view
+      : targetExam
+        ? { kind: 'exam', examCode: targetExam.code }
+        : { kind: 'dashboard' };
+    timerFocusTargetRef.current = timerViewKey(targetView);
+    if (!headingExists) {
+      setView(targetView);
+    }
+    timerFocusSequenceRef.current += 1;
+    setTimerFocusRequest(timerFocusSequenceRef.current);
+  }
+
   return (
-    <div
-      className="app-frame v2-app-frame"
-      data-exam={view.kind === 'exam' ? view.examCode : undefined}
-      data-sidebar-mode={sidebarMode}
-      data-workspace={viewWorkspace(view)}
-    >
-      <a className="skip-link" href="#main-content">
-        Skip to content
-      </a>
-      <V2Sidebar
-        exams={status.exams}
-        mode={sidebarMode}
-        onNavigate={setView}
-        onOpenSearch={() => {
-          setShortcutsOpen(false);
-          setSearchOpen(true);
-        }}
-        onOpenShortcuts={() => {
-          setSearchOpen(false);
-          setShortcutsOpen(true);
-        }}
-        onThemeChange={setTheme}
-        onToggleCollapse={toggleSidebarCollapse}
-        theme={theme}
-        view={view}
-      />
-      <div className="main-column">
-        <main className="main-area" id="main-content" tabIndex={-1}>
-          {loadError && (
-            <p className="v2-inline-error" role="alert">
-              {loadError}
-            </p>
-          )}
-          {content(status)}
-        </main>
-      </div>
-      {searchOpen && status.state === 'healthy' && (
-        <GlobalSearch
+    <TimerProvider>
+      <div
+        className="app-frame v2-app-frame"
+        data-exam={view.kind === 'exam' ? view.examCode : undefined}
+        data-sidebar-mode={sidebarMode}
+        data-workspace={viewWorkspace(view)}
+      >
+        <a className="skip-link" href="#main-content">
+          Skip to content
+        </a>
+        <V2Sidebar
           exams={status.exams}
-          onClose={() => setSearchOpen(false)}
-          onNavigate={(nextView) => {
-            setSearchOpen(false);
-            setView(nextView);
+          mode={sidebarMode}
+          onNavigate={setView}
+          onOpenSearch={() => {
+            setShortcutsOpen(false);
+            setSearchOpen(true);
           }}
+          onOpenNotes={openPanel}
+          onOpenShortcuts={() => {
+            setSearchOpen(false);
+            setShortcutsOpen(true);
+          }}
+          onThemeChange={setTheme}
+          onToggleCollapse={toggleSidebarCollapse}
+          theme={theme}
+          view={view}
         />
-      )}
-      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
-    </div>
+        <div className="main-column">
+          <main className="main-area" id="main-content" tabIndex={-1}>
+            {timerNotice && (
+              <p className="v2-global-timer-notice" role="status">
+                {timerNotice}
+              </p>
+            )}
+            {loadError && (
+              <p className="v2-inline-error" role="alert">
+                {loadError}
+              </p>
+            )}
+            {content(status)}
+          </main>
+        </div>
+        <GlobalTimerIndicator onOpenTimer={openTimer} />
+        {searchOpen && status.state === 'healthy' && (
+          <GlobalSearch
+            exams={status.exams}
+            onClose={() => setSearchOpen(false)}
+            onNavigate={(nextView) => {
+              setSearchOpen(false);
+              setView(nextView);
+            }}
+          />
+        )}
+        {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
+        {panelOpen && status.state === 'healthy' && (
+          <NotesPanel
+            exams={status.exams}
+            onOpenFullPage={() => {
+              setView({ kind: 'notes' });
+              closePanel();
+            }}
+            onSelectNote={setNotesSelectionId}
+            selectedNoteId={notesSelectionId}
+          />
+        )}
+      </div>
+    </TimerProvider>
   );
 }

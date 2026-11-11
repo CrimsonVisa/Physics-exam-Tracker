@@ -23,6 +23,9 @@ import { StudySection } from './StudySection';
 type CombinedDashboardProps = {
   status: V2DatabaseStatus;
   today: string;
+  focusTimerRequest: number;
+  onTimerFocused: (requestId: number) => void;
+  onTimerUnavailable: (requestId: number) => void;
   onOpenExam: (examCode: string) => void;
   onNavigate: (view: V2View) => void;
 };
@@ -97,10 +100,14 @@ function ExamCard({
 export function CombinedDashboard({
   status,
   today,
+  focusTimerRequest,
+  onTimerFocused,
+  onTimerUnavailable,
   onOpenExam,
   onNavigate,
 }: CombinedDashboardProps) {
   const [sections, setSections] = useState<V2DashboardSection[] | null>(null);
+  const [sectionsReady, setSectionsReady] = useState(false);
   const [layoutBusy, setLayoutBusy] = useState(false);
   const [layoutError, setLayoutError] = useState<string | null>(null);
 
@@ -112,6 +119,7 @@ export function CombinedDashboard({
       visible: true,
       displayOrder,
     }));
+  const studySection = sections?.find((section) => section.sectionKey === 'study') ?? null;
   const daily = useDailyDashboardData(
     today,
     needsDailyData(orderedSections.map((section) => section.sectionKey)),
@@ -127,12 +135,25 @@ export function CombinedDashboard({
         }
       } catch {
         // The default fixed dashboard remains usable if preferences fail to load.
+      } finally {
+        if (!cancelled) {
+          setSectionsReady(true);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!sectionsReady || !sections || focusTimerRequest === 0) {
+      return;
+    }
+    if (!studySection || !studySection.visible) {
+      onTimerUnavailable(focusTimerRequest);
+    }
+  }, [focusTimerRequest, onTimerUnavailable, sections, sectionsReady, studySection]);
 
   async function toggleSection(key: string) {
     if (!sections) {
@@ -253,7 +274,15 @@ export function CombinedDashboard({
       );
     }
     if (key === 'study') {
-      return <StudySection exams={status.exams} key={key} today={today} />;
+      return (
+        <StudySection
+          exams={status.exams}
+          focusRequest={sectionsReady ? focusTimerRequest : 0}
+          key={key}
+          onTimerFocused={onTimerFocused}
+          today={today}
+        />
+      );
     }
     if (key === 'exams') {
       return status.exams.length === 0 ? (

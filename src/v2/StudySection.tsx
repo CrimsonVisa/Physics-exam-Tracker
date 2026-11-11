@@ -1,6 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toCommandError } from '../lib/commandError';
-import { onTimerUpdated } from '../lib/timerEvents';
 import {
   createV2ManualSession,
   deleteV2StudySession,
@@ -8,8 +7,6 @@ import {
   finishV2Timer,
   getV2ExamSyllabus,
   getV2StudyTotals,
-  getV2Timer,
-  heartbeatV2Timer,
   listV2Sessions,
   pauseV2Timer,
   resumeV2Timer,
@@ -27,18 +24,16 @@ import {
   type V2TimerSnapshot,
   type V2TopicAllocationInput,
 } from './api';
+import { formatTimerClock, TIMER_CARD_MODE_LABELS } from './timer/format';
+import { useV2Timer } from './timer/timerContext';
 
 type StudySectionProps = {
   exams: V2ExamSummary[];
   today: string;
   focusExamCode?: string;
   readOnly?: boolean;
-};
-
-const MODE_LABELS: Record<V2TimerMode, string> = {
-  focus: 'Focus session',
-  shortBreak: 'Short break',
-  longBreak: 'Long break',
+  focusRequest?: number;
+  onTimerFocused?: (requestId: number) => void;
 };
 
 const STATUS_LABELS = {
@@ -46,18 +41,6 @@ const STATUS_LABELS = {
   running: 'Running',
   paused: 'Paused',
 } as const;
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-function formatClock(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000));
-  const hours = Math.floor(totalSeconds / 3_600);
-  const minutes = Math.floor((totalSeconds % 3_600) / 60);
-  const seconds = totalSeconds % 60;
-  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
-}
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) {
@@ -97,14 +80,30 @@ type AllocationDraft = {
   search: string;
 };
 
-export function StudySection({ exams, today, focusExamCode, readOnly = false }: StudySectionProps) {
+export function StudySection({
+  exams,
+  today,
+  focusExamCode,
+  readOnly = false,
+  focusRequest = 0,
+  onTimerFocused,
+}: StudySectionProps) {
   const focusExam = useMemo(
     () => exams.find((exam) => exam.code === focusExamCode) ?? null,
     [exams, focusExamCode],
   );
   const locked = readOnly || (focusExam !== null && !focusExam.isActive);
 
-  const [timer, setTimer] = useState<V2TimerSnapshot | null>(null);
+  const {
+    snapshot: timer,
+    loading: timerLoading,
+    error: timerError,
+    elapsedMs,
+    remainingMs,
+    progress,
+    runMutation,
+    refresh: refreshTimer,
+  } = useV2Timer();
   const [sessions, setSessions] = useState<V2StudySession[]>([]);
   const [totals, setTotals] = useState<V2StudyTotals | null>(null);
   const [loading, setLoading] = useState(true);
@@ -116,8 +115,6 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     focusExam && focusExam.isActive ? String(focusExam.id) : '',
   );
   const [settingsDraft, setSettingsDraft] = useState<V2TimerSettings | null>(null);
-  const [receivedAt, setReceivedAt] = useState(() => Date.now());
-  const [clock, setClock] = useState(() => Date.now());
   const [editingSessionId, setEditingSessionId] = useState<number | null>(null);
   const [allocationDraft, setAllocationDraft] = useState<Record<number, string>>({});
   const [allocationError, setAllocationError] = useState<string | null>(null);
@@ -132,16 +129,9 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
-
-  const applySnapshot = useCallback((snapshot: V2TimerSnapshot) => {
-    setTimer(snapshot);
-    setSettingsDraft(snapshot.settings);
-    if (snapshot.state.status === 'idle') {
-      setMode(snapshot.state.mode);
-    }
-    setReceivedAt(Date.now());
-    setClock(Date.now());
-  }, []);
+  const previousTimerStatus = useRef(timer?.state.status ?? null);
+  const lastPersistedSettings = useRef<V2TimerSettings | null>(null);
+  const lastHandledFocusRequest = useRef(0);
 
   const refreshRecords = useCallback(async () => {
     const [nextSessions, nextTotals] = await Promise.all([listV2Sessions(), getV2StudyTotals()]);
@@ -153,12 +143,8 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     setLoading(true);
     setError(null);
     try {
-      const [snapshot, nextSessions, nextTotals] = await Promise.all([
-        getV2Timer(),
-        listV2Sessions(),
-        getV2StudyTotals(),
-      ]);
-      applySnapshot(snapshot);
+      await refreshTimer(true);
+      const [nextSessions, nextTotals] = await Promise.all([listV2Sessions(), getV2StudyTotals()]);
       setSessions(nextSessions);
       setTotals(nextTotals);
     } catch (loadError) {
@@ -166,21 +152,19 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     } finally {
       setLoading(false);
     }
-  }, [applySnapshot]);
+  }, [refreshTimer]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [snapshot, nextSessions, nextTotals] = await Promise.all([
-          getV2Timer(),
+        const [nextSessions, nextTotals] = await Promise.all([
           listV2Sessions(),
           getV2StudyTotals(),
         ]);
         if (cancelled) {
           return;
         }
-        applySnapshot(snapshot);
         setSessions(nextSessions);
         setTotals(nextTotals);
         setError(null);
@@ -197,50 +181,60 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     return () => {
       cancelled = true;
     };
-  }, [applySnapshot]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setClock(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
   }, []);
 
-  // Quick starts and resumes from other surfaces (dashboard Quick Start) change
-  // the same persisted timer; re-read the backend snapshot so this card never
-  // drifts out of sync. The database remains the single source of truth.
-  useEffect(
-    () =>
-      onTimerUpdated(() => {
-        void (async () => {
-          try {
-            const snapshot = await getV2Timer();
-            applySnapshot(snapshot);
-          } catch {
-            // The next heartbeat or user action surfaces backend errors.
-          }
-        })();
-      }),
-    [applySnapshot],
-  );
-
   useEffect(() => {
-    if (timer?.state.status !== 'running') {
+    if (!timer) {
       return;
     }
-    const interval = window.setInterval(() => {
-      void (async () => {
-        try {
-          const snapshot = await heartbeatV2Timer();
-          applySnapshot(snapshot);
-          if (snapshot.state.status !== 'running') {
-            await refreshRecords();
-          }
-        } catch (heartbeatError) {
-          setError(toCommandError(heartbeatError).message);
-        }
-      })();
-    }, 5_000);
-    return () => window.clearInterval(interval);
-  }, [applySnapshot, refreshRecords, timer?.state.status]);
+    const next = timer.settings;
+    const previous = lastPersistedSettings.current;
+    if (
+      !previous ||
+      previous.focusMinutes !== next.focusMinutes ||
+      previous.shortBreakMinutes !== next.shortBreakMinutes ||
+      previous.longBreakMinutes !== next.longBreakMinutes ||
+      previous.notificationsEnabled !== next.notificationsEnabled
+    ) {
+      lastPersistedSettings.current = next;
+      // Synchronize the editable draft only when persisted settings change.
+      setSettingsDraft(next);
+    }
+  }, [timer]);
+
+  useEffect(() => {
+    if (timer?.state.status === 'idle') {
+      // Reset the selected mode only when the persisted timer returns to idle.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMode(timer.state.mode);
+    }
+  }, [timer?.state.status, timer?.state.mode]);
+
+  useEffect(() => {
+    if (!focusRequest) {
+      lastHandledFocusRequest.current = 0;
+      return;
+    }
+    if (focusRequest === lastHandledFocusRequest.current || !timer) {
+      return;
+    }
+    const heading = document.getElementById('study-timer-heading');
+    if (!heading) {
+      return;
+    }
+    lastHandledFocusRequest.current = focusRequest;
+    heading.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    heading.focus({ preventScroll: true });
+    onTimerFocused?.(focusRequest);
+  }, [focusRequest, onTimerFocused, timer]);
+
+  useEffect(() => {
+    const previous = previousTimerStatus.current;
+    previousTimerStatus.current = timer?.state.status ?? null;
+    if ((previous === 'running' || previous === 'paused') && timer?.state.status === 'idle') {
+      void refreshRecords().catch((refreshError) => setError(toCommandError(refreshError).message));
+    }
+  }, [timer?.state.status, refreshRecords]);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,25 +284,6 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     // heartbeat, so an in-progress allocation edit is not overwritten.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timer?.state.status, timer?.state.lastCompletedSessionId]);
-
-  const elapsedMs = useMemo(() => {
-    if (!timer) {
-      return 0;
-    }
-    if (timer.state.status === 'running') {
-      return Math.min(
-        timer.state.durationMs,
-        timer.state.elapsedMs + Math.max(0, clock - receivedAt),
-      );
-    }
-    return timer.state.elapsedMs;
-  }, [clock, receivedAt, timer]);
-
-  const remainingMs = timer ? Math.max(0, timer.state.durationMs - elapsedMs) : 0;
-  const progress =
-    timer && timer.state.durationMs > 0
-      ? Math.min(100, (elapsedMs / timer.state.durationMs) * 100)
-      : 0;
 
   const visibleSessions = focusExam
     ? sessions.filter((session) =>
@@ -426,10 +401,11 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     setError(null);
     setNotice(null);
     try {
-      const snapshot = await setV2TimerAllocations({
-        allocations: timerAllocationInputs,
-      });
-      applySnapshot(snapshot);
+      await runMutation(() =>
+        setV2TimerAllocations({
+          allocations: timerAllocationInputs,
+        }),
+      );
       setNotice('Timer study allocations saved.');
     } catch (allocationFailure) {
       setTimerAllocationError(toCommandError(allocationFailure).message);
@@ -446,9 +422,7 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     setError(null);
     setNotice(null);
     try {
-      const snapshot = await action();
-      applySnapshot(snapshot);
-      await refreshRecords();
+      const snapshot = await runMutation(action);
       if (message) {
         setNotice(message(snapshot));
       }
@@ -477,7 +451,14 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
   }
 
   function handlePause() {
-    void runTimerAction(pauseV2Timer, () => 'Timer paused.');
+    void runTimerAction(pauseV2Timer, (snapshot) => {
+      if (snapshot.state.lastEvent === 'completed') {
+        return snapshot.state.lastCompletedSessionId !== null
+          ? 'Timer completed before pause. The session was saved.'
+          : 'Timer completed before pause. The break had already ended.';
+      }
+      return 'Timer paused.';
+    });
   }
 
   function handleResume() {
@@ -487,8 +468,8 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
   function handleFinish() {
     void runTimerAction(finishV2Timer, (snapshot) =>
       snapshot.state.lastCompletedSessionId !== null
-        ? `Session saved: ${formatClock(snapshot.state.lastEventDurationMs)}.`
-        : `Timer completed: ${formatClock(snapshot.state.lastEventDurationMs)}.`,
+        ? `Session saved: ${formatTimerClock(snapshot.state.lastEventDurationMs)}.`
+        : `Timer completed: ${formatTimerClock(snapshot.state.lastEventDurationMs)}.`,
     );
   }
 
@@ -496,7 +477,14 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     if (!window.confirm('Discard this timer? No study session will be saved.')) {
       return;
     }
-    void runTimerAction(discardV2Timer, () => 'Timer discarded. No session was saved.');
+    void runTimerAction(discardV2Timer, (snapshot) => {
+      if (snapshot.state.lastEvent === 'completed') {
+        return snapshot.state.lastCompletedSessionId !== null
+          ? 'Timer had already completed. The session was saved.'
+          : 'Timer had already completed. The break had ended.';
+      }
+      return 'Timer discarded. No session was saved.';
+    });
   }
 
   async function handleSaveSettings() {
@@ -507,8 +495,7 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
     setError(null);
     setNotice(null);
     try {
-      const snapshot = await updateV2TimerSettings(settingsDraft);
-      applySnapshot(snapshot);
+      await runMutation(() => updateV2TimerSettings(settingsDraft));
       setNotice('Timer lengths saved for the next timer.');
     } catch (settingsError) {
       setError(toCommandError(settingsError).message);
@@ -640,12 +627,12 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
   const lastEventNotice =
     timer?.state.lastEvent === 'completed'
       ? timer.state.lastCompletedSessionId !== null
-        ? `Previous timer saved as session #${timer.state.lastCompletedSessionId} (${formatClock(
+        ? `Previous timer saved as session #${timer.state.lastCompletedSessionId} (${formatTimerClock(
             timer.state.lastEventDurationMs,
           )}).`
-        : `Previous break completed after ${formatClock(timer.state.lastEventDurationMs)}. No study session was saved.`
+        : `Previous break completed after ${formatTimerClock(timer.state.lastEventDurationMs)}. No study session was saved.`
       : timer?.state.lastEvent === 'discarded'
-        ? `Previous timer was discarded after ${formatClock(timer.state.lastEventDurationMs)}.`
+        ? `Previous timer was discarded after ${formatTimerClock(timer.state.lastEventDurationMs)}.`
         : null;
 
   const recoveryNotice = timer?.state.recoveryReason
@@ -656,7 +643,7 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
         )} of unverified time was excluded.`
     : null;
 
-  if (loading && !timer) {
+  if ((loading || timerLoading) && !timer) {
     return (
       <section className="v2-study" aria-busy="true">
         <div className="v2-section-heading">
@@ -680,7 +667,7 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
           </div>
         </div>
         <p className="v2-study-error" role="alert">
-          {error ?? 'The study timer could not be loaded.'}
+          {timerError ?? error ?? 'The study timer could not be loaded.'}
         </p>
         <button
           className="secondary-button"
@@ -834,7 +821,9 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
       <div className="v2-section-heading">
         <div>
           <p className="eyebrow">Study</p>
-          <h2 id="study-timer-heading">Timer and sessions</h2>
+          <h2 id="study-timer-heading" tabIndex={-1}>
+            Timer and sessions
+          </h2>
         </div>
         <p>
           {focusExam
@@ -848,6 +837,11 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
           {error}
         </p>
       )}
+      {timerError && (
+        <p className="v2-study-error" role="alert">
+          {timerError}
+        </p>
+      )}
       {notice && (
         <p className="v2-study-notice" role="status">
           {notice}
@@ -859,7 +853,7 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
           <div className="v2-timer-topline">
             <div>
               <p className="eyebrow">Study timer</p>
-              <h3 id="timer-readout-heading">{MODE_LABELS[timer.state.mode]}</h3>
+              <h3 id="timer-readout-heading">{TIMER_CARD_MODE_LABELS[timer.state.mode]}</h3>
             </div>
             <span className={`v2-timer-status v2-timer-status-${completed ? 'completed' : status}`}>
               {statusLabel}
@@ -867,12 +861,14 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
           </div>
 
           <div
-            aria-label={`${formatClock(elapsedMs)} elapsed, ${formatClock(remainingMs)} remaining`}
+            aria-label={`${formatTimerClock(elapsedMs)} elapsed, ${formatTimerClock(remainingMs)} remaining`}
             className="v2-timer-readout"
             role="timer"
           >
-            <span className="v2-timer-elapsed">{formatClock(elapsedMs)}</span>
-            <span className="v2-timer-caption">elapsed · {formatClock(remainingMs)} remaining</span>
+            <span className="v2-timer-elapsed">{formatTimerClock(elapsedMs)}</span>
+            <span className="v2-timer-caption">
+              elapsed · {formatTimerClock(remainingMs)} remaining
+            </span>
           </div>
           <div
             aria-hidden="true"
@@ -900,9 +896,10 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
                         onChange={(event) => setMode(event.target.value as V2TimerMode)}
                         value={mode}
                       >
-                        {(Object.keys(MODE_LABELS) as V2TimerMode[]).map((value) => (
+                        {(Object.keys(TIMER_CARD_MODE_LABELS) as V2TimerMode[]).map((value) => (
                           <option key={value} value={value}>
-                            {MODE_LABELS[value]} ({modeDurationMinutes(value, timer.settings)} min)
+                            {TIMER_CARD_MODE_LABELS[value]} (
+                            {modeDurationMinutes(value, timer.settings)} min)
                           </option>
                         ))}
                       </select>
@@ -1299,7 +1296,7 @@ export function StudySection({ exams, today, focusExamCode, readOnly = false }: 
                   )}
                 </div>
                 {!locked && (
-                  <div className="v2-form-actions">
+                  <div className="v2-session-actions">
                     <button
                       className="secondary-button v2-allocate-button"
                       onClick={() => openAllocationEditor(session)}

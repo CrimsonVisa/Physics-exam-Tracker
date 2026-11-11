@@ -5,11 +5,12 @@ import { isEditableTarget, SHORTCUT_REFERENCE, useAppShortcuts } from './appShor
 function setup(enabled = true) {
   const onOpenSearch = vi.fn();
   const onOpenShortcuts = vi.fn();
+  const onOpenNotes = vi.fn();
   const onOpenExam = vi.fn();
   const hook = renderHook(() =>
-    useAppShortcuts({ onOpenSearch, onOpenShortcuts, onOpenExam }, enabled),
+    useAppShortcuts({ onOpenSearch, onOpenShortcuts, onOpenNotes, onOpenExam }, enabled),
   );
-  return { onOpenSearch, onOpenShortcuts, onOpenExam, hook };
+  return { onOpenSearch, onOpenShortcuts, onOpenNotes, onOpenExam, hook };
 }
 
 function press(key: string, options: KeyboardEventInit = {}, target: EventTarget = document.body) {
@@ -34,7 +35,7 @@ describe('appShortcuts', () => {
   it('publishes a discoverable reference including the typing exception', () => {
     expect(SHORTCUT_REFERENCE.some((entry) => entry.keys.includes('K'))).toBe(true);
     expect(SHORTCUT_REFERENCE.some((entry) => entry.label.includes('while typing'))).toBe(true);
-    expect(SHORTCUT_REFERENCE).toHaveLength(9);
+    expect(SHORTCUT_REFERENCE).toHaveLength(10);
   });
 
   it('detects editable targets', () => {
@@ -59,6 +60,18 @@ describe('appShortcuts', () => {
     const input = editableInput();
     press('k', { ctrlKey: true }, input);
     expect(onOpenSearch).toHaveBeenCalledTimes(2);
+    input.remove();
+  });
+
+  it('opens quick notes with Ctrl+Shift+N, including while typing', () => {
+    const { onOpenNotes } = setup();
+    const event = press('n', { ctrlKey: true, shiftKey: true });
+    expect(onOpenNotes).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+
+    const input = editableInput();
+    press('n', { ctrlKey: true, shiftKey: true }, input);
+    expect(onOpenNotes).toHaveBeenCalledTimes(2);
     input.remove();
   });
 

@@ -13,6 +13,9 @@ import './v2/flashcards.css';
 import './v2/calculator.css';
 import './v2/formulas.css';
 import './v2/terms.css';
+import './v2/reference.css';
+import './v2/notes/notes.css';
+import './v2/charts/charts.css';
 
 applyTheme(getStoredTheme());
 applyAppearance(getStoredFontFamily(), getStoredFontSize());
