@@ -1,14 +1,18 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { V2Analytics, V2ExamSummary } from './api';
+import type { V2Analytics, V2AnalyticsCharts, V2ExamSummary } from './api';
 import { AnalyticsScreen } from './AnalyticsScreen';
 
-vi.mock('./api', () => ({ getV2Analytics: vi.fn() }));
+vi.mock('./api', () => ({
+  getV2Analytics: vi.fn(),
+  getV2AnalyticsCharts: vi.fn(),
+}));
 
 import * as api from './api';
 
 const mockedAnalytics = vi.mocked(api.getV2Analytics);
+const mockedCharts = vi.mocked(api.getV2AnalyticsCharts);
 const TODAY = '2026-11-04';
 const EXAMS: V2ExamSummary[] = [
   {
@@ -73,10 +77,72 @@ const ANALYTICS: V2Analytics = {
   revisionCompletedLast30Days: 2,
 };
 
+const CHARTS: V2AnalyticsCharts = {
+  rangeFrom: '2026-10-06',
+  rangeTo: TODAY,
+  totalSeconds: 5400,
+  allocatedSeconds: 3600,
+  unallocatedSeconds: 1800,
+  studyByExam: [
+    {
+      examId: 1,
+      examCode: 'csir-net-physics',
+      examShortName: 'CSIR-NET',
+      allocatedSeconds: 3600,
+      sessionCount: 2,
+    },
+  ],
+  studyBySubject: [
+    {
+      examId: 1,
+      examCode: 'csir-net-physics',
+      subjectNodeId: 1,
+      subjectTitle: 'Mathematical Methods of Physics',
+      allocatedSeconds: 2400,
+      sessionCount: 2,
+    },
+  ],
+  dailyStudy: [{ label: TODAY, seconds: 3600, sessionCount: 2 }],
+  weeklyConsistency: [
+    {
+      weekStart: '2026-11-02',
+      label: '2026-11-02',
+      eligibleDays: 3,
+      activeDays: 1,
+      studySeconds: 3600,
+      sessionCount: 2,
+    },
+  ],
+  questionOutcomes: {
+    attempts: 0,
+    correct: 0,
+    incorrect: 0,
+    unanswered: 0,
+    gradedAttempts: 0,
+    accuracyPercentage: null,
+    insufficientSample: true,
+  },
+  outcomesByExam: [],
+  topicAccuracy: [],
+  syllabusCompletion: [
+    {
+      examId: 1,
+      examCode: 'csir-net-physics',
+      examShortName: 'CSIR-NET',
+      topicCount: 141,
+      completedTopicCount: 12,
+      completionPercentage: 8.511,
+    },
+  ],
+  mockTrend: [],
+  mockByExam: [],
+};
+
 describe('V2 analytics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAnalytics.mockResolvedValue(ANALYTICS);
+    mockedCharts.mockResolvedValue(CHARTS);
   });
 
   it('renders real study, consistency, mastery, and revision values', async () => {
@@ -87,6 +153,9 @@ describe('V2 analytics', () => {
     expect(screen.getByText('No evidenced concepts')).toBeInTheDocument();
     expect(screen.getByText('Unavailable — formula approval pending')).toBeInTheDocument();
     expect(screen.getByText('2026-W44')).toBeInTheDocument();
+    expect(await screen.findByText('Charts and comparisons')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Study time by examination' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Syllabus completion' })).toBeInTheDocument();
   });
 
   it('applies the exam filter', async () => {
@@ -102,6 +171,29 @@ describe('V2 analytics', () => {
         windowDays: 30,
       }),
     );
+  });
+
+  it('passes a validated custom range to both analytics commands', async () => {
+    const user = userEvent.setup();
+    render(<AnalyticsScreen exams={EXAMS} today={TODAY} />);
+    await screen.findByText('1 h 30 min');
+
+    await user.selectOptions(screen.getByLabelText('Window'), 'custom');
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-01' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-10' } });
+
+    await waitFor(() =>
+      expect(mockedCharts).toHaveBeenLastCalledWith({
+        examId: null,
+        fromDate: '2026-10-01',
+        toDate: '2026-10-10',
+      }),
+    );
+    expect(mockedAnalytics).toHaveBeenLastCalledWith({
+      examId: null,
+      today: '2026-10-10',
+      windowDays: 10,
+    });
   });
 
   it('shows second-level durations for short sessions instead of rounding to zero', async () => {

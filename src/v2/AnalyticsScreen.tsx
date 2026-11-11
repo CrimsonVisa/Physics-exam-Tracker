@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toCommandError } from '../lib/commandError';
-import { getV2Analytics, type V2Analytics, type V2ExamSummary } from './api';
+import { AnalyticsCharts } from './AnalyticsCharts';
+import {
+  getV2Analytics,
+  getV2AnalyticsCharts,
+  type V2Analytics,
+  type V2AnalyticsCharts,
+  type V2ExamSummary,
+} from './api';
 
 type AnalyticsScreenProps = {
   exams: V2ExamSummary[];
@@ -28,30 +35,88 @@ function examShortName(exams: V2ExamSummary[], code: string): string {
   return exams.find((exam) => exam.code === code)?.shortName ?? code;
 }
 
+function shiftDate(date: string, days: number): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function inclusiveDays(from: string, to: string): number {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return 0;
+  }
+  return Math.floor((end - start) / 86_400_000) + 1;
+}
+
 export function AnalyticsScreen({ exams, today }: AnalyticsScreenProps) {
   const [examCode, setExamCode] = useState('');
-  const [windowDays, setWindowDays] = useState('30');
+  const [rangeMode, setRangeMode] = useState('30');
+  const [customFrom, setCustomFrom] = useState(() => shiftDate(today, -29));
+  const [customTo, setCustomTo] = useState(today);
   const [analytics, setAnalytics] = useState<V2Analytics | null>(null);
+  const [charts, setCharts] = useState<V2AnalyticsCharts | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [chartsError, setChartsError] = useState<string | null>(null);
   const examId = exams.find((exam) => exam.code === examCode)?.id ?? null;
 
+  const range = useMemo(() => {
+    if (rangeMode === 'custom') {
+      return {
+        fromDate: customFrom,
+        toDate: customTo,
+        days: inclusiveDays(customFrom, customTo),
+      };
+    }
+    const days = Number(rangeMode);
+    return {
+      fromDate: shiftDate(today, -(days - 1)),
+      toDate: today,
+      days,
+    };
+  }, [customFrom, customTo, rangeMode, today]);
+  const rangeError =
+    range.days < 1
+      ? 'Choose a valid start and end date.'
+      : range.days > 365
+        ? 'Analytics ranges cannot exceed 365 days.'
+        : null;
+
   const load = useCallback(
-    async (selectedExamId: number | null, days: number) => {
+    async (selectedExamId: number | null, days: number, fromDate: string, toDate: string) => {
       try {
-        setAnalytics(await getV2Analytics({ examId: selectedExamId, today, windowDays: days }));
+        setAnalytics(
+          await getV2Analytics({ examId: selectedExamId, today: toDate, windowDays: days }),
+        );
         setError(null);
       } catch (loadError) {
         setError(toCommandError(loadError).message);
       }
+      try {
+        setCharts(
+          await getV2AnalyticsCharts({
+            examId: selectedExamId,
+            fromDate,
+            toDate,
+          }),
+        );
+        setChartsError(null);
+      } catch (chartsFailure) {
+        setChartsError(toCommandError(chartsFailure).message);
+      }
     },
-    [today],
+    [],
   );
 
   useEffect(() => {
+    if (rangeError) {
+      return;
+    }
     void (async () => {
-      await load(examId, Number(windowDays));
+      await load(examId, range.days, range.fromDate, range.toDate);
     })();
-  }, [examId, load, windowDays]);
+  }, [examId, load, range, rangeError]);
 
   return (
     <div className="page-container v2-analytics-page">
@@ -79,14 +144,43 @@ export function AnalyticsScreen({ exams, today }: AnalyticsScreenProps) {
         </label>
         <label className="v2-field">
           <span>Window</span>
-          <select onChange={(event) => setWindowDays(event.target.value)} value={windowDays}>
+          <select onChange={(event) => setRangeMode(event.target.value)} value={rangeMode}>
             <option value="7">7 days</option>
             <option value="30">30 days</option>
             <option value="90">90 days</option>
             <option value="365">365 days</option>
+            <option value="custom">Custom range</option>
           </select>
         </label>
+        {rangeMode === 'custom' ? (
+          <>
+            <label className="v2-field">
+              <span>From</span>
+              <input
+                max={customTo}
+                onChange={(event) => setCustomFrom(event.target.value)}
+                type="date"
+                value={customFrom}
+              />
+            </label>
+            <label className="v2-field">
+              <span>To</span>
+              <input
+                min={customFrom}
+                onChange={(event) => setCustomTo(event.target.value)}
+                type="date"
+                value={customTo}
+              />
+            </label>
+          </>
+        ) : null}
       </div>
+
+      {rangeError ? (
+        <p className="v2-study-error" role="alert">
+          {rangeError}
+        </p>
+      ) : null}
 
       {error && (
         <p className="v2-study-error" role="alert">
@@ -267,6 +361,29 @@ export function AnalyticsScreen({ exams, today }: AnalyticsScreenProps) {
           </div>
         </>
       )}
+
+      <section aria-labelledby="analytics-charts-heading" className="v2-analytics-chart-section">
+        <header className="v2-section-heading">
+          <div>
+            <p className="eyebrow">Visual analytics</p>
+            <h2 id="analytics-charts-heading">Charts and comparisons</h2>
+          </div>
+          <p>
+            All charts use recorded data only. Small samples and unallocated time are labelled
+            explicitly.
+          </p>
+        </header>
+        {chartsError ? (
+          <p className="v2-study-error" role="alert">
+            {chartsError}
+          </p>
+        ) : null}
+        {charts && !rangeError ? (
+          <AnalyticsCharts charts={charts} exams={exams} />
+        ) : charts === null && !chartsError && !rangeError ? (
+          <p className="v2-empty-panel-copy">Loading chart data…</p>
+        ) : null}
+      </section>
     </div>
   );
 }
