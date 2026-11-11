@@ -128,7 +128,7 @@ function dashboardSections() {
     { sectionKey: 'overview', title: 'Database overview', visible: true, displayOrder: 0 },
     { sectionKey: 'study', title: 'Study timer and sessions', visible: true, displayOrder: 1 },
     { sectionKey: 'exams', title: 'Examination workspaces', visible: true, displayOrder: 2 },
-    { sectionKey: 'database', title: 'V2 database details', visible: true, displayOrder: 3 },
+    { sectionKey: 'database', title: 'Database details', visible: true, displayOrder: 3 },
   ];
 }
 
@@ -142,7 +142,7 @@ const SMART_SECTION_TITLES: Record<string, string> = {
   overview: 'Database overview',
   study: 'Study timer and sessions',
   exams: 'Examination workspaces',
-  database: 'V2 database details',
+  database: 'Database details',
 };
 
 function smartSections(withPerformance = true): Array<{
@@ -1172,7 +1172,7 @@ describe('V2 application shell', () => {
     render(<V2App today={TODAY} />);
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'V2 database not initialized' }),
+      await screen.findByRole('heading', { level: 1, name: 'Database not initialized' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Initialize database' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry status check' })).toBeInTheDocument();
@@ -1185,7 +1185,7 @@ describe('V2 application shell', () => {
     expect(
       await screen.findByRole('heading', {
         level: 1,
-        name: 'Physics Tracker could not read its V2 database',
+        name: 'Physics Tracker could not read its database',
       }),
     ).toBeInTheDocument();
     expect(document.querySelectorAll('.v2-exam-card')).toHaveLength(0);
@@ -1197,7 +1197,7 @@ describe('V2 application shell', () => {
     ['metadataMismatch', 'Database metadata mismatch'],
     ['integrityFailure', 'Database integrity check failed'],
     ['foreignKeyFailure', 'Database relationship check failed'],
-    ['inaccessible', 'V2 database inaccessible'],
+    ['inaccessible', 'Database inaccessible'],
   ];
 
   it.each(unhealthyCases)('renders the %s database state as unhealthy', async (state, title) => {

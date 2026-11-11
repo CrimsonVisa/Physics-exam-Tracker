@@ -44,7 +44,7 @@ const FALLBACK_SECTIONS: Array<[string, string]> = [
   ['overview', 'Database overview'],
   ['study', 'Study timer and sessions'],
   ['exams', 'Examination workspaces'],
-  ['database', 'V2 database details'],
+  ['database', 'Database details'],
 ];
 
 function ExamCard({
@@ -288,7 +288,7 @@ export function CombinedDashboard({
       return status.exams.length === 0 ? (
         <section className="v2-empty-panel" aria-live="polite" key={key}>
           <h2>No exam workspaces configured</h2>
-          <p>The V2 database did not return any exam records. Retry the database check.</p>
+          <p>The database did not return any exam records. Retry the database check.</p>
         </section>
       ) : (
         <section aria-labelledby="exam-workspaces-heading" className="v2-exam-grid" key={key}>
@@ -316,7 +316,7 @@ export function CombinedDashboard({
           <div className="v2-section-heading">
             <div>
               <p className="eyebrow">Local storage</p>
-              <h2 id="database-status-heading">V2 database</h2>
+              <h2 id="database-status-heading">Database</h2>
             </div>
             <span className="v2-health-pill">Healthy</span>
           </div>
@@ -356,11 +356,11 @@ export function CombinedDashboard({
   return (
     <div className="page-container v2-dashboard">
       <header className="page-header">
-        <p className="eyebrow">Physics Tracker · V2 foundation</p>
+        <p className="eyebrow">Physics Tracker · dashboard</p>
         <h1>Combined dashboard</h1>
         <p className="page-lede">
           Four independent examination workspaces share one local Physics database. Dates and
-          workspace details shown here come directly from the verified V2 database.
+          workspace details shown here come directly from the verified database.
         </p>
       </header>
 

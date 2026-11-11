@@ -53,7 +53,7 @@ export function ExamWorkspace({
             </p>
             <h1>{exam.name}</h1>
             <p className="page-lede">
-              This workspace is resolved from the V2 database by its stable exam code. It shows the
+              This workspace is resolved from the database by its stable exam code. It shows the
               examination identity, activation state, shared timer, and exam-specific syllabus
               progress.
             </p>

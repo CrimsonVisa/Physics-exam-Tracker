@@ -14,7 +14,7 @@ const DEFAULT_SECTIONS: [(&str, &str); 10] = [
     ("overview", "Database overview"),
     ("study", "Study timer and sessions"),
     ("exams", "Examination workspaces"),
-    ("database", "V2 database details"),
+    ("database", "Database details"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

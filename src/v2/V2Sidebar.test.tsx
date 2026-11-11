@@ -121,7 +121,7 @@ describe('V2Sidebar', () => {
     expect(screen.getByText('JEST')).toBeInTheDocument();
     expect(screen.getByText('TIFR GS')).toBeInTheDocument();
     expect(screen.getByText('Inactive')).toBeInTheDocument();
-    expect(screen.getByText(/One local V2 database/)).toBeInTheDocument();
+    expect(screen.getByText(/One local database/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute(
       'aria-expanded',
       'true',
@@ -266,7 +266,7 @@ describe('V2Sidebar', () => {
       'aria-expanded',
       'false',
     );
-    expect(screen.queryByText(/One local V2 database/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/One local database/)).not.toBeInTheDocument();
 
     fireEvent.mouseEnter(practice);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Practice');

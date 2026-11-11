@@ -130,7 +130,7 @@ export function BackupScreen({ onChanged }: BackupScreenProps) {
         <p className="eyebrow">Physics Tracker · data safety</p>
         <h1>Backup and restore</h1>
         <p className="page-lede">
-          V2 backups contain the complete local database. Restore creates a safety copy first and
+          Backups contain the complete local database. Restore creates a safety copy first and
           verifies schema, exams, integrity, and foreign keys before accepting the restored
           database.
         </p>
@@ -236,7 +236,7 @@ export function BackupScreen({ onChanged }: BackupScreenProps) {
                 integrity {preview.integrityCheck}
               </p>
               <p className="v2-empty-copy">
-                Restoring replaces the live V2 database. A safety backup will be created first.
+                Restoring replaces the live database. A safety backup will be created first.
               </p>
               {preview.requiresUpgrade && (
                 <p className="v2-empty-copy">

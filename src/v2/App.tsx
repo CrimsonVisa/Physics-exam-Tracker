@@ -121,11 +121,11 @@ function BootstrapError({ message, busy, onRetry }: BootstrapErrorProps) {
     <main className="v2-database-state">
       <div className="v2-database-state-card" role="alert">
         <BrandLockup subtitle="Scientific study workspace" />
-        <p className="eyebrow">Physics Tracker · V2 database</p>
-        <h1>Physics Tracker could not read its V2 database</h1>
+        <p className="eyebrow">Physics Tracker · database</p>
+        <h1>Physics Tracker could not read its database</h1>
         <p>{message}</p>
         <p>
-          The shell does not fall back to V1 data. Check the V2 application-data folder and retry.
+          The app does not fall back to legacy data. Check the application-data folder and retry.
         </p>
         <div className="v2-database-actions">
           <button className="primary-button" disabled={busy} onClick={onRetry} type="button">
@@ -296,8 +296,8 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
       <main className="v2-database-state" aria-busy="true">
         <div className="v2-database-state-card" role="status">
           <BrandLockup subtitle="Scientific study workspace" />
-          <p className="eyebrow">Physics Tracker · V2 database</p>
-          <h1>Opening the V2 database</h1>
+          <p className="eyebrow">Physics Tracker · database</p>
+          <h1>Opening the database</h1>
           <p>Checking the local database foundation and the four examination records.</p>
         </div>
       </main>
@@ -308,7 +308,7 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
     return (
       <BootstrapError
         busy={busy}
-        message={loadError ?? 'The V2 database did not return a status.'}
+        message={loadError ?? 'The database did not return a status.'}
         onRetry={() => void loadStatus(true)}
       />
     );
@@ -343,7 +343,7 @@ function V2AppShell({ today: fixedToday }: V2AppProps) {
         <div className="page-container">
           <section className="v2-empty-panel" role="alert">
             <h1>Exam workspace unavailable</h1>
-            <p>The selected exam code is not present in the V2 database.</p>
+            <p>The selected exam code is not present in the database.</p>
             <button
               className="secondary-button"
               onClick={() => setView({ kind: 'dashboard' })}

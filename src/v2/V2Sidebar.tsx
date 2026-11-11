@@ -323,7 +323,7 @@ export function V2Sidebar({
 
       {mode === 'expanded' && (
         <p className="sidebar-note">
-          One local V2 database. V1 data is untouched and is never opened by this shell.
+          One local database. Legacy data is untouched and is never opened by this application.
         </p>
       )}
 
