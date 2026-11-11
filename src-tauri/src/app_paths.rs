@@ -71,6 +71,66 @@ mod tests {
     }
 
     #[test]
+    fn main_window_starts_maximized_with_native_window_controls() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri config");
+        let windows = config["app"]["windows"].as_array().expect("app windows");
+        assert_eq!(windows.len(), 1, "the app must keep one main window");
+        let window = &windows[0];
+
+        assert_eq!(window["title"].as_str(), Some("Physics Tracker"));
+        assert!(window["label"].is_null() || window["label"].as_str() == Some("main"));
+        assert_eq!(window["maximized"].as_bool(), Some(true));
+        assert_eq!(window["fullscreen"].as_bool(), Some(false));
+        assert_eq!(window["decorations"].as_bool(), Some(true));
+        assert_eq!(window["resizable"].as_bool(), Some(true));
+        assert_eq!(window["maximizable"].as_bool(), Some(true));
+        assert_eq!(window["minimizable"].as_bool(), Some(true));
+        assert_eq!(window["closable"].as_bool(), Some(true));
+        assert_eq!(window["create"].as_bool(), Some(false));
+        assert_eq!(window["width"].as_u64(), Some(1100));
+        assert_eq!(window["height"].as_u64(), Some(760));
+        assert_eq!(window["minWidth"].as_u64(), Some(800));
+        assert_eq!(window["minHeight"].as_u64(), Some(600));
+    }
+
+    #[test]
+    fn content_security_policy_allows_embedded_fonts_without_weakening_other_restrictions() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri config");
+        let csp = config["app"]["security"]["csp"]
+            .as_str()
+            .expect("production csp");
+        let dev_csp = config["app"]["security"]["devCsp"]
+            .as_str()
+            .expect("development csp");
+
+        for policy in [csp, dev_csp] {
+            assert!(
+                policy.contains("font-src 'self' data:"),
+                "embedded fonts must be allowed"
+            );
+            assert!(policy.contains("default-src 'self'"));
+            assert!(policy.contains("script-src 'self'"));
+            assert!(policy.contains("style-src 'self' 'unsafe-inline'"));
+            assert!(policy.contains("img-src 'self' asset: http://asset.localhost data:"));
+            assert!(
+                !policy
+                    .split(';')
+                    .any(|directive| directive.trim() == "default-src *")
+            );
+            assert!(
+                !policy
+                    .split(';')
+                    .any(|directive| directive.trim() == "font-src *")
+            );
+        }
+        assert!(csp.contains("connect-src ipc: http://ipc.localhost"));
+        assert!(csp.contains("script-src 'self'"));
+        assert!(!csp.contains("script-src 'unsafe-inline'"));
+    }
+
+    #[test]
     fn v2_identity_is_separate_and_matches_tauri_configuration() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri config");

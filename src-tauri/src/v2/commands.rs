@@ -1564,6 +1564,155 @@ pub async fn v2_get_flashcard_stats(
     .await
 }
 
+#[tauri::command]
+pub async fn v2_list_custom_formulas(
+    app: AppHandle,
+) -> Result<Vec<super::reference::V2CustomFormula>, AppError> {
+    run_blocking(app, |state| {
+        state.with_connection(|connection| super::reference::list_custom_formulas(connection))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_save_custom_formula(
+    app: AppHandle,
+    input: super::reference::V2CustomFormulaInput,
+) -> Result<super::reference::V2CustomFormula, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::reference::save_custom_formula(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_delete_custom_formula(app: AppHandle, id: i64) -> Result<(), AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| super::reference::delete_custom_formula(connection, id))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_list_custom_units(
+    app: AppHandle,
+) -> Result<Vec<super::reference::V2CustomUnit>, AppError> {
+    run_blocking(app, |state| {
+        state.with_connection(|connection| super::reference::list_custom_units(connection))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_save_custom_unit(
+    app: AppHandle,
+    input: super::reference::V2CustomUnitInput,
+) -> Result<super::reference::V2CustomUnit, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::reference::save_custom_unit(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_delete_custom_unit(app: AppHandle, id: i64) -> Result<(), AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| super::reference::delete_custom_unit(connection, id))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_list_custom_constants(
+    app: AppHandle,
+) -> Result<Vec<super::reference::V2CustomConstant>, AppError> {
+    run_blocking(app, |state| {
+        state.with_connection(|connection| super::reference::list_custom_constants(connection))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_save_custom_constant(
+    app: AppHandle,
+    input: super::reference::V2CustomConstantInput,
+) -> Result<super::reference::V2CustomConstant, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::reference::save_custom_constant(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_delete_custom_constant(app: AppHandle, id: i64) -> Result<(), AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| super::reference::delete_custom_constant(connection, id))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_get_analytics_charts(
+    app: AppHandle,
+    input: super::analytics_charts::V2AnalyticsChartsInput,
+) -> Result<super::analytics_charts::V2AnalyticsCharts, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::analytics_charts::get_analytics_charts(connection, input)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_get_builtin_constants(
+    app: AppHandle,
+) -> Result<super::builtin_constants::V2BuiltinConstantCatalog, AppError> {
+    run_blocking(app, |state| {
+        state.with_connection(|connection| {
+            super::builtin_constants::list_builtin_constants(connection)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_list_sticky_notes(
+    app: AppHandle,
+) -> Result<Vec<super::sticky_notes::V2StickyNote>, AppError> {
+    run_blocking(app, |state| {
+        state.with_connection(|connection| super::sticky_notes::list_sticky_notes(connection))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_save_sticky_note(
+    app: AppHandle,
+    input: super::sticky_notes::V2StickyNoteInput,
+) -> Result<super::sticky_notes::V2StickyNote, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::sticky_notes::save_sticky_note(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_delete_sticky_note(app: AppHandle, id: i64) -> Result<(), AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| super::sticky_notes::delete_sticky_note(connection, id))
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

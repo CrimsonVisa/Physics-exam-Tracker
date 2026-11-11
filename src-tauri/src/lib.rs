@@ -52,38 +52,41 @@ use std::path::Path;
 
 use chrono::{Local, Utc};
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindowBuilder};
 
 use error::AppError;
 use v2::{
     V2State, v2_acquire_pyq_source, v2_apply_exam_date_change, v2_apply_pyq_import,
     v2_apply_restore_backup, v2_archive_mock_test, v2_archive_pyq_question, v2_archive_resource,
     v2_check_integrity, v2_complete_revision, v2_create_manual_backup, v2_create_manual_session,
-    v2_defer_revision, v2_delete_block, v2_delete_quick_start_config, v2_delete_study_session,
-    v2_delete_task, v2_discard_timer, v2_extract_pyq_source, v2_finish_timer,
-    v2_generate_revision_daily_plan, v2_get_agenda, v2_get_analytics, v2_get_app_settings,
-    v2_get_backup_overview, v2_get_concept_detail, v2_get_dashboard_sections,
-    v2_get_database_status, v2_get_exam_syllabus, v2_get_flashcard_detail,
-    v2_get_flashcard_review_queue, v2_get_flashcard_stats, v2_get_planner_day,
-    v2_get_practice_analytics, v2_get_practice_options, v2_get_pyq_answer_key,
+    v2_defer_revision, v2_delete_block, v2_delete_custom_constant, v2_delete_custom_formula,
+    v2_delete_custom_unit, v2_delete_quick_start_config, v2_delete_sticky_note,
+    v2_delete_study_session, v2_delete_task, v2_discard_timer, v2_extract_pyq_source,
+    v2_finish_timer, v2_generate_revision_daily_plan, v2_get_agenda, v2_get_analytics,
+    v2_get_analytics_charts, v2_get_app_settings, v2_get_backup_overview, v2_get_builtin_constants,
+    v2_get_concept_detail, v2_get_dashboard_sections, v2_get_database_status, v2_get_exam_syllabus,
+    v2_get_flashcard_detail, v2_get_flashcard_review_queue, v2_get_flashcard_stats,
+    v2_get_planner_day, v2_get_practice_analytics, v2_get_practice_options, v2_get_pyq_answer_key,
     v2_get_pyq_extraction_candidate, v2_get_pyq_question_detail, v2_get_pyq_source_counts,
     v2_get_pyq_source_detail, v2_get_question_mock_session, v2_get_restore_recovery,
     v2_get_revision_daily_plan, v2_get_revision_dashboard, v2_get_study_totals, v2_get_timer,
     v2_global_search, v2_heartbeat_timer, v2_import_resource_file, v2_initialize_database,
     v2_link_block_session, v2_link_resource_exam, v2_link_revision_plan_block,
-    v2_list_exam_profiles, v2_list_exams, v2_list_flashcards, v2_list_mock_tests,
-    v2_list_pyq_answer_key_conflicts, v2_list_pyq_answer_keys, v2_list_pyq_attempts,
-    v2_list_pyq_extraction_candidates, v2_list_pyq_questions, v2_list_pyq_sources,
-    v2_list_question_mock_candidates, v2_list_quick_start_configs, v2_list_resources,
-    v2_list_sessions, v2_move_revision_plan_item, v2_pause_timer, v2_preview_exam_date_change,
+    v2_list_custom_constants, v2_list_custom_formulas, v2_list_custom_units, v2_list_exam_profiles,
+    v2_list_exams, v2_list_flashcards, v2_list_mock_tests, v2_list_pyq_answer_key_conflicts,
+    v2_list_pyq_answer_keys, v2_list_pyq_attempts, v2_list_pyq_extraction_candidates,
+    v2_list_pyq_questions, v2_list_pyq_sources, v2_list_question_mock_candidates,
+    v2_list_quick_start_configs, v2_list_resources, v2_list_sessions, v2_list_sticky_notes,
+    v2_move_revision_plan_item, v2_pause_timer, v2_preview_exam_date_change,
     v2_preview_pyq_answer_key, v2_preview_pyq_import, v2_preview_restore_backup,
     v2_rebalance_revision_daily_plan, v2_reconcile_pyq_source, v2_record_pyq_attempt,
     v2_reject_pyq_extraction_candidate, v2_remove_resource_file, v2_replay_concept_mastery,
     v2_reschedule_revision, v2_reschedule_task, v2_reset_dashboard_sections,
     v2_restore_recovery_safety, v2_resume_timer, v2_review_flashcard,
-    v2_run_automatic_backup_if_due, v2_save_block, v2_save_dashboard_sections, v2_save_flashcard,
-    v2_save_mock_test, v2_save_pyq_answer_key, v2_save_pyq_question, v2_save_pyq_source,
-    v2_save_question_mock_state, v2_save_quick_start_config, v2_save_resource, v2_save_task,
+    v2_run_automatic_backup_if_due, v2_save_block, v2_save_custom_constant, v2_save_custom_formula,
+    v2_save_custom_unit, v2_save_dashboard_sections, v2_save_flashcard, v2_save_mock_test,
+    v2_save_pyq_answer_key, v2_save_pyq_question, v2_save_pyq_source, v2_save_question_mock_state,
+    v2_save_quick_start_config, v2_save_resource, v2_save_sticky_note, v2_save_task,
     v2_schedule_revision_concept, v2_search_concepts, v2_set_block_status, v2_set_exam_active,
     v2_set_flashcard_archived, v2_set_mock_test_status, v2_set_pyq_source_status,
     v2_set_revision_status, v2_set_session_allocations, v2_set_task_status,
@@ -1541,6 +1544,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            let window_config = app.config().app.windows.first().cloned().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "main window configuration is missing",
+                )
+            })?;
+
+            let app_local_data_dir = app.path().app_local_data_dir()?;
+
+            WebviewWindowBuilder::from_config(app.handle(), &window_config)?
+                .data_directory(app_local_data_dir)
+                .build()?;
+
             let resolved = app
                 .path()
                 .data_dir()
@@ -1586,6 +1602,7 @@ pub fn run() {
             v2_list_exams,
             v2_check_integrity,
             v2_get_timer,
+            v2_get_analytics_charts,
             v2_start_timer,
             v2_set_timer_allocations,
             v2_pause_timer,
@@ -1666,6 +1683,19 @@ pub fn run() {
             v2_get_flashcard_review_queue,
             v2_review_flashcard,
             v2_get_flashcard_stats,
+            v2_list_custom_formulas,
+            v2_save_custom_formula,
+            v2_delete_custom_formula,
+            v2_list_custom_units,
+            v2_save_custom_unit,
+            v2_delete_custom_unit,
+            v2_list_custom_constants,
+            v2_save_custom_constant,
+            v2_delete_custom_constant,
+            v2_get_builtin_constants,
+            v2_list_sticky_notes,
+            v2_save_sticky_note,
+            v2_delete_sticky_note,
             v2_get_practice_options,
             v2_list_pyq_questions,
             v2_get_pyq_question_detail,

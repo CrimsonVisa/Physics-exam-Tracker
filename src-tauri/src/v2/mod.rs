@@ -15,7 +15,9 @@ use crate::{app_paths::V2_APP_IDENTIFIER, error::AppError};
 
 pub mod admin;
 pub mod analytics;
+pub mod analytics_charts;
 pub mod backup;
+pub mod builtin_constants;
 mod commands;
 pub mod concepts;
 pub mod dashboard;
@@ -24,9 +26,11 @@ pub mod mastery;
 pub mod planner;
 pub mod practice;
 pub mod quick_start;
+pub mod reference;
 pub mod resources;
 pub mod revision;
 pub mod search;
+pub mod sticky_notes;
 pub mod study;
 pub mod syllabus;
 
@@ -34,10 +38,12 @@ pub use commands::{
     v2_acquire_pyq_source, v2_apply_exam_date_change, v2_apply_pyq_import, v2_apply_restore_backup,
     v2_archive_mock_test, v2_archive_pyq_question, v2_archive_resource, v2_check_integrity,
     v2_complete_revision, v2_create_manual_backup, v2_create_manual_session, v2_defer_revision,
-    v2_delete_block, v2_delete_quick_start_config, v2_delete_study_session, v2_delete_task,
+    v2_delete_block, v2_delete_custom_constant, v2_delete_custom_formula, v2_delete_custom_unit,
+    v2_delete_quick_start_config, v2_delete_sticky_note, v2_delete_study_session, v2_delete_task,
     v2_discard_timer, v2_extract_pyq_source, v2_finish_timer, v2_generate_revision_daily_plan,
-    v2_get_agenda, v2_get_analytics, v2_get_app_settings, v2_get_backup_overview,
-    v2_get_concept_detail, v2_get_dashboard_sections, v2_get_database_status, v2_get_exam_syllabus,
+    v2_get_agenda, v2_get_analytics, v2_get_analytics_charts, v2_get_app_settings,
+    v2_get_backup_overview, v2_get_builtin_constants, v2_get_concept_detail,
+    v2_get_dashboard_sections, v2_get_database_status, v2_get_exam_syllabus,
     v2_get_flashcard_detail, v2_get_flashcard_review_queue, v2_get_flashcard_stats,
     v2_get_planner_day, v2_get_practice_analytics, v2_get_practice_options, v2_get_pyq_answer_key,
     v2_get_pyq_extraction_candidate, v2_get_pyq_question_detail, v2_get_pyq_source_counts,
@@ -45,19 +51,21 @@ pub use commands::{
     v2_get_revision_daily_plan, v2_get_revision_dashboard, v2_get_study_totals, v2_get_timer,
     v2_global_search, v2_heartbeat_timer, v2_import_resource_file, v2_initialize_database,
     v2_link_block_session, v2_link_resource_exam, v2_link_revision_plan_block,
-    v2_list_exam_profiles, v2_list_exams, v2_list_flashcards, v2_list_mock_tests,
-    v2_list_pyq_answer_key_conflicts, v2_list_pyq_answer_keys, v2_list_pyq_attempts,
-    v2_list_pyq_extraction_candidates, v2_list_pyq_questions, v2_list_pyq_sources,
-    v2_list_question_mock_candidates, v2_list_quick_start_configs, v2_list_resources,
-    v2_list_sessions, v2_move_revision_plan_item, v2_pause_timer, v2_preview_exam_date_change,
+    v2_list_custom_constants, v2_list_custom_formulas, v2_list_custom_units, v2_list_exam_profiles,
+    v2_list_exams, v2_list_flashcards, v2_list_mock_tests, v2_list_pyq_answer_key_conflicts,
+    v2_list_pyq_answer_keys, v2_list_pyq_attempts, v2_list_pyq_extraction_candidates,
+    v2_list_pyq_questions, v2_list_pyq_sources, v2_list_question_mock_candidates,
+    v2_list_quick_start_configs, v2_list_resources, v2_list_sessions, v2_list_sticky_notes,
+    v2_move_revision_plan_item, v2_pause_timer, v2_preview_exam_date_change,
     v2_preview_pyq_answer_key, v2_preview_pyq_import, v2_preview_restore_backup,
     v2_rebalance_revision_daily_plan, v2_reconcile_pyq_source, v2_record_pyq_attempt,
     v2_reject_pyq_extraction_candidate, v2_remove_resource_file, v2_replay_concept_mastery,
     v2_reschedule_revision, v2_reschedule_task, v2_reset_dashboard_sections,
     v2_restore_recovery_safety, v2_resume_timer, v2_review_flashcard,
-    v2_run_automatic_backup_if_due, v2_save_block, v2_save_dashboard_sections, v2_save_flashcard,
-    v2_save_mock_test, v2_save_pyq_answer_key, v2_save_pyq_question, v2_save_pyq_source,
-    v2_save_question_mock_state, v2_save_quick_start_config, v2_save_resource, v2_save_task,
+    v2_run_automatic_backup_if_due, v2_save_block, v2_save_custom_constant, v2_save_custom_formula,
+    v2_save_custom_unit, v2_save_dashboard_sections, v2_save_flashcard, v2_save_mock_test,
+    v2_save_pyq_answer_key, v2_save_pyq_question, v2_save_pyq_source, v2_save_question_mock_state,
+    v2_save_quick_start_config, v2_save_resource, v2_save_sticky_note, v2_save_task,
     v2_schedule_revision_concept, v2_search_concepts, v2_set_block_status, v2_set_exam_active,
     v2_set_flashcard_archived, v2_set_mock_test_status, v2_set_pyq_source_status,
     v2_set_revision_status, v2_set_session_allocations, v2_set_task_status,
@@ -69,18 +77,34 @@ pub use commands::{
 };
 
 pub const V2_DATABASE_FILE_NAME: &str = "physics-tracker.sqlite3";
-pub const V2_SCHEMA_VERSION: i64 = 3;
+pub const V2_SCHEMA_VERSION: i64 = 5;
+pub(crate) const SCHEMA_VERSION_3: i64 = 3;
+pub(crate) const SCHEMA_VERSION_4: i64 = 4;
+// Frozen checksum of the schema.sql payload shipped with schema version 3.
+// Historical databases and backups carry this checksum in their append-only
+// migration ledger, so it must never be regenerated from the current schema.
+pub(crate) const SCHEMA_3_CHECKSUM: &str =
+    "b3f05cdb342a9b3d065a51ab144c0c40f91b9d3078793dae57a9f69732b5d29b";
+// Frozen checksum of the schema.sql payload shipped with schema version 4.
+pub(crate) const SCHEMA_4_CHECKSUM: &str =
+    "cbea905c3040e9d2bfdc4fe72c7fe92e42201cba5df90db4840baac2d5a6050a";
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 const SEED_SQL: &str = include_str!("seed.sql");
 const UPGRADE_SQL_V2_2: &str = include_str!("schema_upgrade_v2_2.sql");
 const UPGRADE_SQL_V2_3: &str = include_str!("schema_upgrade_v2_3.sql");
+const UPGRADE_SQL_V2_4: &str = include_str!("schema_upgrade_v2_4.sql");
+const UPGRADE_SQL_V2_5: &str = include_str!("schema_upgrade_v2_5.sql");
 const SCHEMA_VERSION_2: i64 = 2;
+// Generated from the schema.sql shipped with the initial V2 baseline.
+pub(crate) const SCHEMA_1_CHECKSUM: &str =
+    "6a60abbde82d0b6e963ddf5086b7a4f43c9f5acf111f54763714727a27d00ab8";
 // Generated from the schema.sql shipped with the QoL-3 baseline. It is kept
 // stable so schema-2 databases and backups can be upgraded without rewriting
 // their historical migration ledger.
-const SCHEMA_2_CHECKSUM: &str = "7a2c00bdca6741f4219b5889633615c02391888705294ea3bb83d8db4a360463";
+pub(crate) const SCHEMA_2_CHECKSUM: &str =
+    "7a2c00bdca6741f4219b5889633615c02391888705294ea3bb83d8db4a360463";
 
 struct BuiltInExam {
     code: &'static str,
@@ -607,7 +631,8 @@ fn prepare_connection(connection: &mut Connection) -> Result<(), AppError> {
     study::prepare(connection)?;
     revision::prepare(connection)?;
     concepts::prepare(connection)?;
-    practice::prepare(connection)
+    practice::prepare(connection)?;
+    builtin_constants::prepare(connection)
 }
 
 fn open_or_initialize(path: &Path) -> Result<Connection, AppError> {
@@ -647,13 +672,16 @@ fn open_or_initialize(path: &Path) -> Result<Connection, AppError> {
         }
         return create_database(path);
     }
-    // Supported intermediate versions are 1 (initial V2 schema) and 2
-    // (quick-start configurations). Upgrade in place so a schema-newer
-    // interstitial never appears for data that this build can additively
-    // extend. A version-1 database is upgraded through both additive steps.
+    // Supported intermediate versions are 1 (initial V2 schema), 2
+    // (quick-start configurations), 3 (flashcards) and 4 (custom references).
+    // Upgrade in place so a schema-newer interstitial never appears for data
+    // that this build can additively extend. Older databases pass through every
+    // additive step.
     if version == 1 {
         upgrade_database_1_to_2(&mut connection)?;
         upgrade_database_2_to_3(&mut connection)?;
+        upgrade_database_3_to_4(&mut connection)?;
+        upgrade_database_4_to_5(&mut connection)?;
         ensure_database_identity(&mut connection)?;
         repair_missing_exams(&mut connection)?;
         verify_connection(&connection, false)?;
@@ -661,6 +689,23 @@ fn open_or_initialize(path: &Path) -> Result<Connection, AppError> {
     }
     if version == 2 {
         upgrade_database_2_to_3(&mut connection)?;
+        upgrade_database_3_to_4(&mut connection)?;
+        upgrade_database_4_to_5(&mut connection)?;
+        ensure_database_identity(&mut connection)?;
+        repair_missing_exams(&mut connection)?;
+        verify_connection(&connection, false)?;
+        return Ok(connection);
+    }
+    if version == SCHEMA_VERSION_3 {
+        upgrade_database_3_to_4(&mut connection)?;
+        upgrade_database_4_to_5(&mut connection)?;
+        ensure_database_identity(&mut connection)?;
+        repair_missing_exams(&mut connection)?;
+        verify_connection(&connection, false)?;
+        return Ok(connection);
+    }
+    if version == SCHEMA_VERSION_4 {
+        upgrade_database_4_to_5(&mut connection)?;
         ensure_database_identity(&mut connection)?;
         repair_missing_exams(&mut connection)?;
         verify_connection(&connection, false)?;
@@ -729,7 +774,9 @@ pub(crate) fn upgrade_database_1_to_2(connection: &mut Connection) -> Result<(),
 }
 
 /// Upgrade a version-2 V2 database to version 3 by adding flashcards.
-/// The DDL is additive and idempotent; no existing row is touched.
+/// The DDL is additive and idempotent; no existing row is touched. The ledger
+/// row stays pinned to the historical version-3 checksum even after this build
+/// advances the current schema to version 4.
 pub(crate) fn upgrade_database_2_to_3(connection: &mut Connection) -> Result<(), AppError> {
     let transaction = connection
         .transaction()
@@ -747,11 +794,131 @@ pub(crate) fn upgrade_database_2_to_3(connection: &mut Connection) -> Result<(),
         .execute(
             "INSERT OR IGNORE INTO schema_migrations (version, name, checksum, applied_at)
              VALUES (?1, 'v2_flashcards', ?2, ?3)",
-            params![V2_SCHEMA_VERSION, initial_schema_checksum(), token],
+            params![SCHEMA_VERSION_3, SCHEMA_3_CHECKSUM, token],
         )
         .map_err(|error| {
             AppError::migration(
                 "The V2 flashcard upgrade ledger could not be written",
+                error,
+            )
+        })?;
+    let recorded_checksum: Option<String> = transaction
+        .query_row(
+            "SELECT checksum FROM schema_migrations WHERE version=?1",
+            [SCHEMA_VERSION_3],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::migration("The V2 upgrade ledger could not be read", error))?;
+    if recorded_checksum.as_deref() != Some(SCHEMA_3_CHECKSUM) {
+        return Err(AppError::internal(
+            "The V2 schema-3 upgrade ledger checksum does not match the historical schema.",
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE app_metadata SET schema_version = ?1, updated_at = ?2 WHERE id = 1",
+            params![SCHEMA_VERSION_3, token],
+        )
+        .map_err(|error| {
+            AppError::migration("The V2 schema upgrade metadata could not be updated", error)
+        })?;
+    transaction
+        .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION_3};"))
+        .map_err(|error| {
+            AppError::migration("The V2 schema version could not be recorded", error)
+        })?;
+    transaction.commit().map_err(|error| {
+        AppError::migration("The V2 schema upgrade could not be committed", error)
+    })?;
+    Ok(())
+}
+
+/// Upgrade a version-3 V2 database to version 4 by adding the user-managed
+/// formula, unit and constant tables. The DDL is additive and idempotent; no
+/// existing row is touched.
+pub(crate) fn upgrade_database_3_to_4(connection: &mut Connection) -> Result<(), AppError> {
+    let transaction = connection
+        .transaction()
+        .map_err(|error| AppError::migration("The V2 schema upgrade could not start", error))?;
+    transaction
+        .execute_batch(UPGRADE_SQL_V2_4)
+        .map_err(|error| {
+            AppError::migration(
+                "The V2 custom-reference schema upgrade could not be applied",
+                error,
+            )
+        })?;
+    let token = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO schema_migrations (version, name, checksum, applied_at)
+             VALUES (?1, 'v2_custom_references', ?2, ?3)",
+            params![SCHEMA_VERSION_4, SCHEMA_4_CHECKSUM, token],
+        )
+        .map_err(|error| {
+            AppError::migration(
+                "The V2 custom-reference upgrade ledger could not be written",
+                error,
+            )
+        })?;
+    let recorded_checksum: Option<String> = transaction
+        .query_row(
+            "SELECT checksum FROM schema_migrations WHERE version=?1",
+            [SCHEMA_VERSION_4],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::migration("The V2 upgrade ledger could not be read", error))?;
+    if recorded_checksum.as_deref() != Some(SCHEMA_4_CHECKSUM) {
+        return Err(AppError::internal(
+            "The V2 schema-4 upgrade ledger checksum does not match the historical schema.",
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE app_metadata SET schema_version = ?1, updated_at = ?2 WHERE id = 1",
+            params![SCHEMA_VERSION_4, token],
+        )
+        .map_err(|error| {
+            AppError::migration("The V2 schema upgrade metadata could not be updated", error)
+        })?;
+    transaction
+        .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION_4};"))
+        .map_err(|error| {
+            AppError::migration("The V2 schema version could not be recorded", error)
+        })?;
+    transaction.commit().map_err(|error| {
+        AppError::migration("The V2 schema upgrade could not be committed", error)
+    })?;
+    Ok(())
+}
+
+/// Upgrade a version-4 V2 database to version 5 by adding the immutable
+/// built-in constants catalogue and persistent sticky notes. The DDL is
+/// additive and idempotent; no existing row is touched.
+pub(crate) fn upgrade_database_4_to_5(connection: &mut Connection) -> Result<(), AppError> {
+    let transaction = connection
+        .transaction()
+        .map_err(|error| AppError::migration("The V2 schema upgrade could not start", error))?;
+    transaction
+        .execute_batch(UPGRADE_SQL_V2_5)
+        .map_err(|error| {
+            AppError::migration(
+                "The V2 constants and sticky-notes schema upgrade could not be applied",
+                error,
+            )
+        })?;
+    let token = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO schema_migrations (version, name, checksum, applied_at)
+             VALUES (?1, 'v2_constants_and_sticky_notes', ?2, ?3)",
+            params![V2_SCHEMA_VERSION, initial_schema_checksum(), token],
+        )
+        .map_err(|error| {
+            AppError::migration(
+                "The V2 constants and sticky-notes upgrade ledger could not be written",
                 error,
             )
         })?;
@@ -765,7 +932,7 @@ pub(crate) fn upgrade_database_2_to_3(connection: &mut Connection) -> Result<(),
         .map_err(|error| AppError::migration("The V2 upgrade ledger could not be read", error))?;
     if recorded_checksum.as_deref() != Some(initial_schema_checksum().as_str()) {
         return Err(AppError::internal(
-            "The V2 schema-3 upgrade ledger checksum does not match this application's schema.",
+            "The V2 schema-5 upgrade ledger checksum does not match this application's schema.",
         ));
     }
     transaction
@@ -787,9 +954,9 @@ pub(crate) fn upgrade_database_2_to_3(connection: &mut Connection) -> Result<(),
     Ok(())
 }
 
-/// Upgrade any supported existing V2 database file (versions 1 or 2) to the
-/// current schema. Used by the restore candidate path, which always operates
-/// on a disposable copy rather than the original backup.
+/// Upgrade any supported existing V2 database file (versions 1 through 4) to
+/// the current schema. Used by the restore candidate path, which always
+/// operates on a disposable copy rather than the original backup.
 pub(crate) fn upgrade_open_connection_to_current(
     connection: &mut Connection,
 ) -> Result<(), AppError> {
@@ -798,8 +965,19 @@ pub(crate) fn upgrade_open_connection_to_current(
         1 => {
             upgrade_database_1_to_2(connection)?;
             upgrade_database_2_to_3(connection)?;
+            upgrade_database_3_to_4(connection)?;
+            upgrade_database_4_to_5(connection)?;
         }
-        2 => upgrade_database_2_to_3(connection)?,
+        2 => {
+            upgrade_database_2_to_3(connection)?;
+            upgrade_database_3_to_4(connection)?;
+            upgrade_database_4_to_5(connection)?;
+        }
+        SCHEMA_VERSION_3 => {
+            upgrade_database_3_to_4(connection)?;
+            upgrade_database_4_to_5(connection)?;
+        }
+        SCHEMA_VERSION_4 => upgrade_database_4_to_5(connection)?,
         V2_SCHEMA_VERSION => {}
         other => return Err(AppError::unsupported_schema(other, V2_SCHEMA_VERSION)),
     }
@@ -1367,6 +1545,120 @@ mod tests {
             .expect("active plan id");
     }
 
+    /// Reduce a freshly created current-schema database to the table set and
+    /// version metadata of a historical schema, so the real upgrade dispatch
+    /// can be exercised against temporary fixtures only.
+    fn downgrade_database_fixture(state: &V2State, version: i64) {
+        assert!((1..=SCHEMA_VERSION_4).contains(&version));
+        state
+            .with_connection(|connection| {
+                // A fresh current-schema database carries the version-5 ledger
+                // row. Remove it so the fixture's ledger matches the requested
+                // historical version.
+                connection
+                    .execute_batch("DROP TRIGGER IF EXISTS trg_schema_migrations_no_delete;")
+                    .expect("drop ledger delete guard");
+                connection
+                    .execute(
+                        "DELETE FROM schema_migrations WHERE version=?1",
+                        [V2_SCHEMA_VERSION],
+                    )
+                    .expect("remove current ledger row");
+                connection
+                    .execute_batch(
+                        "CREATE TRIGGER trg_schema_migrations_no_delete
+                         BEFORE DELETE ON schema_migrations
+                         BEGIN SELECT RAISE(ABORT,'schema migrations are immutable'); END;",
+                    )
+                    .expect("restore ledger delete guard");
+                if version <= 4 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS builtin_constants;
+                             DROP TABLE IF EXISTS constant_catalog_versions;
+                             DROP TABLE IF EXISTS sticky_notes;",
+                        )
+                        .expect("drop v5 tables");
+                }
+                if version <= 3 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS custom_formula_variables;
+                             DROP TABLE IF EXISTS custom_formulas;
+                             DROP TABLE IF EXISTS custom_units;
+                             DROP TABLE IF EXISTS custom_constants;",
+                        )
+                        .expect("drop custom references");
+                }
+                if version <= 2 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS flashcard_reviews;
+                             DROP TABLE IF EXISTS flashcard_schedule;
+                             DROP TABLE IF EXISTS flashcard_exam_links;
+                             DROP TABLE IF EXISTS flashcards;",
+                        )
+                        .expect("drop flashcards");
+                }
+                if version <= 1 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS quick_start_config_allocations;
+                             DROP TABLE IF EXISTS quick_start_configs;",
+                        )
+                        .expect("drop quick start");
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(1,'v1_initial_schema_fixture',?1,'2026-01-01T00:00:00Z')",
+                            [SCHEMA_1_CHECKSUM],
+                        )
+                        .expect("v1 ledger");
+                }
+                if version == 2 {
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(2,'v2_quick_start_configs',?1,'2026-01-01T00:00:00Z')",
+                            [SCHEMA_2_CHECKSUM],
+                        )
+                        .expect("v2 ledger");
+                }
+                if version == 3 {
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(3,'v2_flashcards',?1,'2026-01-01T00:00:00Z')",
+                            [SCHEMA_3_CHECKSUM],
+                        )
+                        .expect("v3 ledger");
+                }
+                if version == 4 {
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(4,'v2_custom_references',?1,'2026-01-01T00:00:00Z')",
+                            [SCHEMA_4_CHECKSUM],
+                        )
+                        .expect("v4 ledger");
+                }
+                connection
+                    .execute(
+                        "UPDATE app_metadata SET schema_version=?1 WHERE id=1",
+                        [version],
+                    )
+                    .expect("metadata version");
+                connection
+                    .execute_batch(&format!("PRAGMA user_version = {version};"))
+                    .expect("user version");
+                connection
+                    .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                    .expect("checkpoint");
+                Ok::<(), AppError>(())
+            })
+            .expect("downgrade fixture");
+    }
+
     #[test]
     fn fresh_initialization_creates_schema_and_four_active_exams() {
         let root = tempfile::tempdir().expect("temporary directory");
@@ -1444,6 +1736,211 @@ mod tests {
         state.retry_initialize().expect("retry should recover");
         assert!(state.status().initialized);
         assert_eq!(state.list_exams().expect("exams").len(), 4);
+    }
+
+    #[test]
+    fn supported_legacy_schema_versions_upgrade_to_version_five() {
+        for version in [1_i64, 2, 3, 4] {
+            let root = tempfile::tempdir().expect("temporary directory");
+            let data_dir = date_path(root.path(), "v2");
+            {
+                let state = V2State::initialize(&data_dir);
+                state
+                    .with_connection(|connection| {
+                        connection
+                            .execute(
+                                "UPDATE settings SET daily_study_target_minutes=137 WHERE id=1",
+                                [],
+                            )
+                            .expect("sentinel row");
+                        Ok::<(), AppError>(())
+                    })
+                    .expect("sentinel row");
+                downgrade_database_fixture(&state, version);
+            }
+
+            let state = V2State::initialize(&data_dir);
+            let status = state.status();
+            assert!(
+                status.initialized,
+                "schema {version} -> 5 failed: {status:?}"
+            );
+            assert_eq!(status.schema_version, Some(V2_SCHEMA_VERSION));
+            assert_eq!(status.metadata_schema_version, Some(V2_SCHEMA_VERSION));
+            assert!(status.migration_checksum_valid);
+
+            let (target, ledger_five, ledger_four, ledger_three) = state
+                .with_connection(|connection| {
+                    let target: i64 = connection
+                        .query_row(
+                            "SELECT daily_study_target_minutes FROM settings WHERE id=1",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .expect("settings sentinel");
+                    let ledger_five: String = connection
+                        .query_row(
+                            "SELECT checksum FROM schema_migrations WHERE version=?1",
+                            [V2_SCHEMA_VERSION],
+                            |row| row.get(0),
+                        )
+                        .expect("version five ledger");
+                    let ledger_four: Option<String> = connection
+                        .query_row(
+                            "SELECT checksum FROM schema_migrations WHERE version=?1",
+                            [SCHEMA_VERSION_4],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .expect("version four ledger");
+                    let ledger_three: Option<String> = connection
+                        .query_row(
+                            "SELECT checksum FROM schema_migrations WHERE version=?1",
+                            [SCHEMA_VERSION_3],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .expect("version three ledger");
+                    Ok::<_, AppError>((target, ledger_five, ledger_four, ledger_three))
+                })
+                .expect("upgraded fixture");
+            assert_eq!(target, 137, "existing rows must be preserved");
+            assert_eq!(ledger_five, initial_schema_checksum());
+            assert_eq!(ledger_four.as_deref(), Some(SCHEMA_4_CHECKSUM));
+            if version <= 2 {
+                assert_eq!(ledger_three.as_deref(), Some(SCHEMA_3_CHECKSUM));
+            }
+
+            let table_counts: (i64, i64) = state
+                .with_connection(|connection| {
+                    let custom_tables: i64 = connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM sqlite_master
+                             WHERE type='table' AND name IN
+                               ('custom_formulas','custom_formula_variables',
+                                'custom_units','custom_constants')",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .expect("custom table count");
+                    let v5_tables: i64 = connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM sqlite_master
+                             WHERE type='table' AND name IN
+                               ('constant_catalog_versions','builtin_constants','sticky_notes')",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .expect("v5 table count");
+                    Ok::<_, AppError>((custom_tables, v5_tables))
+                })
+                .expect("upgraded table counts");
+            assert_eq!(table_counts.0, 4);
+            assert_eq!(table_counts.1, 3);
+            assert_eq!(state.list_exams().expect("exams").len(), 4);
+        }
+    }
+
+    #[test]
+    fn failed_version_four_upgrade_rolls_back_entirely() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let data_dir = date_path(root.path(), "v2");
+        let state = V2State::initialize(&data_dir);
+        downgrade_database_fixture(&state, SCHEMA_VERSION_3);
+        drop(state);
+
+        let path = data_dir.join(V2_DATABASE_FILE_NAME);
+        let mut connection = Connection::open(&path).expect("database open");
+        configure(&connection).expect("configure");
+        connection
+            .execute_batch("CREATE VIEW custom_units AS SELECT 1 AS value;")
+            .expect("blocking view");
+        let error = upgrade_database_3_to_4(&mut connection).expect_err("upgrade must fail");
+        assert_eq!(error.code, "migration_error");
+
+        let (version, metadata_version, ledger_four, formulas_table, view_count): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = connection
+            .query_row(
+                "SELECT (SELECT user_version FROM pragma_user_version),
+                        (SELECT schema_version FROM app_metadata WHERE id=1),
+                        (SELECT COUNT(*) FROM schema_migrations WHERE version=4),
+                        (SELECT COUNT(*) FROM sqlite_master
+                          WHERE type='table' AND name='custom_formulas'),
+                        (SELECT COUNT(*) FROM sqlite_master
+                          WHERE type='view' AND name='custom_units')",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("rollback state");
+        assert_eq!(version, SCHEMA_VERSION_3);
+        assert_eq!(metadata_version, SCHEMA_VERSION_3);
+        assert_eq!(ledger_four, 0);
+        assert_eq!(formulas_table, 0, "partial DDL must roll back");
+        assert_eq!(view_count, 1);
+    }
+
+    #[test]
+    fn failed_version_five_upgrade_rolls_back_entirely() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let data_dir = date_path(root.path(), "v2");
+        let state = V2State::initialize(&data_dir);
+        downgrade_database_fixture(&state, SCHEMA_VERSION_4);
+        drop(state);
+
+        let path = data_dir.join(V2_DATABASE_FILE_NAME);
+        let mut connection = Connection::open(&path).expect("database open");
+        configure(&connection).expect("configure");
+        connection
+            .execute_batch("CREATE VIEW sticky_notes AS SELECT 1 AS value;")
+            .expect("blocking view");
+        let error = upgrade_database_4_to_5(&mut connection).expect_err("upgrade must fail");
+        assert_eq!(error.code, "migration_error");
+
+        let (version, metadata_version, ledger_five, catalog_table, view_count): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = connection
+            .query_row(
+                "SELECT (SELECT user_version FROM pragma_user_version),
+                        (SELECT schema_version FROM app_metadata WHERE id=1),
+                        (SELECT COUNT(*) FROM schema_migrations WHERE version=5),
+                        (SELECT COUNT(*) FROM sqlite_master
+                          WHERE type='table' AND name='constant_catalog_versions'),
+                        (SELECT COUNT(*) FROM sqlite_master
+                          WHERE type='view' AND name='sticky_notes')",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("rollback state");
+        assert_eq!(version, SCHEMA_VERSION_4);
+        assert_eq!(metadata_version, SCHEMA_VERSION_4);
+        assert_eq!(ledger_five, 0);
+        assert_eq!(catalog_table, 0, "partial DDL must roll back");
+        assert_eq!(view_count, 1);
     }
 
     #[test]

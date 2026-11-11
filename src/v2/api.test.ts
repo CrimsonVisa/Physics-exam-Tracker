@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import {
   checkV2Integrity,
+  deleteV2CustomConstant,
+  deleteV2CustomFormula,
+  deleteV2CustomUnit,
   discardV2Timer,
   finishV2Timer,
   getV2ConceptDetail,
@@ -9,16 +12,27 @@ import {
   getV2FlashcardStats,
   getV2StudyTotals,
   getV2Timer,
+  getV2AnalyticsCharts,
+  getV2BuiltinConstants,
   heartbeatV2Timer,
   initializeV2Database,
+  listV2CustomConstants,
+  listV2CustomFormulas,
+  listV2CustomUnits,
   listV2Exams,
   listV2Flashcards,
   listV2Sessions,
+  listV2StickyNotes,
   pauseV2Timer,
   replayV2ConceptMastery,
   resumeV2Timer,
   reviewV2Flashcard,
+  saveV2CustomConstant,
+  saveV2CustomFormula,
+  saveV2CustomUnit,
   saveV2Flashcard,
+  saveV2StickyNote,
+  deleteV2StickyNote,
   searchV2Concepts,
   setV2SessionAllocations,
   startV2Timer,
@@ -221,6 +235,152 @@ describe('V2 API layer', () => {
     await getV2FlashcardStats({ today: '2026-11-08', examId: 1 });
     expect(invokeMock).toHaveBeenLastCalledWith('v2_get_flashcard_stats', {
       input: { today: '2026-11-08', examId: 1 },
+    });
+  });
+
+  it('maps custom reference commands and inputs exactly', async () => {
+    await listV2CustomFormulas();
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_list_custom_formulas');
+
+    await saveV2CustomFormula({
+      id: null,
+      name: 'Local relation',
+      latex: 'E = mc^2',
+      plainText: 'E = m c^2',
+      category: 'Special relativity',
+      description: 'Local formula.',
+      notes: '',
+      source: '',
+      variables: [{ symbol: 'E', meaning: 'energy', unit: 'J' }],
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_save_custom_formula', {
+      input: {
+        id: null,
+        name: 'Local relation',
+        latex: 'E = mc^2',
+        plainText: 'E = m c^2',
+        category: 'Special relativity',
+        description: 'Local formula.',
+        notes: '',
+        source: '',
+        variables: [{ symbol: 'E', meaning: 'energy', unit: 'J' }],
+      },
+    });
+
+    await deleteV2CustomFormula(3);
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_delete_custom_formula', { id: 3 });
+
+    await listV2CustomUnits();
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_list_custom_units');
+
+    await saveV2CustomUnit({
+      id: null,
+      name: 'Local unit',
+      symbol: 'lu',
+      quantity: 'Length',
+      dimension: 'L',
+      siClassification: 'non_si',
+      conversionKind: 'scalar',
+      conversionFactor: '2.5',
+      conversionReferenceUnit: 'm',
+      conversionNote: '',
+      description: 'Local unit.',
+      notes: '',
+      source: '',
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_save_custom_unit', {
+      input: {
+        id: null,
+        name: 'Local unit',
+        symbol: 'lu',
+        quantity: 'Length',
+        dimension: 'L',
+        siClassification: 'non_si',
+        conversionKind: 'scalar',
+        conversionFactor: '2.5',
+        conversionReferenceUnit: 'm',
+        conversionNote: '',
+        description: 'Local unit.',
+        notes: '',
+        source: '',
+      },
+    });
+
+    await deleteV2CustomUnit(4);
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_delete_custom_unit', { id: 4 });
+
+    await listV2CustomConstants();
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_list_custom_constants');
+
+    await saveV2CustomConstant({
+      id: null,
+      name: 'Local constant',
+      symbol: 'lc',
+      valueText: '6.62607015×10^-34',
+      unit: 'J s',
+      category: 'Fundamental',
+      uncertaintyText: 'exact',
+      precisionText: '9',
+      source: '',
+      description: 'Local constant.',
+      notes: '',
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_save_custom_constant', {
+      input: {
+        id: null,
+        name: 'Local constant',
+        symbol: 'lc',
+        valueText: '6.62607015×10^-34',
+        unit: 'J s',
+        category: 'Fundamental',
+        uncertaintyText: 'exact',
+        precisionText: '9',
+        source: '',
+        description: 'Local constant.',
+        notes: '',
+      },
+    });
+
+    await deleteV2CustomConstant(5);
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_delete_custom_constant', { id: 5 });
+  });
+
+  it('maps built-in constants, sticky notes and chart commands', async () => {
+    await getV2BuiltinConstants();
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_get_builtin_constants');
+
+    await listV2StickyNotes();
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_list_sticky_notes');
+
+    const noteInput = {
+      id: null,
+      title: 'Note',
+      body: 'Body',
+      color: 'yellow',
+      isPinned: false,
+      examId: null,
+      subjectNodeId: null,
+      topicNodeId: null,
+    };
+    await saveV2StickyNote(noteInput);
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_save_sticky_note', {
+      input: noteInput,
+    });
+
+    await deleteV2StickyNote(8);
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_delete_sticky_note', { id: 8 });
+
+    await getV2AnalyticsCharts({
+      examId: 1,
+      fromDate: '2026-10-12',
+      toDate: '2026-11-10',
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_get_analytics_charts', {
+      input: {
+        examId: 1,
+        fromDate: '2026-10-12',
+        toDate: '2026-11-10',
+      },
     });
   });
 });

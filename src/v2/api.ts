@@ -2703,3 +2703,338 @@ export function reviewV2Flashcard(input: V2FlashcardReviewInput): Promise<V2Flas
 export function getV2FlashcardStats(input: V2FlashcardStatsInput): Promise<V2FlashcardStats> {
   return invoke<V2FlashcardStats>('v2_get_flashcard_stats', { input });
 }
+
+export type V2CustomFormulaVariable = {
+  id: number;
+  position: number;
+  symbol: string;
+  meaning: string;
+  unit: string;
+};
+
+export type V2CustomFormula = {
+  id: number;
+  isBuiltin: boolean;
+  name: string;
+  latex: string;
+  plainText: string;
+  category: string;
+  description: string;
+  notes: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+  variables: V2CustomFormulaVariable[];
+};
+
+export type V2CustomFormulaVariableInput = {
+  symbol: string;
+  meaning: string;
+  unit: string;
+};
+
+export type V2CustomFormulaInput = {
+  id: number | null;
+  name: string;
+  latex: string;
+  plainText: string;
+  category: string;
+  description: string;
+  notes: string;
+  source: string;
+  variables: V2CustomFormulaVariableInput[];
+};
+
+export type V2CustomUnitSiClassification = 'si_base' | 'si_derived' | 'non_si';
+export type V2CustomUnitConversionKind = 'none' | 'scalar' | 'contextual';
+
+export type V2CustomUnit = {
+  id: number;
+  isBuiltin: boolean;
+  name: string;
+  symbol: string;
+  quantity: string;
+  dimension: string;
+  siClassification: V2CustomUnitSiClassification;
+  conversionKind: V2CustomUnitConversionKind;
+  conversionFactor: string;
+  conversionReferenceUnit: string;
+  conversionNote: string;
+  description: string;
+  notes: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type V2CustomUnitInput = {
+  id: number | null;
+  name: string;
+  symbol: string;
+  quantity: string;
+  dimension: string;
+  siClassification: V2CustomUnitSiClassification;
+  conversionKind: V2CustomUnitConversionKind;
+  conversionFactor: string;
+  conversionReferenceUnit: string;
+  conversionNote: string;
+  description: string;
+  notes: string;
+  source: string;
+};
+
+export type V2CustomConstant = {
+  id: number;
+  isBuiltin: boolean;
+  name: string;
+  symbol: string;
+  valueText: string;
+  unit: string;
+  category: string;
+  uncertaintyText: string;
+  precisionText: string;
+  source: string;
+  description: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type V2CustomConstantInput = {
+  id: number | null;
+  name: string;
+  symbol: string;
+  valueText: string;
+  unit: string;
+  category: string;
+  uncertaintyText: string;
+  precisionText: string;
+  source: string;
+  description: string;
+  notes: string;
+};
+
+export function listV2CustomFormulas(): Promise<V2CustomFormula[]> {
+  return invoke<V2CustomFormula[]>('v2_list_custom_formulas');
+}
+
+export function saveV2CustomFormula(input: V2CustomFormulaInput): Promise<V2CustomFormula> {
+  return invoke<V2CustomFormula>('v2_save_custom_formula', { input });
+}
+
+export function deleteV2CustomFormula(id: number): Promise<void> {
+  return invoke<void>('v2_delete_custom_formula', { id });
+}
+
+export function listV2CustomUnits(): Promise<V2CustomUnit[]> {
+  return invoke<V2CustomUnit[]>('v2_list_custom_units');
+}
+
+export function saveV2CustomUnit(input: V2CustomUnitInput): Promise<V2CustomUnit> {
+  return invoke<V2CustomUnit>('v2_save_custom_unit', { input });
+}
+
+export function deleteV2CustomUnit(id: number): Promise<void> {
+  return invoke<void>('v2_delete_custom_unit', { id });
+}
+
+export function listV2CustomConstants(): Promise<V2CustomConstant[]> {
+  return invoke<V2CustomConstant[]>('v2_list_custom_constants');
+}
+
+export function saveV2CustomConstant(input: V2CustomConstantInput): Promise<V2CustomConstant> {
+  return invoke<V2CustomConstant>('v2_save_custom_constant', { input });
+}
+
+export function deleteV2CustomConstant(id: number): Promise<void> {
+  return invoke<void>('v2_delete_custom_constant', { id });
+}
+
+export type V2BuiltinConstant = {
+  id: number;
+  stableKey: string;
+  name: string;
+  symbol: string;
+  valueText: string;
+  unit: string;
+  uncertaintyText: string;
+  precisionText: string;
+  isExact: boolean;
+  category: string;
+  description: string;
+  notes: string;
+  sourceLocator: string;
+  sourceReference: string;
+  sourceUrl: string;
+  displayOrder: number;
+};
+
+export type V2BuiltinConstantCatalog = {
+  versionLabel: string;
+  editionYear: number;
+  publishedOn: string;
+  retrievedOn: string;
+  publisher: string;
+  sourceUrl: string;
+  citation: string;
+  seedSha256: string;
+  constants: V2BuiltinConstant[];
+};
+
+export function getV2BuiltinConstants(): Promise<V2BuiltinConstantCatalog> {
+  return invoke<V2BuiltinConstantCatalog>('v2_get_builtin_constants');
+}
+
+export type V2StickyNote = {
+  id: number;
+  title: string;
+  body: string;
+  color: string;
+  isPinned: boolean;
+  examId: number | null;
+  examCode: string | null;
+  subjectNodeId: number | null;
+  subjectTitle: string | null;
+  topicNodeId: number | null;
+  topicTitle: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type V2StickyNoteInput = {
+  id: number | null;
+  title: string;
+  body: string;
+  color: string;
+  isPinned: boolean;
+  examId: number | null;
+  subjectNodeId: number | null;
+  topicNodeId: number | null;
+};
+
+export function listV2StickyNotes(): Promise<V2StickyNote[]> {
+  return invoke<V2StickyNote[]>('v2_list_sticky_notes');
+}
+
+export function saveV2StickyNote(input: V2StickyNoteInput): Promise<V2StickyNote> {
+  return invoke<V2StickyNote>('v2_save_sticky_note', { input });
+}
+
+export function deleteV2StickyNote(id: number): Promise<void> {
+  return invoke<void>('v2_delete_sticky_note', { id });
+}
+
+export type V2ChartPoint = {
+  label: string;
+  seconds: number;
+  sessionCount: number;
+};
+
+export type V2StudyByExam = {
+  examId: number;
+  examCode: string;
+  examShortName: string;
+  allocatedSeconds: number;
+  sessionCount: number;
+};
+
+export type V2StudyBySubject = {
+  examId: number;
+  examCode: string;
+  subjectNodeId: number | null;
+  subjectTitle: string;
+  allocatedSeconds: number;
+  sessionCount: number;
+};
+
+export type V2WeeklyConsistency = {
+  weekStart: string;
+  label: string;
+  eligibleDays: number;
+  activeDays: number;
+  studySeconds: number;
+  sessionCount: number;
+};
+
+export type V2QuestionOutcomes = {
+  attempts: number;
+  correct: number;
+  incorrect: number;
+  unanswered: number;
+  gradedAttempts: number;
+  accuracyPercentage: number | null;
+  insufficientSample: boolean;
+};
+
+export type V2ExamQuestionOutcomes = {
+  examId: number;
+  examCode: string;
+  outcomes: V2QuestionOutcomes;
+};
+
+export type V2TopicAccuracy = {
+  examId: number;
+  examCode: string;
+  nodeId: number;
+  topicTitle: string;
+  attempts: number;
+  correct: number;
+  incorrect: number;
+  unanswered: number;
+  gradedAttempts: number;
+  accuracyPercentage: number | null;
+  insufficientSample: boolean;
+};
+
+export type V2SyllabusCompletion = {
+  examId: number;
+  examCode: string;
+  examShortName: string;
+  topicCount: number;
+  completedTopicCount: number;
+  completionPercentage: number | null;
+};
+
+export type V2MockTrendPoint = {
+  examId: number;
+  examCode: string;
+  testId: number;
+  testDate: string;
+  testName: string;
+  percentage: number;
+};
+
+export type V2MockExamSummary = {
+  examId: number;
+  examCode: string;
+  completedCount: number;
+  averagePercentage: number | null;
+  bestPercentage: number | null;
+  lastPercentage: number | null;
+};
+
+export type V2AnalyticsCharts = {
+  rangeFrom: string;
+  rangeTo: string;
+  totalSeconds: number;
+  allocatedSeconds: number;
+  unallocatedSeconds: number;
+  studyByExam: V2StudyByExam[];
+  studyBySubject: V2StudyBySubject[];
+  dailyStudy: V2ChartPoint[];
+  weeklyConsistency: V2WeeklyConsistency[];
+  questionOutcomes: V2QuestionOutcomes;
+  outcomesByExam: V2ExamQuestionOutcomes[];
+  topicAccuracy: V2TopicAccuracy[];
+  syllabusCompletion: V2SyllabusCompletion[];
+  mockTrend: V2MockTrendPoint[];
+  mockByExam: V2MockExamSummary[];
+};
+
+export function getV2AnalyticsCharts(input: {
+  examId: number | null;
+  fromDate: string;
+  toDate: string;
+}): Promise<V2AnalyticsCharts> {
+  return invoke<V2AnalyticsCharts>('v2_get_analytics_charts', { input });
+}

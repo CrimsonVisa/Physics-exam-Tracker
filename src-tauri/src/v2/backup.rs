@@ -9,13 +9,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{error::AppError, v2::V2_SCHEMA_VERSION};
+use crate::{
+    error::AppError,
+    v2::{SCHEMA_1_CHECKSUM, SCHEMA_2_CHECKSUM, SCHEMA_4_CHECKSUM, V2_SCHEMA_VERSION},
+};
 
 const BACKUP_FORMAT_VERSION: i64 = 1;
 const RESTORE_OPERATION_FILE: &str = "restore-operation.json";
 const RESTORE_CANDIDATE_FILE: &str = "restore-candidate.sqlite3";
-const SCHEMA_1_CHECKSUM: &str = "6a60abbde82d0b6e963ddf5086b7a4f43c9f5acf111f54763714727a27d00ab8";
-const SCHEMA_2_CHECKSUM: &str = "7a2c00bdca6741f4219b5889633615c02391888705294ea3bb83d8db4a360463";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1300,6 +1301,8 @@ fn expected_schema_checksum(version: i64) -> Option<String> {
     match version {
         1 => Some(SCHEMA_1_CHECKSUM.to_owned()),
         2 => Some(SCHEMA_2_CHECKSUM.to_owned()),
+        3 => Some(super::SCHEMA_3_CHECKSUM.to_owned()),
+        4 => Some(SCHEMA_4_CHECKSUM.to_owned()),
         V2_SCHEMA_VERSION => Some(super::initial_schema_checksum()),
         _ => None,
     }
@@ -1580,7 +1583,9 @@ fn apply_retention(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v2::{V2State, admin};
+    use crate::v2::{
+        SCHEMA_3_CHECKSUM, SCHEMA_4_CHECKSUM, V2State, admin, reference, sticky_notes,
+    };
 
     fn state() -> (tempfile::TempDir, V2State) {
         let root = tempfile::tempdir().expect("temporary directory");
@@ -1673,6 +1678,167 @@ mod tests {
 
         let recovery = get_restore_recovery(&data_dir).expect("recovery");
         assert!(!recovery.files.is_empty());
+    }
+
+    #[test]
+    fn custom_reference_records_survive_manual_backup_and_restore() {
+        let (_root, state) = state();
+        let data_dir = state.data_directory().expect("data dir");
+        state
+            .with_connection(|connection| {
+                reference::save_custom_formula(
+                    connection,
+                    reference::V2CustomFormulaInput {
+                        id: None,
+                        name: "Backup formula".to_owned(),
+                        latex: "F = ma".to_owned(),
+                        plain_text: "F = m a".to_owned(),
+                        category: "Classical mechanics".to_owned(),
+                        description: "Newton's second law.".to_owned(),
+                        notes: String::new(),
+                        source: String::new(),
+                        variables: vec![reference::V2CustomFormulaVariableInput {
+                            symbol: "F".to_owned(),
+                            meaning: "force".to_owned(),
+                            unit: "N".to_owned(),
+                        }],
+                    },
+                    at(0),
+                )?;
+                reference::save_custom_unit(
+                    connection,
+                    reference::V2CustomUnitInput {
+                        id: None,
+                        name: "Backup unit".to_owned(),
+                        symbol: "bu".to_owned(),
+                        quantity: "Length".to_owned(),
+                        dimension: "L".to_owned(),
+                        si_classification: "non_si".to_owned(),
+                        conversion_kind: "scalar".to_owned(),
+                        conversion_factor: "2.5".to_owned(),
+                        conversion_reference_unit: "m".to_owned(),
+                        conversion_note: String::new(),
+                        description: "A test unit.".to_owned(),
+                        notes: String::new(),
+                        source: String::new(),
+                    },
+                    at(1),
+                )?;
+                reference::save_custom_constant(
+                    connection,
+                    reference::V2CustomConstantInput {
+                        id: None,
+                        name: "Backup constant".to_owned(),
+                        symbol: "bc".to_owned(),
+                        value_text: "6.62607015×10^-34".to_owned(),
+                        unit: "J s".to_owned(),
+                        category: "Fundamental".to_owned(),
+                        uncertainty_text: String::new(),
+                        precision_text: "9".to_owned(),
+                        source: String::new(),
+                        description: "A test constant.".to_owned(),
+                        notes: String::new(),
+                    },
+                    at(2),
+                )?;
+                Ok::<(), AppError>(())
+            })
+            .expect("custom references");
+
+        let record = state
+            .with_connection(|connection| create_manual_backup(connection, &data_dir, at(3)))
+            .expect("backup");
+
+        state
+            .with_connection(|connection| {
+                admin::update_settings(
+                    connection,
+                    admin::V2UpdateAppSettingsInput {
+                        preparation_start_date: None,
+                        daily_study_target_minutes: 210,
+                    },
+                    at(4),
+                )
+            })
+            .expect("changed settings");
+
+        let result = state
+            .restore_backup(
+                V2RestoreInput {
+                    path: record.path.clone(),
+                },
+                at(5),
+            )
+            .expect("restore");
+        assert_eq!(result.exam_count, 4);
+
+        let (formulas, units, constants) = state
+            .with_connection(|connection| {
+                Ok::<_, AppError>((
+                    reference::list_custom_formulas(connection)?,
+                    reference::list_custom_units(connection)?,
+                    reference::list_custom_constants(connection)?,
+                ))
+            })
+            .expect("restored custom references");
+        assert_eq!(formulas.len(), 1);
+        assert_eq!(formulas[0].name, "Backup formula");
+        assert_eq!(formulas[0].variables[0].symbol, "F");
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].conversion_factor, "2.5");
+        assert_eq!(constants.len(), 1);
+        assert_eq!(constants[0].value_text, "6.62607015×10^-34");
+        assert_eq!(constants[0].precision_text, "9");
+    }
+
+    #[test]
+    fn sticky_notes_survive_manual_backup_and_restore() {
+        let (_root, state) = state();
+        let data_dir = state.data_directory().expect("data dir");
+        state
+            .with_connection(|connection| {
+                sticky_notes::save_sticky_note(
+                    connection,
+                    sticky_notes::V2StickyNoteInput {
+                        id: None,
+                        title: "Backup note".to_owned(),
+                        body: "Preserve this note across restore.".to_owned(),
+                        color: "blue".to_owned(),
+                        is_pinned: true,
+                        exam_id: Some(1),
+                        subject_node_id: None,
+                        topic_node_id: None,
+                    },
+                    at(0),
+                )?;
+                Ok::<(), AppError>(())
+            })
+            .expect("sticky note");
+
+        let record = state
+            .with_connection(|connection| create_manual_backup(connection, &data_dir, at(1)))
+            .expect("backup");
+        state
+            .with_connection(|connection| sticky_notes::delete_sticky_note(connection, 1))
+            .expect("delete note");
+        state
+            .restore_backup(
+                V2RestoreInput {
+                    path: record.path.clone(),
+                },
+                at(2),
+            )
+            .expect("restore");
+
+        let notes = state
+            .with_connection(|connection| sticky_notes::list_sticky_notes(connection))
+            .expect("restored notes");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].title, "Backup note");
+        assert_eq!(notes[0].body, "Preserve this note across restore.");
+        assert_eq!(notes[0].color, "blue");
+        assert!(notes[0].is_pinned);
+        assert_eq!(notes[0].exam_code.as_deref(), Some("csir-net-physics"));
     }
 
     #[test]
@@ -2204,6 +2370,25 @@ mod tests {
                         )
                         .map_err(|error| AppError::database("drop flashcards", error))?;
                 }
+                if schema_version <= 3 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS custom_formula_variables;
+                             DROP TABLE IF EXISTS custom_formulas;
+                             DROP TABLE IF EXISTS custom_units;
+                             DROP TABLE IF EXISTS custom_constants;",
+                        )
+                        .map_err(|error| AppError::database("drop custom references", error))?;
+                }
+                if schema_version <= 4 {
+                    connection
+                        .execute_batch(
+                            "DROP TABLE IF EXISTS builtin_constants;
+                             DROP TABLE IF EXISTS constant_catalog_versions;
+                             DROP TABLE IF EXISTS sticky_notes;",
+                        )
+                        .map_err(|error| AppError::database("drop v5 tables", error))?;
+                }
                 if schema_version <= 1 {
                     connection
                         .execute_batch(
@@ -2228,6 +2413,24 @@ mod tests {
                         )
                         .map_err(|error| AppError::database("legacy v2 ledger", error))?;
                 }
+                if schema_version == 3 {
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(3,'v2_flashcards',?1,?2)",
+                            params![SCHEMA_3_CHECKSUM, at(0).to_rfc3339()],
+                        )
+                        .map_err(|error| AppError::database("legacy v3 ledger", error))?;
+                }
+                if schema_version == 4 {
+                    connection
+                        .execute(
+                            "INSERT OR IGNORE INTO schema_migrations(version,name,checksum,applied_at)
+                             VALUES(4,'v2_custom_references',?1,?2)",
+                            params![SCHEMA_4_CHECKSUM, at(0).to_rfc3339()],
+                        )
+                        .map_err(|error| AppError::database("legacy v4 ledger", error))?;
+                }
                 connection
                     .execute(
                         "UPDATE app_metadata SET schema_version=?1 WHERE id=1",
@@ -2251,8 +2454,8 @@ mod tests {
     }
 
     #[test]
-    fn schema_one_and_two_backups_restore_by_migrating_a_candidate_copy() {
-        for schema_version in [1_i64, 2] {
+    fn schema_one_two_three_and_four_backups_restore_by_migrating_a_candidate_copy() {
+        for schema_version in [1_i64, 2, 3, 4] {
             let (source_root, source_state) = state();
             let data_dir = source_state.data_directory().expect("source data dir");
             source_state
@@ -2306,21 +2509,24 @@ mod tests {
                 .with_connection(|connection| admin::load_settings(connection))
                 .expect("restored settings");
             assert_eq!(settings.daily_study_target_minutes, 180);
-            let (version, flashcard_table): (i64, i64) = restored
+            let (version, flashcard_table, custom_formula_table): (i64, i64, i64) = restored
                 .with_connection(|connection| {
                     connection
                         .query_row(
                             "SELECT (SELECT user_version FROM pragma_user_version),
                                     (SELECT COUNT(*) FROM sqlite_master
-                                      WHERE type='table' AND name='flashcards')",
+                                      WHERE type='table' AND name='flashcards'),
+                                    (SELECT COUNT(*) FROM sqlite_master
+                                      WHERE type='table' AND name='custom_formulas')",
                             [],
-                            |row| Ok((row.get(0)?, row.get(1)?)),
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                         )
                         .map_err(|error| AppError::database("restored schema check", error))
                 })
                 .expect("restored schema check");
             assert_eq!(version, V2_SCHEMA_VERSION);
             assert_eq!(flashcard_table, 1);
+            assert_eq!(custom_formula_table, 1);
             drop(restored);
             drop(source_state);
             drop(source_root);
@@ -2358,8 +2564,8 @@ mod tests {
     }
 
     #[test]
-    fn safety_recovery_migrates_schema_one_two_and_three_on_candidate_copies() {
-        for schema_version in [1_i64, 2, 3] {
+    fn safety_recovery_migrates_schema_one_two_three_and_four_on_candidate_copies() {
+        for schema_version in [1_i64, 2, 3, 4] {
             let (source_root, source_state) = state();
             let source_dir = source_state.data_directory().expect("source data dir");
             set_live_target(&source_state, 180);
