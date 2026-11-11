@@ -41,8 +41,8 @@
     "publisher": "CrimsonVisa",
     "copyright": "Copyright © 2026 CrimsonVisa",
     "category": "Education",
-    "shortDescription": "Offline-first study tracker for CSIR-UGC NET Physical Sciences.",
-    "longDescription": "A complete offline-first Windows study tracker for CSIR-UGC NET Physical Sciences: official-source syllabus progress, focus timer and sessions, checklist and calendar planning, PYQ and mock-test analytics, spaced-repetition revision scheduling, study insights, verified backup and restore, and CSV/JSON portability. All personal study data stays in a local SQLite database.",
+    "shortDescription": "Offline-first Windows study tracker for CSIR-UGC NET, GATE, TIFR and JEST Physics.",
+    "longDescription": "A complete offline-first Windows study tracker for CSIR-UGC NET, GATE Physics, TIFR GS and JEST Physics: official-source syllabus progress, focus timer and sessions, checklist and calendar planning, PYQ and mock-test analytics, spaced-repetition revision scheduling, study insights, verified backup and restore, and CSV/JSON portability. All personal study data stays in a local SQLite database.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

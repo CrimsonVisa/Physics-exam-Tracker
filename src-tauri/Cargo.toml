@@ -1,10 +1,10 @@
 [package]
 name = "csir-net-tracker"
 version = "2.0.0"
-description = "Offline-first Windows study tracker for CSIR-UGC NET Physical Sciences"
+description = "Offline-first Windows study tracker for CSIR-UGC NET, GATE, TIFR and JEST Physics"
 authors = ["CrimsonVisa"]
 license = "MIT"
-repository = "https://github.com/CrimsonVisa/csir-net-tracker"
+repository = "https://github.com/CrimsonVisa/Physics-exam-Tracker"
 edition = "2024"
 rust-version = "1.95"
 

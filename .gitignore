@@ -19,10 +19,18 @@ src-tauri/gen/
 *.db-*
 *.bak
 *.backup
+*.ptbackup
 backups/
 exports/
 logs/
 *.log
+
+# Local installer and archive output
+*.exe
+*.msi
+
+# Syllabus source PDFs stay outside the public repository
+docs/syllabus-audit/*.pdf
 
 # Local secrets and environment files
 .env
