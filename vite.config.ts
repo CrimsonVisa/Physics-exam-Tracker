@@ -15,5 +15,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     restoreMocks: true,
+    // The full suite loads many isolated jsdom environments in parallel.
+    // Generous per-test headroom prevents environment startup from being
+    // reported as a functional timeout on slower machines.
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
   },
 });
