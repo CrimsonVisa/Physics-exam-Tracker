@@ -8,13 +8,13 @@ operating system and never makes a network request.
 All families are licensed under the SIL Open Font License 1.1 (OFL). The original `OFL.txt`
 licence text is included next to each font file.
 
-| Family | File | Source |
-| --- | --- | --- |
-| Inter (variable, opsz/wght) | `inter/InterVariable.ttf` | <https://github.com/google/fonts/tree/main/ofl/inter> |
-| Manrope (variable, wght) | `manrope/ManropeVariable.ttf` | <https://github.com/google/fonts/tree/main/ofl/manrope> |
-| IBM Plex Sans (variable, wdth/wght) | `ibm-plex-sans/IBMPlexSansVariable.ttf` | <https://github.com/google/fonts/tree/main/ofl/ibmplexsans> |
-| Plus Jakarta Sans (variable, wght) | `plus-jakarta-sans/PlusJakartaSansVariable.ttf` | <https://github.com/google/fonts/tree/main/ofl/plusjakartasans> |
-| JetBrains Mono (variable, wght) | `jetbrains-mono/JetBrainsMonoVariable.ttf` | <https://github.com/google/fonts/tree/main/ofl/jetbrainsmono> |
+| Family                              | File                                            | Source                                                          |
+| ----------------------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
+| Inter (variable, opsz/wght)         | `inter/InterVariable.ttf`                       | <https://github.com/google/fonts/tree/main/ofl/inter>           |
+| Manrope (variable, wght)            | `manrope/ManropeVariable.ttf`                   | <https://github.com/google/fonts/tree/main/ofl/manrope>         |
+| IBM Plex Sans (variable, wdth/wght) | `ibm-plex-sans/IBMPlexSansVariable.ttf`         | <https://github.com/google/fonts/tree/main/ofl/ibmplexsans>     |
+| Plus Jakarta Sans (variable, wght)  | `plus-jakarta-sans/PlusJakartaSansVariable.ttf` | <https://github.com/google/fonts/tree/main/ofl/plusjakartasans> |
+| JetBrains Mono (variable, wght)     | `jetbrains-mono/JetBrainsMonoVariable.ttf`      | <https://github.com/google/fonts/tree/main/ofl/jetbrainsmono>   |
 
 The files are unmodified Google Fonts repository builds (TrueType variable fonts).
 

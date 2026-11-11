@@ -15,17 +15,17 @@ No additional examination is supported. JEST is present in every registry, selec
 
 ## 0. Change log relative to V1.3.1
 
-| Area | Correction |
-|---|---|
-| Mastery replay ordering | Recalculation run is inserted before replay results. Full transaction pseudocode added; empty evidence set defined. |
-| Mastery calculation | Undefined `base_delta` replaced with exact formulas for study, revision, PYQ, mock concept results, manual overrides, difficulty, validation, confidence, caps, and examples. |
+| Area                    | Correction                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Mastery replay ordering | Recalculation run is inserted before replay results. Full transaction pseudocode added; empty evidence set defined.                                                                  |
+| Mastery calculation     | Undefined `base_delta` replaced with exact formulas for study, revision, PYQ, mock concept results, manual overrides, difficulty, validation, confidence, caps, and examples.        |
 | Revision-plan integrity | Added executable triggers and Rust validation matrix for plan/membership lifecycle, exam ownership, mapping checks, deferral, cancellation, completion, archival, and session links. |
-| Mock score history | Full `marking_context_json` schema and exact completion/reopen/recompletion transaction rules added. Direct insertion as completed is blocked. |
-| Backup/restore | Replaced stage outline with deterministic sidecar state machine, exact file names, durable writes, rollback, and startup recovery. |
-| Readiness | Added executable component formulas, archived/inactive handling, confidence thresholds, and snapshot rules. |
-| Schema self-containment | All tables, indexes, triggers, seeds, and creation order included in this document. |
-| Validation | Added standalone Python schema validation script and complete trigger/FK test matrix. |
-| References | All schema references point to §7; no inherited “V1.3 remains” statements. |
+| Mock score history      | Full `marking_context_json` schema and exact completion/reopen/recompletion transaction rules added. Direct insertion as completed is blocked.                                       |
+| Backup/restore          | Replaced stage outline with deterministic sidecar state machine, exact file names, durable writes, rollback, and startup recovery.                                                   |
+| Readiness               | Added executable component formulas, archived/inactive handling, confidence thresholds, and snapshot rules.                                                                          |
+| Schema self-containment | All tables, indexes, triggers, seeds, and creation order included in this document.                                                                                                  |
+| Validation              | Added standalone Python schema validation script and complete trigger/FK test matrix.                                                                                                |
+| References              | All schema references point to §7; no inherited “V1.3 remains” statements.                                                                                                           |
 
 ---
 
@@ -84,26 +84,26 @@ No placeholders, fake analytics, nonfunctional controls, cross-exam leakage, aut
 
 ## 3. Confirmed decisions
 
-| ID | Decision |
-|---|---|
-| AD-01 | React + TypeScript + Vite + Tauri 2 + Rust + SQLite/rusqlite. |
-| AD-02 | One app, one frontend, one backend, one V2 database. |
-| AD-03 | Four exam workspaces are scopes, not databases. |
-| AD-04 | Shared concepts/mastery/sessions/planner/timer/revision/resources/settings. |
+| ID    | Decision                                                                                      |
+| ----- | --------------------------------------------------------------------------------------------- |
+| AD-01 | React + TypeScript + Vite + Tauri 2 + Rust + SQLite/rusqlite.                                 |
+| AD-02 | One app, one frontend, one backend, one V2 database.                                          |
+| AD-03 | Four exam workspaces are scopes, not databases.                                               |
+| AD-04 | Shared concepts/mastery/sessions/planner/timer/revision/resources/settings.                   |
 | AD-05 | Exam-specific syllabus/sections/question types/marking/PYQs/mocks/priorities/readiness/dates. |
-| AD-06 | Study duration stored once; exam time via allocations. |
-| AD-07 | Shared mastery; separate exam readiness. |
-| AD-08 | Inactive exams enforced read-only in Rust. |
-| AD-09 | Exactly four exams seeded and verified. |
-| AD-10 | Exam dates manual, nullable, local-date-only. |
-| AD-11 | Mock scoring uses one section-aggregate model. |
-| AD-12 | Stable syllabus codes and content migration mappings. |
-| AD-13 | New V2 identity/data path. |
-| AD-14 | No V1 access/migration/restore. |
-| AD-15 | Readiness components; overall nullable. |
-| AD-16 | Rust authoritative validation. |
-| AD-17 | No new frontend state library. |
-| AD-18 | Build-size changes measured. |
+| AD-06 | Study duration stored once; exam time via allocations.                                        |
+| AD-07 | Shared mastery; separate exam readiness.                                                      |
+| AD-08 | Inactive exams enforced read-only in Rust.                                                    |
+| AD-09 | Exactly four exams seeded and verified.                                                       |
+| AD-10 | Exam dates manual, nullable, local-date-only.                                                 |
+| AD-11 | Mock scoring uses one section-aggregate model.                                                |
+| AD-12 | Stable syllabus codes and content migration mappings.                                         |
+| AD-13 | New V2 identity/data path.                                                                    |
+| AD-14 | No V1 access/migration/restore.                                                               |
+| AD-15 | Readiness components; overall nullable.                                                       |
+| AD-16 | Rust authoritative validation.                                                                |
+| AD-17 | No new frontend state library.                                                                |
+| AD-18 | Build-size changes measured.                                                                  |
 
 ---
 
@@ -111,12 +111,12 @@ No placeholders, fake analytics, nonfunctional controls, cross-exam leakage, aut
 
 ### 4.1 Identity
 
-| Item | V1 | V2 |
-|---|---|---|
-| Identifier | `com.crimsonvisa.csirnetphysics` | `com.crimsonvisa.physics-tracker` |
+| Item           | V1                                         | V2                                          |
+| -------------- | ------------------------------------------ | ------------------------------------------- |
+| Identifier     | `com.crimsonvisa.csirnetphysics`           | `com.crimsonvisa.physics-tracker`           |
 | Data directory | `%APPDATA%\com.crimsonvisa.csirnetphysics` | `%APPDATA%\com.crimsonvisa.physics-tracker` |
-| Database | `csir-net-tracker.sqlite3` | `physics-tracker.sqlite3` |
-| Backups | V1 SQLite + manifest | `.ptbackup` V2 |
+| Database       | `csir-net-tracker.sqlite3`                 | `physics-tracker.sqlite3`                   |
+| Backups        | V1 SQLite + manifest                       | `.ptbackup` V2                              |
 
 V2 verifies its data path is not equal to, inside, or an ancestor of the V1 path. V2 never opens V1 files.
 
@@ -241,6 +241,7 @@ CHECK (
 ### 7.3 Schema tables
 
 <!-- SCHEMA-TABLES:BEGIN -->
+
 ```sql
 CREATE TABLE schema_migrations (
     version INTEGER PRIMARY KEY CHECK (version >= 1),
@@ -1086,11 +1087,13 @@ CREATE TABLE resource_file_history (
     notes TEXT NOT NULL DEFAULT '' CHECK (length(notes) <= 2000)
 ) STRICT;
 ```
+
 <!-- SCHEMA-TABLES:END -->
 
 ### 7.4 Indexes
 
 <!-- SCHEMA-INDEXES:BEGIN -->
+
 ```sql
 CREATE INDEX idx_exam_profiles_active ON exam_profiles(is_active, exam_date);
 CREATE INDEX idx_exam_date_changes_exam ON exam_date_changes(exam_id, changed_at DESC);
@@ -1167,11 +1170,13 @@ CREATE INDEX idx_resource_files_status ON resource_files(status);
 CREATE INDEX idx_resource_files_sha ON resource_files(sha256);
 CREATE INDEX idx_resource_file_history_resource ON resource_file_history(resource_id, occurred_at DESC);
 ```
+
 <!-- SCHEMA-INDEXES:END -->
 
 ### 7.5 Triggers
 
 <!-- SCHEMA-TRIGGERS:BEGIN -->
+
 ```sql
 CREATE TRIGGER trg_schema_migrations_no_update BEFORE UPDATE ON schema_migrations
 BEGIN SELECT RAISE(ABORT,'schema migrations are immutable'); END;
@@ -1414,11 +1419,13 @@ BEGIN
     SELECT RAISE(ABORT,'daily plan exam cannot change while memberships exist');
 END;
 ```
+
 <!-- SCHEMA-TRIGGERS:END -->
 
 ### 7.6 Seed records
 
 <!-- SEED-SQL:BEGIN -->
+
 ```sql
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
 VALUES (1,'v2_initial_schema','0000000000000000000000000000000000000000000000000000000000000000','2026-01-01T00:00:00Z');
@@ -1456,6 +1463,7 @@ VALUES (1,'1.0','{"studyCap":10,"revisionCap":10,"pyqCap":10,"mockCap":8,"totalP
 INSERT INTO readiness_formula_versions(id,version,parameters_json,description,is_active,created_at)
 VALUES (1,'1.0','{"weights":{"mastery":0.35,"coverage":0.25,"pyq":0.20,"mock":0.15,"revision":0.05},"minSamples":{"pyq":10,"mock":1,"revision":5},"recencyDays":{"pyq":365,"mock":365,"revision":30}}','initial readiness formula',1,'2026-01-01T00:00:00Z');
 ```
+
 <!-- SEED-SQL:END -->
 
 **Implementation note:** the 64-zero checksum in the seed is a placeholder. Initialization replaces it with the SHA-256 of the schema payload, with CRLF/CR normalized to LF, before commit.
@@ -1513,12 +1521,12 @@ Validation:
 Per concept/local date/category:
 
 | Category | Positive cap | Negative cap |
-|---|---:|---:|
-| Study | 10 | 0 |
-| Revision | 10 | 10 |
-| PYQ | 10 | 10 |
-| Mock | 8 | 8 |
-| Total | 20 | 15 |
+| -------- | -----------: | -----------: |
+| Study    |           10 |            0 |
+| Revision |           10 |           10 |
+| PYQ      |           10 |           10 |
+| Mock     |            8 |            8 |
+| Total    |           20 |           15 |
 
 Positive and negative caps are tracked independently. Daily reset is by stored `local_date`. Events crossing midnight use each event’s stored local date. Timezone changes do not rewrite stored dates.
 
@@ -1603,26 +1611,26 @@ Empty evidence: run with `evidence_count=0`, fingerprint of empty string, score 
 
 Enforcement types: **C** = SQLite constraint, **T** = SQLite trigger, **R** = Rust transaction validation.
 
-| Rule | Enforcement |
-|---|---|
-| One active plan per date/scope | Partial unique indexes (C) |
-| Membership base order/estimated/lane/score immutable | Trigger (T) |
-| One active plan per plan item | `active_daily_plan_id` + trigger (C/T) |
-| Exam plan item focus exam = plan exam | Trigger + Rust (T/R) |
-| Concept mapped to exam | Trigger + Rust (T/R) |
-| Combined item mapped to active exam | Trigger + Rust (T/R) |
-| Completed item immutable | Trigger (T) |
-| Completed membership immutable | Trigger (T) |
-| No deletion of membership history | Trigger (T) |
-| Deferral only for non-completed item | Trigger + Rust (T/R) |
-| Defer/override date direction | CHECK (C) |
-| Active plan close clears active memberships | Trigger + Rust (T/R) |
-| Plan deletion with memberships blocked | Trigger (T) |
-| Active exam write blocked | Rust inactive guard (R) |
-| Session link unique | Unique (C) |
-| Session link after completion blocked | Rust (R) |
-| Exam deactivation closes plans | Rust (R) |
-| Archived concept/node excluded from new plans | Rust (R) |
+| Rule                                                 | Enforcement                            |
+| ---------------------------------------------------- | -------------------------------------- |
+| One active plan per date/scope                       | Partial unique indexes (C)             |
+| Membership base order/estimated/lane/score immutable | Trigger (T)                            |
+| One active plan per plan item                        | `active_daily_plan_id` + trigger (C/T) |
+| Exam plan item focus exam = plan exam                | Trigger + Rust (T/R)                   |
+| Concept mapped to exam                               | Trigger + Rust (T/R)                   |
+| Combined item mapped to active exam                  | Trigger + Rust (T/R)                   |
+| Completed item immutable                             | Trigger (T)                            |
+| Completed membership immutable                       | Trigger (T)                            |
+| No deletion of membership history                    | Trigger (T)                            |
+| Deferral only for non-completed item                 | Trigger + Rust (T/R)                   |
+| Defer/override date direction                        | CHECK (C)                              |
+| Active plan close clears active memberships          | Trigger + Rust (T/R)                   |
+| Plan deletion with memberships blocked               | Trigger (T)                            |
+| Active exam write blocked                            | Rust inactive guard (R)                |
+| Session link unique                                  | Unique (C)                             |
+| Session link after completion blocked                | Rust (R)                               |
+| Exam deactivation closes plans                       | Rust (R)                               |
+| Archived concept/node excluded from new plans        | Rust (R)                               |
 
 Lifecycle:
 
@@ -1699,15 +1707,15 @@ Sidecar fields: `opId`, `stage`, `createdAt`, `updatedAt`, `candidatePath`, `can
 
 Stages:
 
-| Stage | Files / DB state | Authoritative DB | Recovery |
-|---|---|---|---|
-| `validated` | candidate verified, safety verified, live untouched | live | delete candidate/sidecar; normal |
-| `safety_created` | safety durable, live untouched | live | keep safety; normal |
-| `db_closed` | connections closed, WAL checkpointed | live | reopen live; verify |
-| `live_renamed` | live moved to previous path; WAL/SHM removed; candidate present | none | if candidate absent, rename previous back |
-| `candidate_installed` | candidate at live path; previous exists | candidate (unverified) | verify; if fail restore previous/safety |
-| `verified` | DB reopened and checks pass | candidate | clear sidecar; normal |
-| `cleanup_complete` | sidecar removed; previous retained | live | normal |
+| Stage                 | Files / DB state                                                | Authoritative DB       | Recovery                                  |
+| --------------------- | --------------------------------------------------------------- | ---------------------- | ----------------------------------------- |
+| `validated`           | candidate verified, safety verified, live untouched             | live                   | delete candidate/sidecar; normal          |
+| `safety_created`      | safety durable, live untouched                                  | live                   | keep safety; normal                       |
+| `db_closed`           | connections closed, WAL checkpointed                            | live                   | reopen live; verify                       |
+| `live_renamed`        | live moved to previous path; WAL/SHM removed; candidate present | none                   | if candidate absent, rename previous back |
+| `candidate_installed` | candidate at live path; previous exists                         | candidate (unverified) | verify; if fail restore previous/safety   |
+| `verified`            | DB reopened and checks pass                                     | candidate              | clear sidecar; normal                     |
+| `cleanup_complete`    | sidecar removed; previous retained                              | live                   | normal                                    |
 
 Interruptions:
 
@@ -1771,22 +1779,22 @@ Weights: 0.35 mastery, 0.25 coverage, 0.20 PYQ, 0.15 mock, 0.05 revision. All co
 
 ### 14.1 Screens
 
-| Screen | Purpose |
-|---|---|
-| Overview | Combined/exam readiness and activity summary |
-| Exams | Four profiles, manual dates, activation |
-| Syllabus | Exam-specific tree and progress |
-| Concepts | Shared library, mastery, evidence |
-| PYQs | Exam-specific question bank and attempts |
-| Mock Tests | Exam-specific mocks and section results |
-| Timer | Shared timer with exam/concept context |
-| Sessions | Shared session history and allocations |
-| Checklist | Shared/exam tasks |
-| Calendar | Tasks and planned blocks |
-| Revision | Combined/exam daily plans and history |
-| Analytics | Combined/exam real-data metrics |
-| Resources | Shared library and exam links |
-| Backup | V2 backup/restore/recovery |
+| Screen     | Purpose                                      |
+| ---------- | -------------------------------------------- |
+| Overview   | Combined/exam readiness and activity summary |
+| Exams      | Four profiles, manual dates, activation      |
+| Syllabus   | Exam-specific tree and progress              |
+| Concepts   | Shared library, mastery, evidence            |
+| PYQs       | Exam-specific question bank and attempts     |
+| Mock Tests | Exam-specific mocks and section results      |
+| Timer      | Shared timer with exam/concept context       |
+| Sessions   | Shared session history and allocations       |
+| Checklist  | Shared/exam tasks                            |
+| Calendar   | Tasks and planned blocks                     |
+| Revision   | Combined/exam daily plans and history        |
+| Analytics  | Combined/exam real-data metrics              |
+| Resources  | Shared library and exam links                |
+| Backup     | V2 backup/restore/recovery                   |
 
 Exam switcher: Combined + four exams. Shared data remains shared; combined totals count sessions once.
 
@@ -1823,20 +1831,20 @@ src-tauri/src/
 
 ### 14.4 Tauri command groups
 
-| Domain | Representative commands |
-|---|---|
-| Exams | `list_exams`, `get_exam_profile`, `preview_exam_date_change`, `apply_exam_date_change`, `set_exam_active` |
-| Syllabus | `get_exam_syllabus`, `update_syllabus_node_progress`, `get_syllabus_summary` |
-| Concepts | `search_concepts`, `get_concept_detail`, `update_concept_mastery` |
-| Timer | `get_timer`, `start_timer`, `pause_timer`, `resume_timer`, `finish_timer`, `discard_timer` |
-| Sessions | `list_sessions`, `create_manual_session`, `update_study_session`, `delete_study_session`, `set_session_allocations`, `get_study_totals` |
-| Planner | `list_tasks`, `save_task`, `set_task_status`, `reschedule_task`, `delete_task`, `get_calendar`, `get_agenda`, `save_block`, `set_block_status`, `link_block_session`, `delete_block` |
-| PYQ | `get_pyq_options`, `list_pyq_questions`, `save_pyq_question`, `list_pyq_attempts`, `save_pyq_attempt`, `delete_pyq_attempt`, `get_pyq_analytics` |
-| Mocks | `list_mock_tests`, `save_mock_test`, `delete_mock_test`, `get_mock_analytics` |
-| Revision | `get_revision_dashboard`, `update_revision_settings`, `complete_revision`, `defer_revision`, `get_revision_daily_plan`, `generate_revision_daily_plan`, `rebalance_revision_daily_plan`, `move_revision_plan_item`, `link_revision_plan_block` |
-| Analytics | `get_combined_dashboard`, `get_exam_dashboard`, `get_combined_analytics`, `get_exam_analytics` |
-| Resources | `list_resources`, `save_resource`, `archive_resource`, `link_resource_exam`, `update_resource_progress`, `import_resource_pdf`, `remove_resource_pdf`, `relink_resource_pdf`, `replace_resource_pdf` |
-| Backup | `get_backup_overview`, `update_backup_settings`, `create_manual_backup`, `run_automatic_backup_if_due`, `preview_restore_backup`, `apply_restore_backup`, `get_restore_recovery`, `keep_restore_recovery`, `restore_recovery_safety` |
+| Domain    | Representative commands                                                                                                                                                                                                                        |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exams     | `list_exams`, `get_exam_profile`, `preview_exam_date_change`, `apply_exam_date_change`, `set_exam_active`                                                                                                                                      |
+| Syllabus  | `get_exam_syllabus`, `update_syllabus_node_progress`, `get_syllabus_summary`                                                                                                                                                                   |
+| Concepts  | `search_concepts`, `get_concept_detail`, `update_concept_mastery`                                                                                                                                                                              |
+| Timer     | `get_timer`, `start_timer`, `pause_timer`, `resume_timer`, `finish_timer`, `discard_timer`                                                                                                                                                     |
+| Sessions  | `list_sessions`, `create_manual_session`, `update_study_session`, `delete_study_session`, `set_session_allocations`, `get_study_totals`                                                                                                        |
+| Planner   | `list_tasks`, `save_task`, `set_task_status`, `reschedule_task`, `delete_task`, `get_calendar`, `get_agenda`, `save_block`, `set_block_status`, `link_block_session`, `delete_block`                                                           |
+| PYQ       | `get_pyq_options`, `list_pyq_questions`, `save_pyq_question`, `list_pyq_attempts`, `save_pyq_attempt`, `delete_pyq_attempt`, `get_pyq_analytics`                                                                                               |
+| Mocks     | `list_mock_tests`, `save_mock_test`, `delete_mock_test`, `get_mock_analytics`                                                                                                                                                                  |
+| Revision  | `get_revision_dashboard`, `update_revision_settings`, `complete_revision`, `defer_revision`, `get_revision_daily_plan`, `generate_revision_daily_plan`, `rebalance_revision_daily_plan`, `move_revision_plan_item`, `link_revision_plan_block` |
+| Analytics | `get_combined_dashboard`, `get_exam_dashboard`, `get_combined_analytics`, `get_exam_analytics`                                                                                                                                                 |
+| Resources | `list_resources`, `save_resource`, `archive_resource`, `link_resource_exam`, `update_resource_progress`, `import_resource_pdf`, `remove_resource_pdf`, `relink_resource_pdf`, `replace_resource_pdf`                                           |
+| Backup    | `get_backup_overview`, `update_backup_settings`, `create_manual_backup`, `run_automatic_backup_if_due`, `preview_restore_backup`, `apply_restore_backup`, `get_restore_recovery`, `keep_restore_recovery`, `restore_recovery_safety`           |
 
 All mutating exam commands take explicit `exam_id`; inactive guard returns `forbidden`. Session totals: combined uses duration once; exam uses allocations. Mock/revision/backup use the transaction/state rules above. Rust owns validation; frontend DTO fields must match returned backend fields.
 
@@ -1844,17 +1852,17 @@ All mutating exam commands take explicit `exam_id`; inactive guard returns `forb
 
 ## 15. Implementation roadmap and acceptance gates
 
-| Milestone | Deliverables | Exit gate |
-|---|---|---|
-| M0 Foundation | Schema, seed, four exams/profiles, app identity, error model | Fresh DB, four exams, null dates, no V1 access |
-| M1 Integrity/backup | Migrations, triggers, backup/restore state machine, startup checks | Schema/trigger/FK tests, backup round-trip, recovery tests |
-| M2 Workspaces | Exam switcher, dates, syllabus, sections, marking, progress | Four independent workspaces with reviewed content |
-| M3 Concepts | Concept library, mappings, mastery replay/evidence | Deterministic replay, mastery tests |
-| M4 Study | Timer, sessions, allocations, planner, calendar | Timer recovery, no double counting, allocation limits |
-| M5 Practice | PYQs, attempts, mocks, section scoring, history | Four-exam PYQ/mock/marking tests |
-| M6 Revision/readiness | Plan lifecycle, deferrals, readiness formulas/snapshots | Plan integrity, readiness nullability, snapshot tests |
-| M7 Analytics/resources | Combined/exam analytics, resources, file history | Real-data metrics, file-safe operations |
-| M8 Release | Integration, accessibility, Windows build, E2E | Full acceptance and release checklist |
+| Milestone              | Deliverables                                                       | Exit gate                                                  |
+| ---------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| M0 Foundation          | Schema, seed, four exams/profiles, app identity, error model       | Fresh DB, four exams, null dates, no V1 access             |
+| M1 Integrity/backup    | Migrations, triggers, backup/restore state machine, startup checks | Schema/trigger/FK tests, backup round-trip, recovery tests |
+| M2 Workspaces          | Exam switcher, dates, syllabus, sections, marking, progress        | Four independent workspaces with reviewed content          |
+| M3 Concepts            | Concept library, mappings, mastery replay/evidence                 | Deterministic replay, mastery tests                        |
+| M4 Study               | Timer, sessions, allocations, planner, calendar                    | Timer recovery, no double counting, allocation limits      |
+| M5 Practice            | PYQs, attempts, mocks, section scoring, history                    | Four-exam PYQ/mock/marking tests                           |
+| M6 Revision/readiness  | Plan lifecycle, deferrals, readiness formulas/snapshots            | Plan integrity, readiness nullability, snapshot tests      |
+| M7 Analytics/resources | Combined/exam analytics, resources, file history                   | Real-data metrics, file-safe operations                    |
+| M8 Release             | Integration, accessibility, Windows build, E2E                     | Full acceptance and release checklist                      |
 
 No milestone is complete based only on component tests; its user workflow must work end to end.
 
@@ -1906,12 +1914,12 @@ Rust integration and Windows-specific recovery tests remain to be implemented an
 
 ## 17. Remaining blockers
 
-| ID | Blocker | Default | Blocking |
-|---|---|---|---|
-| B-01 | Official content/section/marking sources and reviewers | Official review; no invented content | Yes |
-| B-02 | Readiness weights/min samples approval | 35/25/20/15/5; all components for overall | Yes |
-| B-03 | Inactive workspace read-only vs editable | Read-only; reactivate to edit | Yes |
-| B-04 | One current date vs historical cycles | One nullable current + audit | Yes |
+| ID   | Blocker                                                | Default                                   | Blocking |
+| ---- | ------------------------------------------------------ | ----------------------------------------- | -------- |
+| B-01 | Official content/section/marking sources and reviewers | Official review; no invented content      | Yes      |
+| B-02 | Readiness weights/min samples approval                 | 35/25/20/15/5; all components for overall | Yes      |
+| B-03 | Inactive workspace read-only vs editable               | Read-only; reactivate to edit             | Yes      |
+| B-04 | One current date vs historical cycles                  | One nullable current + audit              | Yes      |
 
 Safe defaults: new app identity, no V1 import, no scraper, no CSV release scope, no encryption, curated concepts, metadata-only PDF backup.
 
