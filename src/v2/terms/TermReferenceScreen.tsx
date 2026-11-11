@@ -4,11 +4,14 @@ import { FormulaEquation as MathExpression } from '../formulas/FormulaEquation';
 import { EXAM_CODES, EXAM_META } from '../formulas/taxonomy';
 import type { ExamCode } from '../formulas/types';
 import { TERM_LIBRARY } from './data';
+import { CustomUnitLibrary } from './CustomUnitLibrary';
 import { FORMULA_REF_TITLES } from './formulaRefs';
 import { groupTerms, searchTerms, termExamCodes, termExamRelevance, topicOptions } from './search';
 import { TERM_KINDS, TERM_KIND_LABELS, TERM_SUBJECTS } from './taxonomy';
 import type { TermKind, TermSubjectId } from './types';
 import { TermDetail } from './TermDetail';
+import { ConstantsLibrary } from '../reference/ConstantsLibrary';
+import { ReferencePanel, ReferenceTabs } from '../reference/ReferenceTabs';
 
 type TermReferenceScreenProps = {
   exams: V2ExamSummary[];
@@ -78,6 +81,7 @@ export function TermReferenceScreen({
       (initialFormulaId ? (FORMULA_REF_TITLES[initialFormulaId] ?? initialFormulaId) : null),
   );
   const [selectedTermId, setSelectedTermId] = useState<string | null>(initialTermId);
+  const [activeTab, setActiveTab] = useState<'terms' | 'units' | 'constants'>('terms');
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -163,7 +167,7 @@ export function TermReferenceScreen({
     window.setTimeout(() => listHeadingRef.current?.focus(), 0);
   }
 
-  if (selectedTerm) {
+  if (selectedTerm && activeTab === 'terms') {
     return (
       <TermDetail
         entries={TERM_LIBRARY.entries}
@@ -197,248 +201,279 @@ export function TermReferenceScreen({
         </p>
       </header>
 
-      {activeExamLabel || nodeCode || formulaId ? (
-        <div className="v2-terms-context" role="note">
-          <div>
-            {activeExamLabel ? (
-              <p>
-                <strong>{activeExamLabel}</strong>
-                {selectedExam?.isActive === false ? (
-                  <span className="v2-status-badge v2-status-inactive">Inactive examination</span>
+      <ReferenceTabs
+        active={activeTab}
+        ariaLabel="Terms and units sections"
+        onChange={setActiveTab}
+        options={[
+          { id: 'terms', label: 'Terms & Units', count: TERM_LIBRARY.entries.length },
+          { id: 'units', label: 'My Units' },
+          { id: 'constants', label: 'Constants' },
+        ]}
+      />
+
+      {activeTab === 'terms' ? (
+        <ReferencePanel tab="terms">
+          {activeExamLabel || nodeCode || formulaId ? (
+            <div className="v2-terms-context" role="note">
+              <div>
+                {activeExamLabel ? (
+                  <p>
+                    <strong>{activeExamLabel}</strong>
+                    {selectedExam?.isActive === false ? (
+                      <span className="v2-status-badge v2-status-inactive">
+                        Inactive examination
+                      </span>
+                    ) : null}
+                  </p>
                 ) : null}
-              </p>
-            ) : null}
-            {nodeCode ? (
-              <p>
-                <strong>Showing terms linked to:</strong> {nodeTitle ?? nodeCode}
-              </p>
-            ) : null}
-            {formulaId ? (
-              <p>
-                <strong>Showing terms related to:</strong>{' '}
-                {formulaTitle ?? FORMULA_REF_TITLES[formulaId] ?? formulaId}
-              </p>
-            ) : null}
-          </div>
-          <div className="v2-terms-context-actions">
-            {nodeCode ? (
-              <button
-                className="link-button"
-                onClick={() => {
+                {nodeCode ? (
+                  <p>
+                    <strong>Showing terms linked to:</strong> {nodeTitle ?? nodeCode}
+                  </p>
+                ) : null}
+                {formulaId ? (
+                  <p>
+                    <strong>Showing terms related to:</strong>{' '}
+                    {formulaTitle ?? FORMULA_REF_TITLES[formulaId] ?? formulaId}
+                  </p>
+                ) : null}
+              </div>
+              <div className="v2-terms-context-actions">
+                {nodeCode ? (
+                  <button
+                    className="link-button"
+                    onClick={() => {
+                      setNodeCode(null);
+                      setNodeTitle(null);
+                    }}
+                    type="button"
+                  >
+                    Clear syllabus filter
+                  </button>
+                ) : null}
+                {formulaId ? (
+                  <button
+                    className="link-button"
+                    onClick={() => {
+                      setFormulaId(null);
+                      setFormulaTitle(null);
+                    }}
+                    type="button"
+                  >
+                    Clear formula filter
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          <section className="v2-terms-toolbar" aria-label="Term filters">
+            <label className="v2-field v2-terms-search">
+              <span>Search terms</span>
+              <input
+                aria-label="Search terms"
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Term, alias, symbol, unit, dimension or keyword"
+                type="search"
+                value={query}
+              />
+            </label>
+            <label className="v2-field">
+              <span>Examination</span>
+              <select
+                aria-label="Examination filter"
+                onChange={(event) => {
+                  setExamCode(event.target.value as ExamCode | 'all');
+                  setTopic('all');
                   setNodeCode(null);
                   setNodeTitle(null);
                 }}
-                type="button"
+                value={examCode}
               >
-                Clear syllabus filter
-              </button>
-            ) : null}
-            {formulaId ? (
+                <option value="all">All examinations</option>
+                {exams.map((exam) => (
+                  <option key={exam.code} value={exam.code}>
+                    {exam.shortName}
+                    {exam.isActive ? '' : ' (inactive)'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="v2-field">
+              <span>Topic</span>
+              <select
+                aria-label="Topic filter"
+                onChange={(event) => setTopic(event.target.value)}
+                value={topic}
+              >
+                <option value="all">All topics</option>
+                {topics.map((topicOption) => (
+                  <option key={topicOption} value={topicOption}>
+                    {topicOption}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="v2-field">
+              <span>Kind</span>
+              <select
+                aria-label="Kind filter"
+                onChange={(event) => setKind(event.target.value as TermKind | 'all')}
+                value={kind}
+              >
+                <option value="all">All kinds</option>
+                {TERM_KINDS.map((termKind) => (
+                  <option key={termKind.id} value={termKind.id}>
+                    {termKind.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="secondary-button v2-terms-clear"
+              onClick={clearFilters}
+              type="button"
+            >
+              Clear filters
+            </button>
+          </section>
+
+          <p className="v2-terms-count" aria-live="polite">
+            {filtered.length} term{filtered.length === 1 ? '' : 's'}
+          </p>
+
+          <div className="v2-terms-layout">
+            <nav aria-label="Filter by subject" className="v2-terms-subjects">
               <button
-                className="link-button"
+                aria-pressed={subject === 'all'}
+                className="v2-terms-subject-button"
                 onClick={() => {
-                  setFormulaId(null);
-                  setFormulaTitle(null);
+                  setSubject('all');
+                  setTopic('all');
                 }}
                 type="button"
               >
-                Clear formula filter
+                <span>All subjects</span>
+                <span>{subjectScopeEntries.length}</span>
               </button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+              {TERM_SUBJECTS.map((termSubject) => (
+                <button
+                  aria-pressed={subject === termSubject.id}
+                  className="v2-terms-subject-button"
+                  key={termSubject.id}
+                  onClick={() => {
+                    setSubject(termSubject.id);
+                    setTopic('all');
+                  }}
+                  type="button"
+                >
+                  <span>{termSubject.label}</span>
+                  <span>{counts[termSubject.id]}</span>
+                </button>
+              ))}
+            </nav>
 
-      <section className="v2-terms-toolbar" aria-label="Term filters">
-        <label className="v2-field v2-terms-search">
-          <span>Search terms</span>
-          <input
-            aria-label="Search terms"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Term, alias, symbol, unit, dimension or keyword"
-            type="search"
-            value={query}
-          />
-        </label>
-        <label className="v2-field">
-          <span>Examination</span>
-          <select
-            aria-label="Examination filter"
-            onChange={(event) => {
-              setExamCode(event.target.value as ExamCode | 'all');
-              setTopic('all');
-              setNodeCode(null);
-              setNodeTitle(null);
-            }}
-            value={examCode}
-          >
-            <option value="all">All examinations</option>
-            {exams.map((exam) => (
-              <option key={exam.code} value={exam.code}>
-                {exam.shortName}
-                {exam.isActive ? '' : ' (inactive)'}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="v2-field">
-          <span>Topic</span>
-          <select
-            aria-label="Topic filter"
-            onChange={(event) => setTopic(event.target.value)}
-            value={topic}
-          >
-            <option value="all">All topics</option>
-            {topics.map((topicOption) => (
-              <option key={topicOption} value={topicOption}>
-                {topicOption}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="v2-field">
-          <span>Kind</span>
-          <select
-            aria-label="Kind filter"
-            onChange={(event) => setKind(event.target.value as TermKind | 'all')}
-            value={kind}
-          >
-            <option value="all">All kinds</option>
-            {TERM_KINDS.map((termKind) => (
-              <option key={termKind.id} value={termKind.id}>
-                {termKind.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="secondary-button v2-terms-clear" onClick={clearFilters} type="button">
-          Clear filters
-        </button>
-      </section>
-
-      <p className="v2-terms-count" aria-live="polite">
-        {filtered.length} term{filtered.length === 1 ? '' : 's'}
-      </p>
-
-      <div className="v2-terms-layout">
-        <nav aria-label="Filter by subject" className="v2-terms-subjects">
-          <button
-            aria-pressed={subject === 'all'}
-            className="v2-terms-subject-button"
-            onClick={() => {
-              setSubject('all');
-              setTopic('all');
-            }}
-            type="button"
-          >
-            <span>All subjects</span>
-            <span>{subjectScopeEntries.length}</span>
-          </button>
-          {TERM_SUBJECTS.map((termSubject) => (
-            <button
-              aria-pressed={subject === termSubject.id}
-              className="v2-terms-subject-button"
-              key={termSubject.id}
-              onClick={() => {
-                setSubject(termSubject.id);
-                setTopic('all');
-              }}
-              type="button"
-            >
-              <span>{termSubject.label}</span>
-              <span>{counts[termSubject.id]}</span>
-            </button>
-          ))}
-        </nav>
-
-        <section aria-label="Term results" className="v2-terms-results">
-          {filtered.length === 0 ? (
-            <div className="v2-empty-panel v2-terms-empty">
-              <h2>No terms match these filters</h2>
-              <p>
-                Try a shorter search, a different examination, subject or kind, or clear the
-                syllabus/formula filter.
-              </p>
-              <button className="secondary-button" onClick={clearFilters} type="button">
-                Clear filters
-              </button>
-            </div>
-          ) : (
-            groups.map((group) => (
-              <section className="v2-terms-group" key={group.subject}>
-                <h2>{group.label}</h2>
-                {group.topics.map((topicGroup) => (
-                  <div className="v2-terms-topic" key={topicGroup.topic}>
-                    <h3>{topicGroup.topic}</h3>
-                    <ul className="v2-terms-card-list">
-                      {topicGroup.entries.map((entry) => (
-                        <li key={entry.id}>
-                          <button
-                            aria-label={`Open term ${entry.term}`}
-                            className="v2-terms-card"
-                            data-term-id={entry.id}
-                            onClick={() => openTerm(entry.id)}
-                            type="button"
-                          >
-                            <span className="v2-terms-card-title">{entry.term}</span>
-                            {entry.symbol ? (
-                              <span className="v2-terms-card-symbol">
-                                <MathExpression
-                                  latex={entry.symbol}
-                                  plainText={entry.symbolPlainText ?? entry.symbol}
-                                />
-                              </span>
-                            ) : null}
-                            <span className="v2-terms-card-definition">{entry.definition}</span>
-                            <span className="v2-terms-card-meta">
-                              <span className="v2-terms-badge" data-tone="kind">
-                                {TERM_KIND_LABELS[entry.kind]}
-                              </span>
-                              {entry.siUnit ? (
-                                <span className="v2-terms-badge" data-tone="unit">
-                                  {entry.siUnit}
-                                </span>
-                              ) : null}
-                              {entry.dimensions ? (
-                                <span className="v2-terms-badge" data-tone="dimension">
-                                  {entry.dimensions === '1' ? 'dimensionless' : entry.dimensions}
-                                </span>
-                              ) : null}
-                              {termExamCodes(entry).length === 0 ? (
-                                <span className="v2-terms-badge" data-tone="general">
-                                  General reference
-                                </span>
-                              ) : (
-                                termExamCodes(entry).map((entryExamCode) => {
-                                  const relevance = termExamRelevance(entry, entryExamCode);
-                                  return (
-                                    <span
-                                      className="v2-terms-badge"
-                                      data-exam-code={entryExamCode}
-                                      data-relevance={relevance ?? undefined}
-                                      data-tone="exam"
-                                      key={entryExamCode}
-                                    >
-                                      {examShortName(exams, entryExamCode)}
-                                      {entryExamCode === 'tifr-gs-physics' && relevance
-                                        ? ` · ${relevance}`
-                                        : ''}
+            <section aria-label="Term results" className="v2-terms-results">
+              {filtered.length === 0 ? (
+                <div className="v2-empty-panel v2-terms-empty">
+                  <h2>No terms match these filters</h2>
+                  <p>
+                    Try a shorter search, a different examination, subject or kind, or clear the
+                    syllabus/formula filter.
+                  </p>
+                  <button className="secondary-button" onClick={clearFilters} type="button">
+                    Clear filters
+                  </button>
+                </div>
+              ) : (
+                groups.map((group) => (
+                  <section className="v2-terms-group" key={group.subject}>
+                    <h2>{group.label}</h2>
+                    {group.topics.map((topicGroup) => (
+                      <div className="v2-terms-topic" key={topicGroup.topic}>
+                        <h3>{topicGroup.topic}</h3>
+                        <ul className="v2-terms-card-list">
+                          {topicGroup.entries.map((entry) => (
+                            <li key={entry.id}>
+                              <button
+                                aria-label={`Open term ${entry.term}`}
+                                className="v2-terms-card"
+                                data-term-id={entry.id}
+                                onClick={() => openTerm(entry.id)}
+                                type="button"
+                              >
+                                <span className="v2-terms-card-title">{entry.term}</span>
+                                {entry.symbol ? (
+                                  <span className="v2-terms-card-symbol">
+                                    <MathExpression
+                                      latex={entry.symbol}
+                                      plainText={entry.symbolPlainText ?? entry.symbol}
+                                    />
+                                  </span>
+                                ) : null}
+                                <span className="v2-terms-card-definition">{entry.definition}</span>
+                                <span className="v2-terms-card-meta">
+                                  <span className="v2-terms-badge" data-tone="kind">
+                                    {TERM_KIND_LABELS[entry.kind]}
+                                  </span>
+                                  {entry.siUnit ? (
+                                    <span className="v2-terms-badge" data-tone="unit">
+                                      {entry.siUnit}
                                     </span>
-                                  );
-                                })
-                              )}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </section>
-            ))
-          )}
-        </section>
-      </div>
+                                  ) : null}
+                                  {entry.dimensions ? (
+                                    <span className="v2-terms-badge" data-tone="dimension">
+                                      {entry.dimensions === '1'
+                                        ? 'dimensionless'
+                                        : entry.dimensions}
+                                    </span>
+                                  ) : null}
+                                  {termExamCodes(entry).length === 0 ? (
+                                    <span className="v2-terms-badge" data-tone="general">
+                                      General reference
+                                    </span>
+                                  ) : (
+                                    termExamCodes(entry).map((entryExamCode) => {
+                                      const relevance = termExamRelevance(entry, entryExamCode);
+                                      return (
+                                        <span
+                                          className="v2-terms-badge"
+                                          data-exam-code={entryExamCode}
+                                          data-relevance={relevance ?? undefined}
+                                          data-tone="exam"
+                                          key={entryExamCode}
+                                        >
+                                          {examShortName(exams, entryExamCode)}
+                                          {entryExamCode === 'tifr-gs-physics' && relevance
+                                            ? ` · ${relevance}`
+                                            : ''}
+                                        </span>
+                                      );
+                                    })
+                                  )}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </section>
+                ))
+              )}
+            </section>
+          </div>
+        </ReferencePanel>
+      ) : activeTab === 'units' ? (
+        <ReferencePanel tab="units">
+          <CustomUnitLibrary />
+        </ReferencePanel>
+      ) : (
+        <ReferencePanel tab="constants">
+          <ConstantsLibrary />
+        </ReferencePanel>
+      )}
     </div>
   );
 }

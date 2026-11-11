@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { V2ExamSummary } from '../api';
 import { FORMULA_LIBRARY } from './data';
+import { CustomFormulaLibrary } from './CustomFormulaLibrary';
 import { FormulaDetail } from './FormulaDetail';
 import { FormulaEquation } from './FormulaEquation';
+import { ConstantsLibrary } from '../reference/ConstantsLibrary';
+import { ReferencePanel, ReferenceTabs } from '../reference/ReferenceTabs';
 import {
   entryExamCodes,
   entryExamRelevance,
@@ -69,6 +72,7 @@ export function FormulaReferenceScreen({
   const [nodeCode, setNodeCode] = useState<string | null>(initialNodeCode);
   const [nodeTitle, setNodeTitle] = useState<string | null>(initialNodeTitle);
   const [selectedFormulaId, setSelectedFormulaId] = useState<string | null>(initialFormulaId);
+  const [activeTab, setActiveTab] = useState<'builtin' | 'custom' | 'constants'>('builtin');
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -143,7 +147,7 @@ export function FormulaReferenceScreen({
     window.setTimeout(() => listHeadingRef.current?.focus(), 0);
   }
 
-  if (selectedFormula) {
+  if (selectedFormula && activeTab === 'builtin') {
     return (
       <FormulaDetail
         entries={FORMULA_LIBRARY.entries}
@@ -175,195 +179,227 @@ export function FormulaReferenceScreen({
         </p>
       </header>
 
-      {activeExamLabel || nodeCode ? (
-        <div className="v2-formula-context" role="note">
-          <div>
-            {activeExamLabel ? (
-              <p>
-                <strong>{activeExamLabel}</strong>
-                {selectedExam?.isActive === false ? (
-                  <span className="v2-status-badge v2-status-inactive">Inactive examination</span>
+      <ReferenceTabs
+        active={activeTab}
+        ariaLabel="Formula reference sections"
+        onChange={setActiveTab}
+        options={[
+          { id: 'builtin', label: 'Built-in formulas', count: FORMULA_LIBRARY.entries.length },
+          { id: 'custom', label: 'My formulas' },
+          { id: 'constants', label: 'Constants' },
+        ]}
+      />
+
+      {activeTab === 'builtin' ? (
+        <ReferencePanel tab="builtin">
+          {activeExamLabel || nodeCode ? (
+            <div className="v2-formula-context" role="note">
+              <div>
+                {activeExamLabel ? (
+                  <p>
+                    <strong>{activeExamLabel}</strong>
+                    {selectedExam?.isActive === false ? (
+                      <span className="v2-status-badge v2-status-inactive">
+                        Inactive examination
+                      </span>
+                    ) : null}
+                  </p>
                 ) : null}
-              </p>
-            ) : null}
-            {nodeCode ? (
-              <p>
-                <strong>Showing formulas linked to:</strong> {nodeTitle ?? nodeCode}
-              </p>
-            ) : null}
-          </div>
-          {nodeCode ? (
-            <button
-              className="link-button"
-              onClick={() => {
-                setNodeCode(null);
-                setNodeTitle(null);
-              }}
-              type="button"
-            >
-              Clear syllabus filter
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      <section className="v2-formula-toolbar" aria-label="Formula filters">
-        <label className="v2-field v2-formula-search">
-          <span>Search formulas</span>
-          <input
-            aria-label="Search formulas"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Title, equation, symbol, or keyword"
-            type="search"
-            value={query}
-          />
-        </label>
-        <label className="v2-field">
-          <span>Examination</span>
-          <select
-            aria-label="Examination filter"
-            onChange={(event) => {
-              setExamCode(event.target.value as ExamCode | 'all');
-              setTopic('all');
-              setNodeCode(null);
-              setNodeTitle(null);
-            }}
-            value={examCode}
-          >
-            <option value="all">All examinations</option>
-            {exams.map((exam) => (
-              <option key={exam.code} value={exam.code}>
-                {exam.shortName}
-                {exam.isActive ? '' : ' (inactive)'}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="v2-field">
-          <span>Topic</span>
-          <select
-            aria-label="Topic filter"
-            onChange={(event) => setTopic(event.target.value)}
-            value={topic}
-          >
-            <option value="all">All topics</option>
-            {topics.map((topicOption) => (
-              <option key={topicOption} value={topicOption}>
-                {topicOption}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="secondary-button v2-formula-clear" onClick={clearFilters} type="button">
-          Clear filters
-        </button>
-      </section>
-
-      <p className="v2-formula-count" aria-live="polite">
-        {filtered.length} formula{filtered.length === 1 ? '' : 's'}
-      </p>
-
-      <div className="v2-formula-layout">
-        <nav aria-label="Filter by subject" className="v2-formula-subjects">
-          <button
-            aria-pressed={subject === 'all'}
-            className="v2-formula-subject-button"
-            onClick={() => {
-              setSubject('all');
-              setTopic('all');
-            }}
-            type="button"
-          >
-            <span>All subjects</span>
-            <span>{subjectScopeEntries.length}</span>
-          </button>
-          {FORMULA_SUBJECTS.map((formulaSubject) => (
-            <button
-              aria-pressed={subject === formulaSubject.id}
-              className="v2-formula-subject-button"
-              key={formulaSubject.id}
-              onClick={() => {
-                setSubject(formulaSubject.id);
-                setTopic('all');
-              }}
-              type="button"
-            >
-              <span>{formulaSubject.label}</span>
-              <span>{subjectCounts[formulaSubject.id]}</span>
-            </button>
-          ))}
-        </nav>
-
-        <section aria-label="Formula results" className="v2-formula-results">
-          {filtered.length === 0 ? (
-            <div className="v2-empty-panel v2-formula-empty">
-              <h2>No formulas match these filters</h2>
-              <p>
-                Try a shorter search, a different examination or subject, or clear the syllabus
-                filter.
-              </p>
-              <button className="secondary-button" onClick={clearFilters} type="button">
-                Clear filters
-              </button>
+                {nodeCode ? (
+                  <p>
+                    <strong>Showing formulas linked to:</strong> {nodeTitle ?? nodeCode}
+                  </p>
+                ) : null}
+              </div>
+              {nodeCode ? (
+                <button
+                  className="link-button"
+                  onClick={() => {
+                    setNodeCode(null);
+                    setNodeTitle(null);
+                  }}
+                  type="button"
+                >
+                  Clear syllabus filter
+                </button>
+              ) : null}
             </div>
-          ) : (
-            groups.map((group) => (
-              <section className="v2-formula-group" key={group.subject}>
-                <h2>{group.label}</h2>
-                {group.topics.map((topicGroup) => (
-                  <div className="v2-formula-topic" key={topicGroup.topic}>
-                    <h3>{topicGroup.topic}</h3>
-                    <ul className="v2-formula-card-list">
-                      {topicGroup.entries.map((entry) => (
-                        <li key={entry.id}>
-                          <button
-                            aria-label={`Open formula ${entry.title}`}
-                            className="v2-formula-card"
-                            data-formula-id={entry.id}
-                            onClick={() => openFormula(entry.id)}
-                            type="button"
-                          >
-                            <span className="v2-formula-card-title">{entry.title}</span>
-                            <span className="v2-formula-card-equation">
-                              <FormulaEquation latex={entry.latex} plainText={entry.plainText} />
-                            </span>
-                            <span className="v2-formula-card-summary">{entry.summary}</span>
-                            <span className="v2-formula-card-meta">
-                              <span className="v2-formula-badge" data-tone="exactness">
-                                {EXACTNESS_LABELS[entry.exactness]}
-                              </span>
-                              <span className="v2-formula-badge" data-tone="framework">
-                                {FRAMEWORK_LABELS[entry.framework]}
-                              </span>
-                              {entryExamCodes(entry).map((entryExamCode) => {
-                                const relevance = entryExamRelevance(entry, entryExamCode);
-                                return (
-                                  <span
-                                    className="v2-formula-badge"
-                                    data-exam-code={entryExamCode}
-                                    data-relevance={relevance ?? undefined}
-                                    data-tone="exam"
-                                    key={entryExamCode}
-                                  >
-                                    {examShortName(exams, entryExamCode)}
-                                    {entryExamCode === 'tifr-gs-physics' && relevance
-                                      ? ` · ${relevance}`
-                                      : ''}
-                                  </span>
-                                );
-                              })}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+          ) : null}
+
+          <section className="v2-formula-toolbar" aria-label="Formula filters">
+            <label className="v2-field v2-formula-search">
+              <span>Search formulas</span>
+              <input
+                aria-label="Search formulas"
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Title, equation, symbol, or keyword"
+                type="search"
+                value={query}
+              />
+            </label>
+            <label className="v2-field">
+              <span>Examination</span>
+              <select
+                aria-label="Examination filter"
+                onChange={(event) => {
+                  setExamCode(event.target.value as ExamCode | 'all');
+                  setTopic('all');
+                  setNodeCode(null);
+                  setNodeTitle(null);
+                }}
+                value={examCode}
+              >
+                <option value="all">All examinations</option>
+                {exams.map((exam) => (
+                  <option key={exam.code} value={exam.code}>
+                    {exam.shortName}
+                    {exam.isActive ? '' : ' (inactive)'}
+                  </option>
                 ))}
-              </section>
-            ))
-          )}
-        </section>
-      </div>
+              </select>
+            </label>
+            <label className="v2-field">
+              <span>Topic</span>
+              <select
+                aria-label="Topic filter"
+                onChange={(event) => setTopic(event.target.value)}
+                value={topic}
+              >
+                <option value="all">All topics</option>
+                {topics.map((topicOption) => (
+                  <option key={topicOption} value={topicOption}>
+                    {topicOption}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="secondary-button v2-formula-clear"
+              onClick={clearFilters}
+              type="button"
+            >
+              Clear filters
+            </button>
+          </section>
+
+          <p className="v2-formula-count" aria-live="polite">
+            {filtered.length} formula{filtered.length === 1 ? '' : 's'}
+          </p>
+
+          <div className="v2-formula-layout">
+            <nav aria-label="Filter by subject" className="v2-formula-subjects">
+              <button
+                aria-pressed={subject === 'all'}
+                className="v2-formula-subject-button"
+                onClick={() => {
+                  setSubject('all');
+                  setTopic('all');
+                }}
+                type="button"
+              >
+                <span>All subjects</span>
+                <span>{subjectScopeEntries.length}</span>
+              </button>
+              {FORMULA_SUBJECTS.map((formulaSubject) => (
+                <button
+                  aria-pressed={subject === formulaSubject.id}
+                  className="v2-formula-subject-button"
+                  key={formulaSubject.id}
+                  onClick={() => {
+                    setSubject(formulaSubject.id);
+                    setTopic('all');
+                  }}
+                  type="button"
+                >
+                  <span>{formulaSubject.label}</span>
+                  <span>{subjectCounts[formulaSubject.id]}</span>
+                </button>
+              ))}
+            </nav>
+
+            <section aria-label="Formula results" className="v2-formula-results">
+              {filtered.length === 0 ? (
+                <div className="v2-empty-panel v2-formula-empty">
+                  <h2>No formulas match these filters</h2>
+                  <p>
+                    Try a shorter search, a different examination or subject, or clear the syllabus
+                    filter.
+                  </p>
+                  <button className="secondary-button" onClick={clearFilters} type="button">
+                    Clear filters
+                  </button>
+                </div>
+              ) : (
+                groups.map((group) => (
+                  <section className="v2-formula-group" key={group.subject}>
+                    <h2>{group.label}</h2>
+                    {group.topics.map((topicGroup) => (
+                      <div className="v2-formula-topic" key={topicGroup.topic}>
+                        <h3>{topicGroup.topic}</h3>
+                        <ul className="v2-formula-card-list">
+                          {topicGroup.entries.map((entry) => (
+                            <li key={entry.id}>
+                              <button
+                                aria-label={`Open formula ${entry.title}`}
+                                className="v2-formula-card"
+                                data-formula-id={entry.id}
+                                onClick={() => openFormula(entry.id)}
+                                type="button"
+                              >
+                                <span className="v2-formula-card-title">{entry.title}</span>
+                                <span className="v2-formula-card-equation">
+                                  <FormulaEquation
+                                    latex={entry.latex}
+                                    plainText={entry.plainText}
+                                  />
+                                </span>
+                                <span className="v2-formula-card-summary">{entry.summary}</span>
+                                <span className="v2-formula-card-meta">
+                                  <span className="v2-formula-badge" data-tone="exactness">
+                                    {EXACTNESS_LABELS[entry.exactness]}
+                                  </span>
+                                  <span className="v2-formula-badge" data-tone="framework">
+                                    {FRAMEWORK_LABELS[entry.framework]}
+                                  </span>
+                                  {entryExamCodes(entry).map((entryExamCode) => {
+                                    const relevance = entryExamRelevance(entry, entryExamCode);
+                                    return (
+                                      <span
+                                        className="v2-formula-badge"
+                                        data-exam-code={entryExamCode}
+                                        data-relevance={relevance ?? undefined}
+                                        data-tone="exam"
+                                        key={entryExamCode}
+                                      >
+                                        {examShortName(exams, entryExamCode)}
+                                        {entryExamCode === 'tifr-gs-physics' && relevance
+                                          ? ` · ${relevance}`
+                                          : ''}
+                                      </span>
+                                    );
+                                  })}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </section>
+                ))
+              )}
+            </section>
+          </div>
+        </ReferencePanel>
+      ) : activeTab === 'custom' ? (
+        <ReferencePanel tab="custom">
+          <CustomFormulaLibrary />
+        </ReferencePanel>
+      ) : (
+        <ReferencePanel tab="constants">
+          <ConstantsLibrary />
+        </ReferencePanel>
+      )}
     </div>
   );
 }
