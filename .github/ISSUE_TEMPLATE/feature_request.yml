@@ -1,0 +1,67 @@
+name: Feature request
+description: Suggest an improvement to Physics Tracker
+title: '[Feature]: '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests should describe the study problem, not only the implementation.
+        Do not include personal study data or reference PDFs.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or study need
+      description: What is difficult or missing today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Describe the smallest useful change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Dashboard
+        - Study timer and sessions
+        - Syllabus and concepts
+        - Formula, terms, or constants
+        - Practice or mock tests
+        - Flashcards
+        - Calculator
+        - Planner or revision
+        - Sticky notes
+        - Resources
+        - Analytics
+        - Backup or portability
+        - Settings, accessibility, or appearance
+        - Documentation or release
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: This request preserves offline-first, local-data behavior.
+          required: true
+        - label: This request does not require a new external service or telemetry.
+          required: true
+        - label: I searched existing requests for duplicates.
+          required: true

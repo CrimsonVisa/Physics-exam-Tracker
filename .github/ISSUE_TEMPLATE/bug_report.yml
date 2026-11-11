@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible problem in Physics Tracker
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not attach databases, backups, personal study data,
+        credentials, or exam PDFs. Use disposable data for screenshots and logs.
+
+  - type: input
+    id: version
+    attributes:
+      label: Physics Tracker version
+      description: The version shown in the application or release artifact.
+      placeholder: '2.0.0'
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: 'Windows 11 24H2 x64'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - GitHub release installer
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps using disposable test data.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include screenshots or logs only after removing personal data.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I removed personal study data, credentials, databases, and backups.
+          required: true
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: This is not a security vulnerability; security reports follow SECURITY.md.
+          required: true
