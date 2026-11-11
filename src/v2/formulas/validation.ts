@@ -292,7 +292,7 @@ export function validateFormulaLibrary(
         }
         if (
           syllabusLink.examCode === 'tifr-gs-physics' &&
-          (indexedNode.kind !== 'topic' || !indexedNode.title.startsWith('Broad area:'))
+          (indexedNode.kind !== 'topic' || !indexedNode.title.startsWith('Coverage note:'))
         ) {
           issues.push({
             path: `${linkPath}.nodes`,

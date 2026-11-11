@@ -158,7 +158,7 @@ export const CSIR = {
   ),
   semiconductorDevices: node(
     'csir-part-a-core-electronics-and-experimental-meth-t001-semiconductor-devices-diodes-junctions-transistors',
-    'Semiconductor devices: diodes, junctions, transistors and field effect devices',
+    'Semiconductor devices: diodes, junctions, transistors, field-effect devices, device structure, characteristics, frequency dependence and applications',
   ),
   operationalAmplifiers: node(
     'csir-part-a-core-electronics-and-experimental-meth-t004-operational-amplifiers-and-their-applications',
@@ -325,35 +325,35 @@ export const GATE = {
 export const TIFR = {
   math: node(
     'tifr-gs-2024-mathematics-relevant-to-physics-t001-broad-area-mathematics-relevant-to-physics',
-    'Broad area: Mathematics relevant to Physics',
+    'Coverage note: Mathematics relevant to Physics',
   ),
   classical: node(
     'tifr-gs-2024-classical-mechanics-t001-broad-area-classical-mechanics',
-    'Broad area: Classical Mechanics',
+    'Coverage note: Classical Mechanics',
   ),
   em: node(
     'tifr-gs-2024-electricity-and-magnetism-t001-broad-area-electricity-and-magnetism',
-    'Broad area: Electricity and Magnetism',
+    'Coverage note: Electricity and Magnetism',
   ),
   quantum: node(
     'tifr-gs-2024-quantum-mechanics-t001-broad-area-quantum-mechanics',
-    'Broad area: Quantum Mechanics',
+    'Coverage note: Quantum Mechanics',
   ),
   thermo: node(
     'tifr-gs-2024-heat-thermodynamics-and-statistical-p-t001-broad-area-heat-thermodynamics-and-statistical-phy',
-    'Broad area: Heat, Thermodynamics and Statistical Physics',
+    'Coverage note: Heat, Thermodynamics and Statistical Physics',
   ),
   general: node(
     'tifr-gs-2024-general-physics-t001-broad-area-general-physics',
-    'Broad area: General Physics',
+    'Coverage note: General Physics',
   ),
   modern: node(
     'tifr-gs-2024-modern-physics-t001-broad-area-modern-physics',
-    'Broad area: Modern Physics',
+    'Coverage note: Modern Physics',
   ),
   electronics: node(
     'tifr-gs-2024-electronics-and-experimental-physics-t001-broad-area-electronics-and-experimental-physics',
-    'Broad area: Electronics and Experimental Physics',
+    'Coverage note: Electronics and Experimental Physics',
   ),
 };
 

@@ -496,11 +496,12 @@
       },
       {
         "code": "csir-part-a-core-electronics-and-experimental-meth-t001-semiconductor-devices-diodes-junctions-transistors",
-        "title": "Semiconductor devices: diodes, junctions, transistors and field effect devices",
+        "title": "Semiconductor devices: diodes, junctions, transistors, field-effect devices, device structure, characteristics, frequency dependence and applications",
         "kind": "topic",
         "parentCode": "csir-part-a-core-electronics-and-experimental-methods",
         "category": "Electronics and Experimental Methods",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "csir-part-a-core-electronics-and-experimental-meth-t002-homo-and-hetero-junction-devices-device-structure-",
@@ -864,11 +865,12 @@
       },
       {
         "code": "csir-part-b-advanced-electronics-and-experimental--t002-transducers-for-temperature-pressure-magnetic-fiel",
-        "title": "Transducers for temperature, pressure, magnetic fields, vibration, optical and particle measurements",
+        "title": "Transducers for temperature, pressure/vacuum, magnetic fields, vibration, optical measurements and particle detectors",
         "kind": "topic",
         "parentCode": "csir-part-b-advanced-electronics-and-experimental-methods",
         "category": "Electronics and Experimental Methods",
-        "displayOrder": 2
+        "displayOrder": 2,
+        "refreshTitle": true
       },
       {
         "code": "csir-part-b-advanced-electronics-and-experimental--t003-measurement-and-control-signal-conditioning-and-re",
@@ -880,11 +882,12 @@
       },
       {
         "code": "csir-part-b-advanced-electronics-and-experimental--t004-impedance-matching-amplification-filtering-and-noi",
-        "title": "Impedance matching, amplification, filtering and noise reduction",
+        "title": "Impedance matching, amplification (op-amp based, instrumentation amplifiers, feedback), filtering and noise reduction",
         "kind": "topic",
         "parentCode": "csir-part-b-advanced-electronics-and-experimental-methods",
         "category": "Electronics and Experimental Methods",
-        "displayOrder": 4
+        "displayOrder": 4,
+        "refreshTitle": true
       },
       {
         "code": "csir-part-b-advanced-electronics-and-experimental--t005-shielding-and-grounding",
@@ -1128,11 +1131,12 @@
       },
       {
         "code": "csir-part-b-advanced-condensed-matter-physics-t014-ordered-phases-of-matter-and-liquid-crystalline-or",
-        "title": "Ordered phases of matter and liquid crystalline order",
+        "title": "Ordered phases of matter: translational and orientational order, and kinds of liquid crystalline order",
         "kind": "topic",
         "parentCode": "csir-part-b-advanced-condensed-matter-physics",
         "category": "Condensed Matter Physics",
-        "displayOrder": 14
+        "displayOrder": 14,
+        "refreshTitle": true
       },
       {
         "code": "csir-part-b-advanced-condensed-matter-physics-t015-quasi-crystals",
@@ -1192,11 +1196,12 @@
       },
       {
         "code": "csir-part-b-advanced-nuclear-and-particle-physics-t006-evidence-of-shell-structure-and-single-particle-sh",
-        "title": "Evidence of shell structure and single-particle shell model",
+        "title": "Evidence of shell structure, single-particle shell model, its validity and limitations",
         "kind": "topic",
         "parentCode": "csir-part-b-advanced-nuclear-and-particle-physics",
         "category": "Nuclear and Particle Physics",
-        "displayOrder": 6
+        "displayOrder": 6,
+        "refreshTitle": true
       },
       {
         "code": "csir-part-b-advanced-nuclear-and-particle-physics-t007-rotational-spectra",
@@ -1240,11 +1245,12 @@
       },
       {
         "code": "csir-part-b-advanced-nuclear-and-particle-physics-t012-quantum-numbers-gell-mann-nishijima-formula-and-qu",
-        "title": "Quantum numbers, Gell-Mann-Nishijima formula and quark model",
+        "title": "Quantum numbers (charge, spin, parity, isospin, strangeness), Gell-Mann-Nishijima formula and quark model",
         "kind": "topic",
         "parentCode": "csir-part-b-advanced-nuclear-and-particle-physics",
         "category": "Nuclear and Particle Physics",
-        "displayOrder": 12
+        "displayOrder": 12,
+        "refreshTitle": true
       },
       {
         "code": "csir-part-b-advanced-nuclear-and-particle-physics-t013-baryons-mesons-c-p-and-t-invariance",
@@ -2162,11 +2168,12 @@
       },
       {
         "code": "tifr-gs-2024-classical-mechanics-t001-broad-area-classical-mechanics",
-        "title": "Broad area: Classical Mechanics",
+        "title": "Coverage note: Classical Mechanics",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-classical-mechanics",
         "category": "Classical Mechanics",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "tifr-gs-2024-mathematics-relevant-to-physics",
@@ -2178,11 +2185,12 @@
       },
       {
         "code": "tifr-gs-2024-mathematics-relevant-to-physics-t001-broad-area-mathematics-relevant-to-physics",
-        "title": "Broad area: Mathematics relevant to Physics",
+        "title": "Coverage note: Mathematics relevant to Physics",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-mathematics-relevant-to-physics",
         "category": "Mathematics relevant to Physics",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "tifr-gs-2024-electricity-and-magnetism",
@@ -2194,11 +2202,12 @@
       },
       {
         "code": "tifr-gs-2024-electricity-and-magnetism-t001-broad-area-electricity-and-magnetism",
-        "title": "Broad area: Electricity and Magnetism",
+        "title": "Coverage note: Electricity and Magnetism",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-electricity-and-magnetism",
         "category": "Electricity and Magnetism",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "tifr-gs-2024-quantum-mechanics",
@@ -2210,11 +2219,12 @@
       },
       {
         "code": "tifr-gs-2024-quantum-mechanics-t001-broad-area-quantum-mechanics",
-        "title": "Broad area: Quantum Mechanics",
+        "title": "Coverage note: Quantum Mechanics",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-quantum-mechanics",
         "category": "Quantum Mechanics",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "tifr-gs-2024-heat-thermodynamics-and-statistical-physics",
@@ -2226,11 +2236,12 @@
       },
       {
         "code": "tifr-gs-2024-heat-thermodynamics-and-statistical-p-t001-broad-area-heat-thermodynamics-and-statistical-phy",
-        "title": "Broad area: Heat, Thermodynamics and Statistical Physics",
+        "title": "Coverage note: Heat, Thermodynamics and Statistical Physics",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-heat-thermodynamics-and-statistical-physics",
         "category": "Heat, Thermodynamics and Statistical Physics",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "tifr-gs-2024-general-physics",
@@ -2242,11 +2253,12 @@
       },
       {
         "code": "tifr-gs-2024-general-physics-t001-broad-area-general-physics",
-        "title": "Broad area: General Physics",
+        "title": "Coverage note: General Physics",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-general-physics",
         "category": "General Physics",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "tifr-gs-2024-modern-physics",
@@ -2258,11 +2270,12 @@
       },
       {
         "code": "tifr-gs-2024-modern-physics-t001-broad-area-modern-physics",
-        "title": "Broad area: Modern Physics",
+        "title": "Coverage note: Modern Physics",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-modern-physics",
         "category": "Modern Physics",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       },
       {
         "code": "tifr-gs-2024-electronics-and-experimental-physics",
@@ -2274,11 +2287,12 @@
       },
       {
         "code": "tifr-gs-2024-electronics-and-experimental-physics-t001-broad-area-electronics-and-experimental-physics",
-        "title": "Broad area: Electronics and Experimental Physics",
+        "title": "Coverage note: Electronics and Experimental Physics",
         "kind": "topic",
         "parentCode": "tifr-gs-2024-electronics-and-experimental-physics",
         "category": "Electronics and Experimental Physics",
-        "displayOrder": 1
+        "displayOrder": 1,
+        "refreshTitle": true
       }
     ]
   },
@@ -2294,7 +2308,8 @@
       "sourceReference": "Official JEST 2026 syllabus PDF",
       "verifiedOn": "2026-11-05",
       "documentYear": "2026",
-      "notes": "Official JEST document is labelled 2026. Syllabus is organized into six broad subject areas."
+      "notes": "Tracker active syllabus retains the JEST 2026 label from the official JEST source. The separately supplied audit reference PDF is undated and does not independently verify the 2026 cycle. Syllabus is organized into six broad subject areas.",
+      "refreshNotes": true
     },
     "nodes": [
       {

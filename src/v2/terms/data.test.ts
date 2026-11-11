@@ -138,7 +138,7 @@ describe('term library data', () => {
         for (const node of link.nodes) {
           const indexed = tifrNodes?.get(node.code);
           expect(indexed?.kind, entry.id).toBe('topic');
-          expect(indexed?.title.startsWith('Broad area:'), entry.id).toBe(true);
+          expect(indexed?.title.startsWith('Coverage note:'), entry.id).toBe(true);
         }
       }
     }

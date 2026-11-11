@@ -175,7 +175,7 @@ describe('formula library data', () => {
         for (const node of syllabusLink.nodes) {
           const indexed = tifrNodes?.get(node.code);
           expect(indexed?.kind, `${entry.id} TIFR node`).toBe('topic');
-          expect(indexed?.title.startsWith('Broad area:'), entry.id).toBe(true);
+          expect(indexed?.title.startsWith('Coverage note:'), entry.id).toBe(true);
         }
       }
     }

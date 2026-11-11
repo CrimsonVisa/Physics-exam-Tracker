@@ -108,6 +108,10 @@ struct SyllabusSeedSource {
     document_year: String,
     #[serde(default)]
     notes: String,
+    /// Apply an approved provenance-note correction to an existing source
+    /// row without changing its ID, content version, or node relationships.
+    #[serde(default)]
+    refresh_notes: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,10 +125,16 @@ struct SyllabusSeedNode {
     #[serde(default)]
     category: String,
     display_order: i64,
+    /// Apply an approved title correction to an existing node in place.
+    /// The immutable code and the node ID stay unchanged.
+    #[serde(default)]
+    refresh_title: bool,
 }
 
-/// Add the verified official syllabus content idempotently. No existing
-/// content version, source, or node is replaced by this function.
+/// Add or refresh the verified official syllabus content idempotently.
+/// Approved title and provenance corrections are applied only when the seed
+/// marks them explicitly; node codes, node IDs and relationships are never
+/// replaced by this function.
 pub fn prepare(connection: &mut Connection) -> Result<(), AppError> {
     let seeds: Vec<SyllabusSeed> = serde_json::from_str(SYLLABUS_SEED_JSON)
         .map_err(|error| AppError::internal(format!("The syllabus seed is invalid: {error}")))?;
@@ -146,6 +156,15 @@ pub fn prepare(connection: &mut Connection) -> Result<(), AppError> {
             continue;
         };
 
+        let content_notes = format!(
+            "{} GitHub/official syllabus ingestion; document: {}",
+            seed.source.notes, seed.source.document_year
+        );
+        let source_notes = format!(
+            "{} Verified source; document version: {}.",
+            seed.source.notes, seed.source.document_year
+        );
+
         transaction
             .execute(
                 "INSERT INTO exam_content_versions (
@@ -162,10 +181,7 @@ pub fn prepare(connection: &mut Connection) -> Result<(), AppError> {
                     seed.source.url,
                     seed.source.verified_on,
                     seed.content_review_status,
-                    format!(
-                        "{} GitHub/official syllabus ingestion; document: {}",
-                        seed.source.notes, seed.source.document_year
-                    ),
+                    &content_notes,
                     now,
                 ],
             )
@@ -199,10 +215,7 @@ pub fn prepare(connection: &mut Connection) -> Result<(), AppError> {
                     seed.source.url,
                     seed.source.source_reference,
                     seed.source.verified_on,
-                    format!(
-                        "{} Verified source; document version: {}.",
-                        seed.source.notes, seed.source.document_year
-                    ),
+                    &source_notes,
                     now,
                 ],
             )
@@ -218,6 +231,35 @@ pub fn prepare(connection: &mut Connection) -> Result<(), AppError> {
             .map_err(|error| {
                 AppError::database("The syllabus source could not be reloaded", error)
             })?;
+
+        if seed.source.refresh_notes {
+            transaction
+                .execute(
+                    "UPDATE exam_content_versions
+                     SET notes = ?2
+                     WHERE id = ?1 AND notes <> ?2",
+                    params![content_version_id, &content_notes],
+                )
+                .map_err(|error| {
+                    AppError::database(
+                        "The approved syllabus content-version note could not be refreshed",
+                        error,
+                    )
+                })?;
+            transaction
+                .execute(
+                    "UPDATE exam_syllabus_sources
+                     SET notes = ?3, updated_at = ?4
+                     WHERE exam_id = ?1 AND code = ?2 AND notes <> ?3",
+                    params![exam_id, seed.source.code, &source_notes, now],
+                )
+                .map_err(|error| {
+                    AppError::database(
+                        "The approved syllabus source note could not be refreshed",
+                        error,
+                    )
+                })?;
+        }
 
         let mut ids = HashMap::new();
         for node in seed.nodes {
@@ -256,6 +298,22 @@ pub fn prepare(connection: &mut Connection) -> Result<(), AppError> {
                 .map_err(|error| {
                     AppError::database("A syllabus node could not be reloaded", error)
                 })?;
+            if node.refresh_title {
+                transaction
+                    .execute(
+                        "UPDATE exam_syllabus_nodes
+                         SET title = ?3, updated_at = ?4
+                         WHERE exam_id = ?1 AND code = ?2
+                           AND is_archived = 0 AND title <> ?3",
+                        params![exam_id, node.code, node.title, now],
+                    )
+                    .map_err(|error| {
+                        AppError::database(
+                            "The approved syllabus topic title could not be refreshed",
+                            error,
+                        )
+                    })?;
+            }
             ids.insert(node.code, node_id);
         }
     }
@@ -292,15 +350,34 @@ pub fn get_exam_syllabus(
 
     let content = connection
         .query_row(
-            "SELECT version_label, review_status
-             FROM exam_content_versions
-             WHERE exam_id = ?1 AND content_type = 'syllabus'
-             ORDER BY id DESC LIMIT 1",
+            "SELECT cv.id, cv.version_label, cv.review_status
+             FROM exam_content_versions cv
+             WHERE cv.exam_id = ?1 AND cv.content_type = 'syllabus'
+               AND EXISTS (
+                   SELECT 1
+                   FROM exam_syllabus_sources s
+                   JOIN exam_syllabus_nodes n
+                     ON n.exam_id = s.exam_id AND n.source_id = s.id
+                   WHERE s.exam_id = cv.exam_id
+                     AND s.content_version_id = cv.id
+                     AND n.is_archived = 0
+               )
+             ORDER BY (cv.review_status = 'verified') DESC,
+                      cv.verified_on DESC,
+                      cv.id DESC
+             LIMIT 1",
             [exam_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| AppError::database("Syllabus content version could not be read", error))?;
+    let content_version_id = content.as_ref().map(|value| value.0);
 
     let mut statement = connection
         .prepare(
@@ -319,11 +396,13 @@ pub fn get_exam_syllabus(
              LEFT JOIN exam_node_progress prog
                 ON prog.exam_id = n.exam_id AND prog.node_id = n.id
              WHERE n.exam_id = ?1
+               AND n.is_archived = 0
+               AND (?2 IS NULL OR s.content_version_id = ?2)
              ORDER BY n.parent_id, n.display_order, n.id",
         )
         .map_err(|error| AppError::database("Syllabus nodes could not be prepared", error))?;
     let rows = statement
-        .query_map([exam_id], |row| {
+        .query_map(params![exam_id, content_version_id], |row| {
             Ok(V2SyllabusNode {
                 id: row.get(0)?,
                 exam_id,
@@ -402,8 +481,8 @@ pub fn get_exam_syllabus(
         exam_name,
         exam_is_active,
         configured: content.is_some() && !nodes.is_empty(),
-        content_version_label: content.as_ref().map(|value| value.0.clone()),
-        content_review_status: content.map(|value| value.1),
+        content_version_label: content.as_ref().map(|value| value.1.clone()),
+        content_review_status: content.map(|value| value.2),
         nodes,
         summary: V2SyllabusSummary {
             node_count: node_map.len() as i64,
@@ -533,14 +612,69 @@ mod tests {
             + chrono::Duration::seconds(seconds)
     }
 
+    fn node_ids(connection: &Connection, exam_id: i64) -> Result<HashMap<String, i64>, AppError> {
+        let mut statement = connection
+            .prepare("SELECT code, id FROM exam_syllabus_nodes WHERE exam_id = ?1")
+            .map_err(|error| AppError::database("syllabus node IDs", error))?;
+        let rows = statement
+            .query_map([exam_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| AppError::database("syllabus node IDs", error))?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>()
+            .map_err(|error| AppError::database("syllabus node IDs", error))
+    }
+
+    fn node_titles(
+        connection: &Connection,
+        exam_id: i64,
+    ) -> Result<HashMap<String, String>, AppError> {
+        let mut statement = connection
+            .prepare("SELECT code, title FROM exam_syllabus_nodes WHERE exam_id = ?1")
+            .map_err(|error| AppError::database("syllabus node titles", error))?;
+        let rows = statement
+            .query_map([exam_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| AppError::database("syllabus node titles", error))?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>()
+            .map_err(|error| AppError::database("syllabus node titles", error))
+    }
+
+    fn add_session_allocation(
+        connection: &Connection,
+        exam_id: i64,
+        node_id: i64,
+    ) -> Result<i64, AppError> {
+        let now = "2026-11-04T10:00:00Z";
+        connection
+            .execute(
+                "INSERT INTO study_sessions (
+                    session_date, duration_seconds, source, notes, created_at, updated_at
+                 ) VALUES ('2026-11-04', 4, 'manual', '', ?1, ?1)",
+                [now],
+            )
+            .map_err(|error| AppError::database("fixture session", error))?;
+        let session_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO session_topic_allocations (
+                    session_id, exam_id, node_id, allocated_seconds, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, 4, ?4, ?4)",
+                params![session_id, exam_id, node_id, now],
+            )
+            .map_err(|error| AppError::database("fixture session allocation", error))?;
+        Ok(session_id)
+    }
+
     fn add_fixture(connection: &Connection) -> i64 {
         let now = "2026-11-04T10:00:00Z";
         connection
             .execute(
                 "INSERT INTO exam_content_versions (
                     exam_id, content_type, version_label, source_reference,
-                    review_status, created_at
-                 ) VALUES (1, 'syllabus', 'v1', 'fixture', 'verified', ?1)",
+                    verified_on, review_status, created_at
+                 ) VALUES (1, 'syllabus', 'v1', 'fixture', '2026-12-31', 'verified', ?1)",
                 [now],
             )
             .unwrap();
@@ -625,6 +759,747 @@ mod tests {
         );
         assert_eq!(dimensional.source_verified_on, "2026-11-05");
         assert!(dimensional.source_url.is_some());
+    }
+
+    #[test]
+    fn syllabus_version_selection_ignores_empty_versions_and_never_mixes_nodes() {
+        let (_root, state) = state();
+        state
+            .with_connection(|connection| {
+                let now = "2026-11-10T00:00:00Z";
+                connection
+                    .execute(
+                        "INSERT INTO exam_content_versions (
+                            exam_id, content_type, version_label, source_reference,
+                            verified_on, review_status, created_at
+                         ) VALUES (1, 'syllabus', 'Newer empty fixture', 'fixture',
+                                   '2026-12-01', 'verified', ?1)",
+                        [now],
+                    )
+                    .expect("empty version");
+                let with_empty = get_exam_syllabus(connection, V2SyllabusExamInput { exam_id: 1 })
+                    .expect("syllabus with empty newer version");
+                assert_eq!(with_empty.summary.node_count, 158);
+                assert_eq!(
+                    with_empty.content_version_label.as_deref(),
+                    Some("CSIR-HRDG Physical Sciences syllabus (2020 PDF, verified 2026-11-05)")
+                );
+
+                connection
+                    .execute(
+                        "INSERT INTO exam_content_versions (
+                            exam_id, content_type, version_label, source_reference,
+                            verified_on, review_status, created_at
+                         ) VALUES (1, 'syllabus', 'Exclusive fixture version', 'fixture',
+                                   '2026-12-02', 'verified', ?1)",
+                        [now],
+                    )
+                    .expect("exclusive version");
+                let version_id = connection.last_insert_rowid();
+                connection
+                    .execute(
+                        "INSERT INTO exam_syllabus_sources (
+                            exam_id, content_version_id, code, title, publisher,
+                            source_reference, verified_on, created_at, updated_at
+                         ) VALUES (1, ?1, 'EXCLUSIVE', 'Exclusive source', 'Fixture',
+                                   'fixture', '2026-12-02', ?2, ?2)",
+                        params![version_id, now],
+                    )
+                    .expect("exclusive source");
+                let source_id = connection.last_insert_rowid();
+                connection
+                    .execute(
+                        "INSERT INTO exam_syllabus_nodes (
+                            exam_id, source_id, code, title, node_kind,
+                            category, display_order, created_at, updated_at
+                         ) VALUES (1, ?1, 'exclusive-topic', 'Exclusive topic',
+                                   'topic', 'Fixture', 1, ?2, ?2)",
+                        params![source_id, now],
+                    )
+                    .expect("exclusive node");
+
+                let exclusive = get_exam_syllabus(connection, V2SyllabusExamInput { exam_id: 1 })
+                    .expect("exclusive syllabus");
+                assert_eq!(
+                    exclusive.content_version_label.as_deref(),
+                    Some("Exclusive fixture version")
+                );
+                assert_eq!(exclusive.summary.node_count, 1);
+                assert_eq!(exclusive.nodes[0].code, "exclusive-topic");
+                Ok::<(), AppError>(())
+            })
+            .expect("version selection");
+    }
+
+    #[test]
+    fn jest_syllabus_is_independent_and_source_verified() {
+        let (_root, state) = state();
+        state
+            .with_connection(|connection| {
+                let jest = get_exam_syllabus(connection, V2SyllabusExamInput { exam_id: 4 })
+                    .expect("JEST syllabus");
+                assert!(jest.configured);
+                assert_eq!(jest.exam_code, "jest-physics");
+                assert_eq!(jest.summary.node_count, 49);
+                assert_eq!(jest.summary.topic_count, 42);
+                assert_eq!(
+                    jest.nodes
+                        .iter()
+                        .filter(|node| node.node_kind == "unit")
+                        .count(),
+                    6
+                );
+                assert!(jest.nodes.iter().all(|node| node.code.starts_with("jest-")));
+                assert!(jest.nodes.iter().all(|node| {
+                    !node.code.starts_with("csir-")
+                        && !node.code.starts_with("gate-")
+                        && !node.code.starts_with("tifr-")
+                }));
+                assert!(jest.nodes.iter().all(|node| {
+                    node.source_url.as_deref()
+                        == Some(
+                            "https://www.jest.org.in/sites/default/files/2025-12/JEST-Syllabus.pdf",
+                        )
+                }));
+                assert!(
+                    jest.nodes
+                        .iter()
+                        .all(|node| { node.content_version_label == "JEST 2026 Physics Syllabus" })
+                );
+
+                let topic = jest
+                    .nodes
+                    .iter()
+                    .find(|node| node.node_kind == "topic")
+                    .expect("JEST topic");
+                let updated = update_node_progress(
+                    connection,
+                    V2SyllabusProgressInput {
+                        exam_id: 4,
+                        node_id: topic.id,
+                        status: "revised".to_owned(),
+                        priority: "high".to_owned(),
+                        confidence: 4,
+                        notes: "JEST-only progress".to_owned(),
+                    },
+                    at(10),
+                )
+                .expect("JEST progress");
+                assert_eq!(
+                    updated
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == topic.id)
+                        .map(|node| node.progress_status.as_str()),
+                    Some("revised")
+                );
+                let csir = get_exam_syllabus(connection, V2SyllabusExamInput { exam_id: 1 })
+                    .expect("CSIR syllabus");
+                assert!(
+                    csir.nodes
+                        .iter()
+                        .all(|node| node.progress_status == "not_started")
+                );
+                Ok::<(), AppError>(())
+            })
+            .expect("JEST integrity");
+    }
+
+    #[test]
+    fn approved_csir_title_corrections_are_refreshed_without_changing_identity() {
+        let (_root, state) = state();
+        let corrections = [
+            (
+                "csir-part-a-core-electronics-and-experimental-meth-t001-semiconductor-devices-diodes-junctions-transistors",
+                "Semiconductor devices: diodes, junctions, transistors and field effect devices",
+                "Semiconductor devices: diodes, junctions, transistors, field-effect devices, device structure, characteristics, frequency dependence and applications",
+            ),
+            (
+                "csir-part-b-advanced-electronics-and-experimental--t002-transducers-for-temperature-pressure-magnetic-fiel",
+                "Transducers for temperature, pressure, magnetic fields, vibration, optical and particle measurements",
+                "Transducers for temperature, pressure/vacuum, magnetic fields, vibration, optical measurements and particle detectors",
+            ),
+            (
+                "csir-part-b-advanced-electronics-and-experimental--t004-impedance-matching-amplification-filtering-and-noi",
+                "Impedance matching, amplification, filtering and noise reduction",
+                "Impedance matching, amplification (op-amp based, instrumentation amplifiers, feedback), filtering and noise reduction",
+            ),
+            (
+                "csir-part-b-advanced-nuclear-and-particle-physics-t006-evidence-of-shell-structure-and-single-particle-sh",
+                "Evidence of shell structure and single-particle shell model",
+                "Evidence of shell structure, single-particle shell model, its validity and limitations",
+            ),
+            (
+                "csir-part-b-advanced-nuclear-and-particle-physics-t012-quantum-numbers-gell-mann-nishijima-formula-and-qu",
+                "Quantum numbers, Gell-Mann-Nishijima formula and quark model",
+                "Quantum numbers (charge, spin, parity, isospin, strangeness), Gell-Mann-Nishijima formula and quark model",
+            ),
+            (
+                "csir-part-b-advanced-condensed-matter-physics-t014-ordered-phases-of-matter-and-liquid-crystalline-or",
+                "Ordered phases of matter and liquid crystalline order",
+                "Ordered phases of matter: translational and orientational order, and kinds of liquid crystalline order",
+            ),
+        ];
+
+        let before = state
+            .with_connection(|connection| {
+                for (code, old_title, _) in corrections {
+                    connection
+                        .execute(
+                            "UPDATE exam_syllabus_nodes
+                             SET title = ?2
+                             WHERE exam_id = 1 AND code = ?1 AND is_archived = 0",
+                            params![code, old_title],
+                        )
+                        .map_err(|error| AppError::database("old CSIR title fixture", error))?;
+                }
+                let ids = node_ids(connection, 1)?;
+                let tracked_node = ids
+                    .get(corrections[0].0)
+                    .copied()
+                    .expect("tracked CSIR correction node");
+                connection
+                    .execute(
+                        "INSERT INTO exam_node_progress (
+                            exam_id, node_id, status, priority, confidence, notes,
+                            created_at, updated_at
+                         ) VALUES (1, ?1, 'confident', 'high', 5, 'preserve CSIR progress',
+                                   '2026-11-04T10:00:00Z', '2026-11-04T10:00:00Z')",
+                        [tracked_node],
+                    )
+                    .map_err(|error| AppError::database("CSIR progress fixture", error))?;
+                let topic_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 1 AND node_kind = 'topic'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("CSIR topic count", error))?;
+                let section_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 1 AND node_kind = 'section'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("CSIR section count", error))?;
+                let mapping_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_concepts WHERE exam_id = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("CSIR mapping count", error))?;
+                Ok((ids, topic_count, section_count, mapping_count))
+            })
+            .expect("CSIR before");
+
+        state
+            .with_connection(prepare)
+            .expect("approved CSIR preparation");
+
+        let after = state
+            .with_connection(|connection| {
+                let ids = node_ids(connection, 1)?;
+                let titles = node_titles(connection, 1)?;
+                let mapping_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_concepts WHERE exam_id = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("CSIR mapping count", error))?;
+                Ok((ids, titles, mapping_count))
+            })
+            .expect("CSIR after");
+
+        let preserved_progress = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT p.status, p.priority, p.confidence, p.notes
+                         FROM exam_node_progress p
+                         JOIN exam_syllabus_nodes n ON n.id = p.node_id
+                         WHERE n.exam_id = 1 AND n.code = ?1",
+                        [corrections[0].0],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, i64>(2)?,
+                                row.get::<_, String>(3)?,
+                            ))
+                        },
+                    )
+                    .map_err(|error| AppError::database("CSIR progress preservation", error))
+            })
+            .expect("CSIR progress preservation");
+        assert_eq!(
+            preserved_progress,
+            (
+                "confident".to_owned(),
+                "high".to_owned(),
+                5,
+                "preserve CSIR progress".to_owned()
+            )
+        );
+        assert_eq!(before.0, after.0);
+        assert_eq!(before.1, 141);
+        assert_eq!(before.2, 2);
+        assert_eq!(before.3, 42);
+        assert_eq!(after.2, 42);
+        for (code, _, new_title) in corrections {
+            assert_eq!(after.1.get(code).map(String::as_str), Some(new_title));
+        }
+        assert!(after.0.contains_key("csir-part-a-core"));
+        assert!(after.0.contains_key("csir-part-b-advanced"));
+        assert_eq!(
+            state
+                .with_connection(|connection| {
+                    connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM exam_node_concepts
+                             WHERE exam_id = 1
+                               AND concept_id = (SELECT id FROM concepts WHERE slug = 'classical-mechanics')
+                               AND node_id = (SELECT id FROM exam_syllabus_nodes
+                                              WHERE exam_id = 1 AND code = 'csir-part-a-core-classical-mechanics')",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .map_err(|error| AppError::database("CSIR mapping preservation", error))
+                })
+                .expect("CSIR mapping preservation"),
+            1
+        );
+    }
+
+    #[test]
+    fn approved_jest_provenance_notes_refresh_without_touching_syllabus_nodes() {
+        let (_root, state) = state();
+        let before = state
+            .with_connection(|connection| {
+                let ids = node_ids(connection, 4)?;
+                let titles = node_titles(connection, 4)?;
+                let source: (i64, String) = connection
+                    .query_row(
+                        "SELECT id, notes FROM exam_syllabus_sources
+                         WHERE exam_id = 4 AND code = 'jest-2026-physics'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(|error| AppError::database("JEST source", error))?;
+                let content: (i64, String, String) = connection
+                    .query_row(
+                        "SELECT id, version_label, notes FROM exam_content_versions
+                         WHERE exam_id = 4 AND content_type = 'syllabus'
+                         ORDER BY id DESC LIMIT 1",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .map_err(|error| AppError::database("JEST content version", error))?;
+                connection
+                    .execute(
+                        "UPDATE exam_syllabus_sources SET notes = 'outdated JEST provenance'
+                         WHERE id = ?1",
+                        [source.0],
+                    )
+                    .map_err(|error| AppError::database("old JEST source notes", error))?;
+                connection
+                    .execute(
+                        "UPDATE exam_content_versions SET notes = 'outdated JEST provenance'
+                         WHERE id = ?1",
+                        [content.0],
+                    )
+                    .map_err(|error| AppError::database("old JEST content notes", error))?;
+                let mapping_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_concepts WHERE exam_id = 4",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("JEST mapping count", error))?;
+                Ok((ids, titles, source.0, content.0, content.1, mapping_count))
+            })
+            .expect("JEST before");
+
+        state
+            .with_connection(prepare)
+            .expect("approved JEST preparation");
+
+        state
+            .with_connection(|connection| {
+                let ids = node_ids(connection, 4)?;
+                let titles = node_titles(connection, 4)?;
+                let source: (i64, String, String, String) = connection
+                    .query_row(
+                        "SELECT id, title, url, notes FROM exam_syllabus_sources
+                         WHERE exam_id = 4 AND code = 'jest-2026-physics'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .map_err(|error| AppError::database("JEST source after", error))?;
+                let content: (i64, String, String) = connection
+                    .query_row(
+                        "SELECT id, version_label, notes FROM exam_content_versions
+                         WHERE exam_id = 4 AND content_type = 'syllabus'
+                         ORDER BY id DESC LIMIT 1",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .map_err(|error| AppError::database("JEST content after", error))?;
+                let units: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 4 AND node_kind = 'unit'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("JEST unit count", error))?;
+                let topics: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 4 AND node_kind = 'topic'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("JEST topic count", error))?;
+                let mapping_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_concepts WHERE exam_id = 4",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("JEST mapping count after", error))?;
+
+                assert_eq!(before.0, ids);
+                assert_eq!(before.1, titles);
+                assert_eq!(source.0, before.2);
+                assert_eq!(content.0, before.3);
+                assert_eq!(source.1, "JEST 2026 Physics Syllabus");
+                assert_eq!(
+                    source.2,
+                    "https://www.jest.org.in/sites/default/files/2025-12/JEST-Syllabus.pdf"
+                );
+                assert_eq!(before.4, "JEST 2026 Physics Syllabus");
+                assert_eq!(content.1, before.4);
+                assert!(source.3.contains("undated"));
+                assert!(source.3.contains("does not independently verify"));
+                assert!(content.2.contains("undated"));
+                assert!(content.2.contains("does not independently verify"));
+                assert_eq!(ids.len(), 49);
+                assert_eq!(units, 6);
+                assert_eq!(topics, 42);
+                assert_eq!(mapping_count, 28);
+                assert_eq!(before.5, 28);
+                Ok::<(), AppError>(())
+            })
+            .expect("JEST integrity after provenance refresh");
+    }
+
+    #[test]
+    fn gate_2027_remains_exclusive_and_preserves_mappings_and_history() {
+        const GATE_TRACKER_ONLY: [&str; 19] = [
+            "gate-ph-2027-measurements-and-error-analysis-t001-units-and-dimensions-dimensional-analysis",
+            "gate-ph-2027-measurements-and-error-analysis-t002-least-count-and-significant-figures",
+            "gate-ph-2027-measurements-and-error-analysis-t003-methods-of-measurement-and-error-analysis",
+            "gate-ph-2027-measurements-and-error-analysis-t004-2-probe-and-4-probe-methods-for-resistance-measure",
+            "gate-ph-2027-measurements-and-error-analysis-t005-grounding-for-electrical-circuits-and-ground-loops",
+            "gate-ph-2027-measurements-and-error-analysis-t006-design-of-dc-power-supply",
+            "gate-ph-2027-measurements-and-error-analysis-t007-signal-processing-through-lock-in-amplifiers",
+            "gate-ph-2027-optical-physics-t001-wave-equation-plane-and-spherical-waves-superposit",
+            "gate-ph-2027-optical-physics-t002-interference-spatial-and-temporal-coherence-dielec",
+            "gate-ph-2027-optical-physics-t003-michelson-interferometer-fabry-perot-interferomete",
+            "gate-ph-2027-optical-physics-t004-diffraction-fresnel-and-fraunhofer-diffraction-rec",
+            "gate-ph-2027-optical-physics-t005-diffraction-from-double-slit-and-many-slits",
+            "gate-ph-2027-optical-physics-t006-dispersion-by-a-grating",
+            "gate-ph-2027-optical-physics-t007-polarization-jones-vectors-and-matrices-birefringe",
+            "gate-ph-2027-mathematical-physics-t003-linear-differential-equations-first-and-second-ord",
+            "gate-ph-2027-quantum-mechanics-t005-particle-in-single-and-double-delta-function-poten",
+            "gate-ph-2027-atomic-and-molecular-physics-t004-zeeman-paschen-back-and-stark-effects",
+            "gate-ph-2027-atomic-and-molecular-physics-t009-nmr-esr-x-ray-and-mossbauer-spectroscopies",
+            "gate-ph-2027-electronics-t004-waveform-generators-sine-square-and-triangular-wav",
+        ];
+
+        let (_root, state) = state();
+        let before = state
+            .with_connection(|connection| {
+                let ids = node_ids(connection, 2)?;
+                let titles = node_titles(connection, 2)?;
+                let mapping_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_concepts WHERE exam_id = 2",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE mapping count", error))?;
+                let root_title: String = connection
+                    .query_row(
+                        "SELECT title FROM exam_syllabus_nodes
+                         WHERE exam_id = 2 AND code = 'gate-ph-2027'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE root", error))?;
+                let source_url: String = connection
+                    .query_row(
+                        "SELECT url FROM exam_syllabus_sources
+                         WHERE exam_id = 2 AND code = 'gate-2027-ph'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE source", error))?;
+                let version_label: String = connection
+                    .query_row(
+                        "SELECT version_label FROM exam_content_versions
+                         WHERE exam_id = 2 AND content_type = 'syllabus'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE version", error))?;
+                let allocation_node = ids
+                    .get(GATE_TRACKER_ONLY[0])
+                    .copied()
+                    .expect("GATE measurement node");
+                let session_id = add_session_allocation(connection, 2, allocation_node)?;
+                Ok((
+                    ids,
+                    titles,
+                    mapping_count,
+                    root_title,
+                    source_url,
+                    version_label,
+                    session_id,
+                    allocation_node,
+                ))
+            })
+            .expect("GATE before");
+
+        state
+            .with_connection(prepare)
+            .expect("GATE preservation preparation");
+
+        state
+            .with_connection(|connection| {
+                let ids = node_ids(connection, 2)?;
+                let titles = node_titles(connection, 2)?;
+                let mapping_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_concepts WHERE exam_id = 2",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE mapping count after", error))?;
+                let node_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes WHERE exam_id = 2",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE node count", error))?;
+                let topic_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 2 AND node_kind = 'topic'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE topic count", error))?;
+                let gate_2025_nodes: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 2 AND code LIKE 'gate-ph-2025%'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE 2025 node check", error))?;
+                let gate_2025_versions: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_content_versions
+                         WHERE exam_id = 2 AND version_label LIKE '%2025%'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE 2025 version check", error))?;
+                let root_title: String = connection
+                    .query_row(
+                        "SELECT title FROM exam_syllabus_nodes
+                         WHERE exam_id = 2 AND code = 'gate-ph-2027'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE root after", error))?;
+                let source_url: String = connection
+                    .query_row(
+                        "SELECT url FROM exam_syllabus_sources
+                         WHERE exam_id = 2 AND code = 'gate-2027-ph'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE source after", error))?;
+                let version_label: String = connection
+                    .query_row(
+                        "SELECT version_label FROM exam_content_versions
+                         WHERE exam_id = 2 AND content_type = 'syllabus'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("GATE version after", error))?;
+                let allocation: (i64, i64) = connection
+                    .query_row(
+                        "SELECT session_id, node_id FROM session_topic_allocations
+                         WHERE session_id = ?1 AND exam_id = 2",
+                        [before.6],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(|error| AppError::database("GATE allocation after", error))?;
+
+                assert_eq!(before.0, ids);
+                assert_eq!(before.1, titles);
+                assert_eq!(before.2, 36);
+                assert_eq!(mapping_count, 36);
+                assert_eq!(before.3, root_title);
+                assert_eq!(before.4, source_url);
+                assert_eq!(before.5, version_label);
+                assert_eq!(node_count, 104);
+                assert_eq!(topic_count, 92);
+                assert_eq!(gate_2025_nodes, 0);
+                assert_eq!(gate_2025_versions, 0);
+                assert_eq!(allocation, (before.6, before.7));
+                for code in GATE_TRACKER_ONLY {
+                    assert!(
+                        ids.contains_key(code),
+                        "missing preserved GATE entry {code}"
+                    );
+                }
+                Ok::<(), AppError>(())
+            })
+            .expect("GATE preservation");
+    }
+
+    #[test]
+    fn tifr_broad_area_placeholders_are_relabelled_without_removal_or_reference_loss() {
+        let child_codes = [
+            "tifr-gs-2024-classical-mechanics-t001-broad-area-classical-mechanics",
+            "tifr-gs-2024-mathematics-relevant-to-physics-t001-broad-area-mathematics-relevant-to-physics",
+            "tifr-gs-2024-electricity-and-magnetism-t001-broad-area-electricity-and-magnetism",
+            "tifr-gs-2024-quantum-mechanics-t001-broad-area-quantum-mechanics",
+            "tifr-gs-2024-heat-thermodynamics-and-statistical-p-t001-broad-area-heat-thermodynamics-and-statistical-phy",
+            "tifr-gs-2024-general-physics-t001-broad-area-general-physics",
+            "tifr-gs-2024-modern-physics-t001-broad-area-modern-physics",
+            "tifr-gs-2024-electronics-and-experimental-physics-t001-broad-area-electronics-and-experimental-physics",
+        ];
+        let (_root, state) = state();
+        let before = state
+            .with_connection(|connection| {
+                let ids = node_ids(connection, 3)?;
+                let titles = node_titles(connection, 3)?;
+                let classical_id = ids
+                    .get(child_codes[0])
+                    .copied()
+                    .expect("TIFR classical placeholder");
+                for code in child_codes {
+                    let old_title = format!(
+                        "Broad area: {}",
+                        titles
+                            .get(code)
+                            .expect("TIFR placeholder title")
+                            .trim_start_matches("Coverage note: ")
+                    );
+                    connection
+                        .execute(
+                            "UPDATE exam_syllabus_nodes SET title = ?2
+                             WHERE exam_id = 3 AND code = ?1",
+                            params![code, old_title],
+                        )
+                        .map_err(|error| AppError::database("old TIFR title fixture", error))?;
+                }
+                let session_id = add_session_allocation(connection, 3, classical_id)?;
+                Ok((ids, titles, classical_id, session_id))
+            })
+            .expect("TIFR before");
+
+        state
+            .with_connection(prepare)
+            .expect("approved TIFR preparation");
+
+        state
+            .with_connection(|connection| {
+                let ids = node_ids(connection, 3)?;
+                let titles = node_titles(connection, 3)?;
+                let node_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes WHERE exam_id = 3",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("TIFR node count", error))?;
+                let unit_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 3 AND node_kind = 'unit'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("TIFR unit count", error))?;
+                let topic_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_syllabus_nodes
+                         WHERE exam_id = 3 AND node_kind = 'topic'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("TIFR topic count", error))?;
+                let progress_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_progress WHERE exam_id = 3",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("TIFR progress", error))?;
+                let mapping_count: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM exam_node_concepts WHERE exam_id = 3",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("TIFR mapping count", error))?;
+                let allocation: (i64, i64) = connection
+                    .query_row(
+                        "SELECT session_id, node_id FROM session_topic_allocations
+                         WHERE session_id = ?1 AND exam_id = 3",
+                        [before.3],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(|error| AppError::database("TIFR allocation after", error))?;
+
+                assert_eq!(before.0, ids);
+                assert_eq!(node_count, 17);
+                assert_eq!(unit_count, 8);
+                assert_eq!(topic_count, 8);
+                assert_eq!(progress_count, 0);
+                assert_eq!(mapping_count, 2);
+                assert_eq!(allocation, (before.3, before.2));
+                for code in child_codes {
+                    let title = titles.get(code).expect("TIFR child after");
+                    assert!(title.starts_with("Coverage note: "), "{code} -> {title}");
+                    assert!(!title.starts_with("Broad area:"), "{code} -> {title}");
+                }
+                for unit in [
+                    "tifr-gs-2024-classical-mechanics",
+                    "tifr-gs-2024-mathematics-relevant-to-physics",
+                    "tifr-gs-2024-electricity-and-magnetism",
+                    "tifr-gs-2024-quantum-mechanics",
+                    "tifr-gs-2024-heat-thermodynamics-and-statistical-physics",
+                    "tifr-gs-2024-general-physics",
+                    "tifr-gs-2024-modern-physics",
+                    "tifr-gs-2024-electronics-and-experimental-physics",
+                ] {
+                    assert_eq!(before.1.get(unit), titles.get(unit));
+                }
+                Ok::<(), AppError>(())
+            })
+            .expect("TIFR preservation");
     }
 
     #[test]
