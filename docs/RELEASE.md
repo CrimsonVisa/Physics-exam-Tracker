@@ -20,6 +20,8 @@ display product name; the product is always **Physics Tracker**.
 - Frontend and Rust tests green
 - README, feature guide, changelog, and release notes current
 - Installer metadata verified
+- MIT license text present in `LICENSE` and included with the installer
+- Third-party notices current, including Apache-2.0, MPL-2.0, OFL-1.1, and attribution obligations
 - No database, backup, PDF, build output, secret, or local configuration file staged
 
 ## Local verification
@@ -90,6 +92,8 @@ from unrelated branches.
 - [ ] CI green
 - [ ] Local full quality gate green
 - [ ] Installer metadata verified
+- [ ] MIT license text included in the installer/release assets
+- [ ] Third-party notices and attribution obligations verified
 - [ ] Installer SHA-256 recorded
 - [ ] Unsigned status documented
 - [ ] No secrets, databases, backups, PDFs, or generated artifacts included

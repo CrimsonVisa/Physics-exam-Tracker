@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::{DateTime, Local, SecondsFormat, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, SecondsFormat, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -442,23 +442,67 @@ fn backup_files_with_prefix(directory: &Path, prefix: &str) -> Vec<PathBuf> {
                     .is_some_and(|name| name.to_string_lossy().starts_with(prefix))
         })
         .collect::<Vec<_>>();
-    paths.sort();
+    paths.sort_by_key(|path| backup_chronological_key(path));
     paths
+}
+
+fn backup_chronological_key(path: &Path) -> (Option<NaiveDateTime>, u64, String) {
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stem = name.strip_suffix(".sqlite3").unwrap_or(&name);
+    match parse_backup_stem(stem) {
+        Some((stamp, counter)) => (Some(stamp), counter, name),
+        None => (None, 0, name),
+    }
+}
+
+fn parse_backup_stem(stem: &str) -> Option<(NaiveDateTime, u64)> {
+    let (_, rest) = stem.rsplit_once("-v")?;
+    let (schema_version, rest) = rest.split_once('-')?;
+    if schema_version.is_empty() || !schema_version.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let stamp = rest.get(..15)?;
+    let stamp = NaiveDateTime::parse_from_str(stamp, "%Y%m%d-%H%M%S").ok()?;
+    let counter = match rest.get(15..) {
+        Some("") => 0,
+        Some(suffix) => {
+            let suffix = suffix.strip_prefix('-')?;
+            if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            suffix.parse().ok()?
+        }
+        None => return None,
+    };
+    Some((stamp, counter))
+}
+
+fn latest_backup_with_prefix(
+    directory: &Path,
+    prefix: &str,
+    is_valid: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    backup_files_with_prefix(directory, prefix)
+        .into_iter()
+        .rfind(|path| is_valid(path))
 }
 
 #[cfg(test)]
 pub fn latest_pre_migration_backup(data_dir: &Path) -> Option<PathBuf> {
     let prefix = format!("{BACKUP_PREFIX}-{PRE_MIGRATION_REASON}-");
-    backup_files_with_prefix(&data_dir.join("backups"), &prefix)
-        .into_iter()
-        .rfind(|path| verify_backup(path).is_ok())
+    latest_backup_with_prefix(&data_dir.join("backups"), &prefix, |path| {
+        verify_backup(path).is_ok()
+    })
 }
 
 pub fn latest_post_migration_backup(data_dir: &Path) -> Option<PathBuf> {
     let prefix = format!("{BACKUP_PREFIX}-{POST_MIGRATION_REASON}-");
-    backup_files_with_prefix(&safety_backup_directory(data_dir), &prefix)
-        .into_iter()
-        .rfind(|path| verify_backup(path).is_ok())
+    latest_backup_with_prefix(&safety_backup_directory(data_dir), &prefix, |path| {
+        verify_backup(path).is_ok()
+    })
 }
 
 pub fn post_migration_snapshot_required(data_dir: &Path) -> bool {
@@ -2278,6 +2322,166 @@ mod tests {
 
     fn date(year: i32, month: u32, day: u32) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(year, month, day).expect("test date should be valid")
+    }
+
+    fn write_snapshot_fixtures(directory: &Path, names: &[&str]) {
+        for name in names {
+            fs::write(directory.join(name), b"fixture").expect("snapshot fixture should write");
+        }
+    }
+
+    fn snapshot_file_name(path: &Path) -> String {
+        path.file_name()
+            .expect("snapshot should have a file name")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn same_second_post_migration_snapshot_suffix_sorts_after_unsuffixed() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let names = [
+            "csir-net-tracker-post-migration-v12-20261111-163054.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054-1.sqlite3",
+        ];
+        write_snapshot_fixtures(directory.path(), &names);
+
+        let prefix = format!("{BACKUP_PREFIX}-{POST_MIGRATION_REASON}-");
+        let latest = latest_backup_with_prefix(directory.path(), &prefix, |_| true)
+            .expect("latest post-migration snapshot");
+
+        assert_eq!(snapshot_file_name(&latest), names[1]);
+    }
+
+    #[test]
+    fn same_second_pre_migration_snapshot_suffix_sorts_after_unsuffixed() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let names = [
+            "csir-net-tracker-pre-migration-v12-20261111-163054.sqlite3",
+            "csir-net-tracker-pre-migration-v12-20261111-163054-1.sqlite3",
+        ];
+        write_snapshot_fixtures(directory.path(), &names);
+
+        let prefix = format!("{BACKUP_PREFIX}-{PRE_MIGRATION_REASON}-");
+        let latest = latest_backup_with_prefix(directory.path(), &prefix, |_| true)
+            .expect("latest pre-migration snapshot");
+
+        assert_eq!(snapshot_file_name(&latest), names[1]);
+    }
+
+    #[test]
+    fn later_timestamp_wins_over_higher_collision_suffix() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let names = [
+            "csir-net-tracker-post-migration-v12-20261111-163054-9.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163055.sqlite3",
+        ];
+        write_snapshot_fixtures(directory.path(), &names);
+
+        let prefix = format!("{BACKUP_PREFIX}-{POST_MIGRATION_REASON}-");
+        let latest = latest_backup_with_prefix(directory.path(), &prefix, |_| true)
+            .expect("latest post-migration snapshot");
+
+        assert_eq!(snapshot_file_name(&latest), names[1]);
+    }
+
+    #[test]
+    fn multiple_collision_suffixes_sort_chronologically() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let names = [
+            "csir-net-tracker-post-migration-v12-20261111-163054.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054-1.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054-2.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163055.sqlite3",
+        ];
+        write_snapshot_fixtures(directory.path(), &names);
+
+        let prefix = format!("{BACKUP_PREFIX}-{POST_MIGRATION_REASON}-");
+        let sorted = backup_files_with_prefix(directory.path(), &prefix);
+        let sorted_names = sorted
+            .iter()
+            .map(|path| snapshot_file_name(path))
+            .collect::<Vec<_>>();
+        assert_eq!(sorted_names, names);
+
+        let latest = latest_backup_with_prefix(directory.path(), &prefix, |_| true)
+            .expect("latest post-migration snapshot");
+        assert_eq!(snapshot_file_name(&latest), names[3]);
+    }
+
+    #[test]
+    fn unsuffixed_backup_filename_is_collision_zero() {
+        let unsuffixed = Path::new("csir-net-tracker-post-migration-v12-20261111-163054.sqlite3");
+        let suffixed = Path::new("csir-net-tracker-post-migration-v12-20261111-163054-1.sqlite3");
+
+        let unsuffixed_key = backup_chronological_key(unsuffixed);
+        let suffixed_key = backup_chronological_key(suffixed);
+
+        assert_eq!(unsuffixed_key.1, 0);
+        assert_eq!(suffixed_key.1, 1);
+        assert!(unsuffixed_key < suffixed_key);
+    }
+
+    #[test]
+    fn numeric_collision_suffixes_sort_numerically() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let names = [
+            "csir-net-tracker-post-migration-v12-20261111-163054.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054-1.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054-2.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054-10.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163055.sqlite3",
+        ];
+        write_snapshot_fixtures(directory.path(), &names);
+
+        let prefix = format!("{BACKUP_PREFIX}-{POST_MIGRATION_REASON}-");
+        let sorted = backup_files_with_prefix(directory.path(), &prefix);
+        let sorted_names = sorted
+            .iter()
+            .map(|path| snapshot_file_name(path))
+            .collect::<Vec<_>>();
+
+        assert_eq!(sorted_names, names);
+    }
+
+    #[test]
+    fn invalid_newest_backup_is_skipped() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let names = [
+            "csir-net-tracker-post-migration-v12-20261111-163054.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054-1.sqlite3",
+        ];
+        write_snapshot_fixtures(directory.path(), &names);
+
+        let prefix = format!("{BACKUP_PREFIX}-{POST_MIGRATION_REASON}-");
+        let latest = latest_backup_with_prefix(directory.path(), &prefix, |path| {
+            path.file_name().and_then(|name| name.to_str()) != Some(names[1])
+        })
+        .expect("latest valid post-migration snapshot");
+
+        assert_eq!(snapshot_file_name(&latest), names[0]);
+    }
+
+    #[test]
+    fn unparseable_backup_cannot_outrank_timestamped_backup() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let names = [
+            "csir-net-tracker-post-migration-v12-invalid.sqlite3",
+            "csir-net-tracker-post-migration-v12-20261111-163054.sqlite3",
+        ];
+        write_snapshot_fixtures(directory.path(), &names);
+
+        let prefix = format!("{BACKUP_PREFIX}-{POST_MIGRATION_REASON}-");
+        let sorted = backup_files_with_prefix(directory.path(), &prefix);
+        let sorted_names = sorted
+            .iter()
+            .map(|path| snapshot_file_name(path))
+            .collect::<Vec<_>>();
+        assert_eq!(sorted_names, names);
+
+        let latest = latest_backup_with_prefix(directory.path(), &prefix, |_| true)
+            .expect("latest timestamped post-migration snapshot");
+        assert_eq!(snapshot_file_name(&latest), names[1]);
     }
 
     fn database(tmp: &TempDir) -> Connection {
