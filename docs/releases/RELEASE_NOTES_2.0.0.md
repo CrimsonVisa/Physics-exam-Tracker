@@ -38,6 +38,12 @@ The application remains offline-first. Study records stay in a local SQLite data
 The V2 application keeps its data separate from the retired V1 database. It does not open or modify
 V1 data.
 
+## License
+
+Physics Tracker 2.0.0 is distributed under the MIT license. See [LICENSE](../../LICENSE).
+Third-party components remain under their respective licenses; see
+[THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).
+
 ## Installation
 
 The release artifact is a per-user NSIS installer:
