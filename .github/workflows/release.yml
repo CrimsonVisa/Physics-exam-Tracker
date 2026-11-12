@@ -30,7 +30,7 @@ jobs:
       tag_sha: ${{ steps.release_meta.outputs.tag_sha }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -83,18 +83,19 @@ jobs:
           "tag_sha=$tagCommit" >> $env:GITHUB_OUTPUT
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
 
@@ -140,7 +141,7 @@ jobs:
           Copy-Item -LiteralPath $checksumPath -Destination $staging
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: physics-tracker-windows
           path: release-assets/*
@@ -157,10 +158,11 @@ jobs:
     steps:
       # Optional later: add `environment: release` after configuring required reviewers.
       - name: Download build artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: physics-tracker-windows
           path: release-assets
+          digest-mismatch: error
 
       - name: Verify downloaded installer and checksum
         shell: pwsh
@@ -237,8 +239,21 @@ jobs:
             throw "Unable to resolve remote tag '$tag' (HTTP $status)."
           }
 
-          $objectType = [string]$ref.object.type
-          $objectSha = [string]$ref.object.sha
+          if ($null -eq $ref.object -or $ref.object -isnot [System.Management.Automation.PSCustomObject]) {
+            throw "Remote tag '$tag' returned an invalid object payload."
+          }
+
+          $objectType = $ref.object.type
+          if ($objectType -isnot [string]) {
+            throw "Remote tag '$tag' returned a non-string object type."
+          }
+          $objectSha = $ref.object.sha
+          if ($objectSha -isnot [string]) {
+            throw "Remote tag '$tag' returned a non-string object SHA."
+          }
+          if ($objectSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw "Remote tag '$tag' returned an invalid object SHA."
+          }
           $peelDepth = 0
 
           while ($objectType -ceq 'tag') {
@@ -257,8 +272,21 @@ jobs:
               throw "Unable to peel remote tag '$tag' (HTTP $status)."
             }
 
-            $objectType = [string]$tagObject.object.type
-            $objectSha = [string]$tagObject.object.sha
+            if ($null -eq $tagObject.object -or $tagObject.object -isnot [System.Management.Automation.PSCustomObject]) {
+              throw "Remote tag '$tag' returned an invalid tag object payload."
+            }
+
+            $objectType = $tagObject.object.type
+            if ($objectType -isnot [string]) {
+              throw "Remote tag '$tag' returned a non-string tag object type."
+            }
+            $objectSha = $tagObject.object.sha
+            if ($objectSha -isnot [string]) {
+              throw "Remote tag '$tag' returned a non-string tag object SHA."
+            }
+            if ($objectSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+              throw "Remote tag '$tag' returned an invalid tag object SHA."
+            }
             $peelDepth++
           }
 
@@ -272,6 +300,114 @@ jobs:
           $resolvedSha = $objectSha.ToLowerInvariant()
           if ($resolvedSha -cne $expectedSha) {
             throw "Remote tag '$tag' now points to $resolvedSha, expected $expectedSha."
+          }
+
+          # Compare tag...main: "ahead" means main is ahead of the tag commit;
+          # the merge base must be the validated tag commit.
+          $mainRefUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/git/ref/heads/main"
+          try {
+            $mainRef = Invoke-RestMethod -Uri $mainRefUri -Headers $headers -Method Get
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            throw "Unable to resolve current main ref (HTTP $status)."
+          }
+
+          $mainSha = $mainRef.object.sha
+          if ($mainSha -isnot [string]) {
+            throw 'Current main ref returned a non-string commit SHA.'
+          }
+          if ($mainSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw 'Current main ref returned an invalid commit SHA.'
+          }
+          $mainSha = $mainSha.ToLowerInvariant()
+
+          $compareUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/compare/$expectedSha...$mainSha"
+          try {
+            $comparison = Invoke-RestMethod -Uri $compareUri -Headers $headers -Method Get
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            throw "Unable to compare release tag with current main (HTTP $status)."
+          }
+
+          $compareStatus = $comparison.status
+          if ($compareStatus -isnot [string]) {
+            throw 'Comparison response status is not a string.'
+          }
+
+          $baseCommitSha = $comparison.base_commit.sha
+          if ($baseCommitSha -isnot [string]) {
+            throw 'Comparison response omitted or returned a non-string base commit SHA.'
+          }
+
+          $headCommitSha = $null
+          if ($null -ne $comparison.PSObject.Properties['head_commit']) {
+            $headCommit = $comparison.head_commit
+            if ($null -eq $headCommit -or $headCommit -isnot [System.Management.Automation.PSCustomObject]) {
+              throw 'Comparison head_commit is present but is not an object.'
+            }
+            $headCommitSha = $headCommit.sha
+            if ($headCommitSha -isnot [string]) {
+              throw 'Comparison head_commit.sha is present but is not a string.'
+            }
+          }
+
+          $mergeBaseSha = $comparison.merge_base_commit.sha
+          if ($mergeBaseSha -isnot [string]) {
+            throw 'Comparison response omitted or returned a non-string merge-base SHA.'
+          }
+
+          $aheadBy = $comparison.ahead_by
+          $behindBy = $comparison.behind_by
+          if ($null -eq $aheadBy -or $null -eq $behindBy) {
+            throw 'Comparison response omitted ahead/behind counts.'
+          }
+          if (-not (($aheadBy -is [int]) -or ($aheadBy -is [long]))) {
+            throw 'Comparison response returned a non-integer ahead count.'
+          }
+          if (-not (($behindBy -is [int]) -or ($behindBy -is [long]))) {
+            throw 'Comparison response returned a non-integer behind count.'
+          }
+          if ($aheadBy -lt 0 -or $behindBy -lt 0) {
+            throw 'Comparison response returned negative ahead/behind counts.'
+          }
+
+          $baseCommitSha = $baseCommitSha.ToLowerInvariant()
+          if ($null -ne $headCommitSha) {
+            $headCommitSha = $headCommitSha.ToLowerInvariant()
+          }
+          $mergeBaseSha = $mergeBaseSha.ToLowerInvariant()
+          $aheadBy = [int64]$aheadBy
+          $behindBy = [int64]$behindBy
+
+          if ($baseCommitSha -cnotmatch '^[0-9a-f]{40}\z') {
+            throw 'Comparison response returned an invalid base commit SHA.'
+          }
+          if ($null -ne $headCommitSha -and $headCommitSha -cnotmatch '^[0-9a-f]{40}\z') {
+            throw 'Comparison response returned an invalid head commit SHA.'
+          }
+          if ($mergeBaseSha -cnotmatch '^[0-9a-f]{40}\z') {
+            throw 'Comparison response returned an invalid merge-base SHA.'
+          }
+          if ($baseCommitSha -cne $expectedSha) {
+            throw "Comparison base commit $baseCommitSha does not equal tag commit $expectedSha."
+          }
+          if ($null -ne $headCommitSha -and $headCommitSha -cne $mainSha) {
+            throw "Comparison head commit $headCommitSha does not equal current main $mainSha."
+          }
+          if ($mergeBaseSha -cne $expectedSha) {
+            throw "Comparison merge-base $mergeBaseSha does not equal tag commit $expectedSha."
+          }
+
+          if ($compareStatus -ceq 'identical') {
+            if ($aheadBy -ne 0 -or $behindBy -ne 0) {
+              throw 'Tag commit and current main are marked identical but counts are inconsistent.'
+            }
+          } elseif ($compareStatus -ceq 'ahead') {
+            if ($behindBy -ne 0 -or $aheadBy -lt 1) {
+              throw "Tag commit is not an ancestor of current main (status=$compareStatus, ahead=$aheadBy, behind=$behindBy)."
+            }
+          } else {
+            throw "Tag commit is not an ancestor of current main (status=$compareStatus, ahead=$aheadBy, behind=$behindBy)."
           }
 
       # This guard is intentionally best-effort and not atomic: another actor can
@@ -320,7 +456,7 @@ jobs:
           }
 
       - name: Publish draft GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.build.outputs.tag }}
           target_commitish: ${{ needs.build.outputs.tag_sha }}
