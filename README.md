@@ -93,6 +93,26 @@ published SHA-256 checksum before running it.
 The installer targets Windows 10 or Windows 11, 64-bit, and requires the Microsoft Edge WebView2
 runtime. The current build configuration is unsigned, so Windows SmartScreen may display a warning.
 
+If WebView2 is not already installed, the installer uses Microsoft's download bootstrapper, so an
+internet connection is required for that step. This build does not include an offline WebView2
+installer.
+
+### License and notices
+
+The NSIS installer displays the MIT license before installation. The installed application includes
+the MIT license at `%LOCALAPPDATA%\Physics Tracker\legal\LICENSE`, the third-party notice summary at
+`%LOCALAPPDATA%\Physics Tracker\legal\THIRD_PARTY_NOTICES.md`, the complete package coverage report at
+`%LOCALAPPDATA%\Physics Tracker\legal\THIRD_PARTY_COVERAGE.md`, and the full license texts and font
+notices under `%LOCALAPPDATA%\Physics Tracker\legal\licenses\`, `legal\notices\`, and `legal\fonts\`.
+
+### Upgrading from 1.x
+
+Physics Tracker 2.x uses the application identity `com.crimsonvisa.physics-tracker` and a separate
+data directory. Existing Physics Tracker 1.x data is kept under its legacy
+`com.crimsonvisa.csirnetphysics` identity and is **not imported automatically** into 2.x. Installing
+2.x does not delete the 1.x data. The two versions can coexist; retain the 1.x installation or a copy
+of its data if you need those records.
+
 ### Build from source
 
 Source builds require:
@@ -146,6 +166,7 @@ resources, open an official source, or follow an external reference link.
 - No account, telemetry, advertising, or remote study-data upload is required.
 - Backup and export files are unencrypted; store them somewhere you control.
 - The active application does not open the retired V1 database.
+- 2.x does not automatically import or delete 1.x data.
 
 See [docs/PRIVACY.md](docs/PRIVACY.md) for the full privacy statement.
 

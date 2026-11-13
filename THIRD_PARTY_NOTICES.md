@@ -1,109 +1,95 @@
 # Third-Party Notices
 
-Physics Tracker application code is released under the MIT license. The project bundles or depends
-on the following third-party assets and libraries under their respective licenses. The project's MIT
-license does not replace those third-party licenses.
+Physics Tracker application code is licensed under the MIT license; see `legal/LICENSE`.
+The installer also includes the MIT license page and the legal resources under the installed `legal` directory.
 
-This file is a summary. The authoritative license text for each dependency is distributed with that
-dependency and its package metadata. Dependency versions are pinned by `package-lock.json` and
-`src-tauri/Cargo.lock`. Before distributing an installer, include the applicable third-party license
-texts and notices with the distribution.
+The complete package-by-package inventory, exact versions, license identifiers, sources, notices, and bundled destinations is in `THIRD_PARTY_COVERAGE.md` in the installed legal directory (repository path: `legal/THIRD_PARTY_COVERAGE.md`).
 
-## Bundled fonts
+## Installed legal directory
 
-All bundled fonts are distributed under the SIL Open Font License, Version 1.1. The font files are
-used locally and are not downloaded at runtime.
+```text
+legal/LICENSE
+legal/THIRD_PARTY_NOTICES.md
+legal/THIRD_PARTY_COVERAGE.md
+legal/licenses/
+legal/notices/
+legal/fonts/
+```
 
-| Font family                   | Source                               | License/text                                               |
-| ----------------------------- | ------------------------------------ | ---------------------------------------------------------- |
-| Computer Modern Unicode 0.7.0 | <https://cm-unicode.sourceforge.io/> | `src/assets/fonts/OFL-1.1.txt`, `public/fonts/OFL-1.1.txt` |
-| Inter                         | Google Fonts                         | `src/assets/fonts/ui/inter/OFL.txt`                        |
-| Manrope                       | Google Fonts                         | `src/assets/fonts/ui/manrope/OFL.txt`                      |
-| IBM Plex Sans                 | Google Fonts                         | `src/assets/fonts/ui/ibm-plex-sans/OFL.txt`                |
-| Plus Jakarta Sans             | Google Fonts                         | `src/assets/fonts/ui/plus-jakarta-sans/OFL.txt`            |
-| JetBrains Mono                | Google Fonts                         | `src/assets/fonts/ui/jetbrains-mono/OFL.txt`               |
+License texts are deduplicated by exact SHA-256 content. Package attribution is retained in the coverage table, including package name, version, license identifier, authors/source, and destination file. Duplicate standard texts are shared rather than copied once per dependency.
 
-Additional attribution and source details are in [src/assets/fonts/README.md](src/assets/fonts/README.md)
-and [src/assets/fonts/ui/README.md](src/assets/fonts/ui/README.md).
+## Coverage summary
 
-## JavaScript runtime dependencies
+- `(MIT OR Apache-2.0) AND Unicode-3.0`: 1 package records
+- `0BSD OR MIT OR Apache-2.0`: 1 package records
+- `Apache-2.0`: 3 package records
+- `Apache-2.0 / MIT`: 1 package records
+- `Apache-2.0 AND MIT`: 1 package records
+- `Apache-2.0 OR ISC OR MIT`: 2 package records
+- `Apache-2.0 OR MIT`: 28 package records
+- `Apache-2.0/MIT`: 1 package records
+- `BSD-3-Clause`: 3 package records
+- `BSD-3-Clause AND MIT`: 1 package records
+- `BSD-3-Clause/MIT`: 1 package records
+- `CC0-1.0 OR MIT-0 OR Apache-2.0`: 1 package records
+- `ISC`: 4 package records
+- `ISC AND (Apache-2.0 OR ISC)`: 1 package records
+- `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)`: 1 package records
+- `MIT`: 55 package records
+- `MIT / Apache-2.0`: 1 package records
+- `MIT OR Apache-2.0`: 134 package records
+- `MIT OR Apache-2.0 OR Zlib`: 1 package records
+- `MIT OR Zlib OR Apache-2.0`: 2 package records
+- `MIT/Apache-2.0`: 6 package records
+- `MPL-2.0`: 8 package records
+- `OFL-1.1`: 6 package records
+- `Unicode-3.0`: 15 package records
+- `Unlicense OR MIT`: 4 package records
+- `Unlicense/MIT`: 2 package records
+- `Zlib`: 1 package records
 
-| Package                           | License           |
-| --------------------------------- | ----------------- |
-| `@tauri-apps/api`                 | Apache-2.0 OR MIT |
-| `@tauri-apps/plugin-dialog`       | MIT OR Apache-2.0 |
-| `@tauri-apps/plugin-notification` | MIT OR Apache-2.0 |
-| `@tauri-apps/plugin-opener`       | MIT OR Apache-2.0 |
-| `katex`                           | MIT               |
-| `react`                           | MIT               |
-| `react-dom`                       | MIT               |
+## Runtime and bundled assets
 
-## Rust runtime and build dependencies
+- The frontend runtime closure includes `@tauri-apps/api`, Tauri dialog/notification/opener plugins, KaTeX, React, React DOM, and scheduler. `commander` is a KaTeX CLI dependency and is documented but not observed in the bundled browser output.
+- The normal Rust dependency closure is listed in the coverage report. It includes MIT, Apache-2.0, MPL-2.0, Unicode-3.0, BSD, ISC, Unlicense, Zlib, and other licenses.
+- Bundled fonts: Computer Modern Unicode, Inter, Manrope, IBM Plex Sans, Plus Jakarta Sans, and JetBrains Mono; all full OFL texts are installed under `legal/fonts`.
+- The NSIS template is derived from `@tauri-apps/cli` 2.12.4; its MIT and Apache-2.0 texts are bundled under `legal/licenses`.
 
-| Crate                       | License           |
-| --------------------------- | ----------------- |
-| `chrono`                    | MIT OR Apache-2.0 |
-| `regex`                     | MIT OR Apache-2.0 |
-| `reqwest`                   | MIT OR Apache-2.0 |
-| `rusqlite`                  | MIT               |
-| `rusqlite_migration`        | Apache-2.0        |
-| `scraper`                   | ISC               |
-| `serde`                     | MIT OR Apache-2.0 |
-| `serde_json`                | MIT OR Apache-2.0 |
-| `sha2`                      | MIT OR Apache-2.0 |
-| `tauri`                     | Apache-2.0 OR MIT |
-| `tauri-build`               | Apache-2.0 OR MIT |
-| `tauri-plugin-dialog`       | Apache-2.0 OR MIT |
-| `tauri-plugin-notification` | Apache-2.0 OR MIT |
-| `tauri-plugin-opener`       | Apache-2.0 OR MIT |
-| `tempfile`                  | MIT OR Apache-2.0 |
-| `url`                       | MIT OR Apache-2.0 |
-| `uuid`                      | Apache-2.0 OR MIT |
+## Build-time exclusions
 
-## Additional third-party components
+Development-only npm packages, Cargo build dependencies, and Cargo dev dependencies are not part of the installed application and are not bundled. The basis for exclusions is that they are not present in the frontend bundle or the normal Rust dependency closure; `@tauri-apps/cli` is included specially because its NSIS template is redistributed. The full exclusion rationale is recorded in the coverage report.
 
-### MPL-2.0 Rust crates
+## MPL-2.0 source availability
 
-These transitive Rust dependencies are licensed under MPL-2.0:
+MPL-2.0 applies to the identified covered dependencies `cssparser` 0.35.0 and 0.37.0,
+`cssparser-macros` 0.6.1 and 0.7.1, `dtoa-short` 0.3.5, `option-ext` 0.2.0, and `selectors` 0.31.0
+and 0.38.0. The full MPL-2.0 text is bundled under `legal/licenses/MPL-2.0-*.txt`.
 
-- `cssparser` 0.35.0 and 0.37.0 — <https://github.com/servo/rust-cssparser>
-- `cssparser-macros` 0.6.1 and 0.7.1 — <https://github.com/servo/rust-cssparser>
-- `dtoa-short` 0.3.5 — <https://github.com/upsuper/dtoa-short>
-- `option-ext` 0.2.0 — <https://github.com/soc/option-ext>
-- `selectors` 0.31.0 and 0.38.0 — <https://github.com/servo/stylo>
+The corresponding source code is available from the upstream repositories at these revision-pinned
+locations:
 
-Preserve the MPL-2.0 notices, include the MPL-2.0 license text with binary distributions, and make
-the corresponding source available. The audited `selectors` packages do not include a standalone
-license file; their source files carry the standard MPL header and their Cargo metadata declares
-MPL-2.0.
+- `cssparser` 0.35.0: <https://github.com/servo/rust-cssparser/tree/3dd4f63639925438d9932dafc0d81395847f9be4>
+- `cssparser` 0.37.0: <https://github.com/servo/rust-cssparser/tree/4c49486494fb24dc01390e3baca9698ef1744c71>
+- `cssparser-macros` 0.6.1 (`macros/`): <https://github.com/servo/rust-cssparser/tree/0ebd17bcd13808f087b083f34d2f816e380b5155/macros>
+- `cssparser-macros` 0.7.1 (`macros/`): <https://github.com/servo/rust-cssparser/tree/d128a90e1203fc4afb959420d6dc5e24f77a3191/macros>
+- `dtoa-short` 0.3.5: <https://github.com/upsuper/dtoa-short/tree/2d905cdb8b2e08163dc0d015f529877fe657b4ef>
+- `option-ext` 0.2.0: <https://github.com/soc/option-ext/tree/272f22fc9ea1ac6b08f01704af52c4ac338df4e2>
+- `selectors` 0.31.0 (`selectors/`): <https://github.com/servo/stylo/tree/7f8df16fddb15b6ac9097f8ab25caffff1a7095e/selectors>
+- `selectors` 0.38.0 (`selectors/`): <https://github.com/servo/stylo/tree/572ecba2d1600e7c3d490586692a209faf703baa/selectors>
 
-### Build-time-only npm components
+`cssparser-macros` and `selectors` are workspace members; their package manifests and source files
+are in the `macros/` and `selectors/` subdirectories, not at the repository root. No source archive
+is included with this installer. Release verification must confirm that the recorded source links
+remain accessible and correspond to the versions being distributed.
 
-The following packages are used by the development/build toolchain and are not part of the installed
-application. If the toolchain itself is redistributed, preserve their notices:
+## Remaining legal review items
 
-- `lightningcss` and platform packages — MPL-2.0
-- `caniuse-lite` — CC-BY-4.0, attribution required
-- `mdn-data` — CC0-1.0
-- `lru-cache` and `minimatch` — BlueOak-1.0.0
-
-TypeScript is Apache-2.0 and includes `ThirdPartyNoticeText.txt`; it is a build-time dependency.
-
-### Other notices
-
-- `webpki-root-certs` — CDLA-Permissive-2.0; include its license and attribution if shipped.
-- Tauri NSIS installer template — `src-tauri/nsis/installer.nsi` is derived from Tauri's NSIS
-  template. Tauri is dual-licensed MIT/Apache-2.0; preserve the applicable Tauri license notices
-  when distributing an installer.
-- Apache-2.0 dependencies may include separate NOTICE files. Preserve them where present; no Cargo
-  NOTICE files were found in the audited package set.
-
-## Reference data and examination content
-
-Constants and formula entries include citations to sources such as CODATA/NIST, the BIPM SI
-brochure, NIST DLMF, the Particle Data Group, and physics textbooks. Those citations identify
-sources; they do not by themselves grant redistribution rights.
-
-The Physics Tracker PH monogram and application icons are original project assets. The application
-does not bundle examination-authority logos. Examination names and syllabus references are used for
-identification and study organization; they remain the property of their respective authorities.
+- The AWS-LC upstream `NOTICE` from `aws/aws-lc-rs` commit
+  `5d496f88b40f327e28315deecc1a5a1fd1e81e95` is included at
+  `legal/notices/aws-lc-rs-NOTICE-5d496f88.txt`.
+- The `regex-syntax` 0.8.11 Unicode license is included at
+  `legal/licenses/Unicode-3.0-regex-syntax-14016799.txt`.
+- No other standalone Apache NOTICE files were found among the normal Cargo package archives at
+  audit time; any embedded attribution material in the AWS-LC root license is included.
+- Re-run the audit if dependency versions or the lockfiles change. No dependency versions were
+  changed for this bundle.

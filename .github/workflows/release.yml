@@ -82,6 +82,44 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "tag_sha=$tagCommit" >> $env:GITHUB_OUTPUT
 
+      - name: Validate release versions
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+            throw "Invalid release tag '$tag'."
+          }
+
+          $version = $tag.Substring(1)
+
+          $packageVersion = (Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json).version
+          if ([string]::IsNullOrWhiteSpace($packageVersion) -or $packageVersion -cne $version) {
+            throw "Refusing to release: package.json version '$packageVersion' does not match tag version '$version'."
+          }
+
+          $tauriVersion = (Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+          if ([string]::IsNullOrWhiteSpace($tauriVersion) -or $tauriVersion -cne $version) {
+            throw "Refusing to release: src-tauri/tauri.conf.json version '$tauriVersion' does not match tag version '$version'."
+          }
+
+          $cargoToml = Get-Content -LiteralPath 'src-tauri/Cargo.toml' -Raw
+          $packageSection = [regex]::Match($cargoToml, '(?ms)^\[package\]\s*(.*?)(?=^\[|\z)')
+          if (-not $packageSection.Success) {
+            throw 'Unable to locate the [package] section in src-tauri/Cargo.toml.'
+          }
+          $cargoVersionMatch = [regex]::Match($packageSection.Groups[1].Value, '(?m)^version\s*=\s*"([^"]+)"\s*$')
+          if (-not $cargoVersionMatch.Success) {
+            throw 'Unable to locate the package version in src-tauri/Cargo.toml.'
+          }
+          $cargoVersion = $cargoVersionMatch.Groups[1].Value
+          if ($cargoVersion -cne $version) {
+            throw "Refusing to release: src-tauri/Cargo.toml version '$cargoVersion' does not match tag version '$version'."
+          }
+
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
