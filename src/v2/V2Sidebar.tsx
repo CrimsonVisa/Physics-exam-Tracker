@@ -256,7 +256,7 @@ export function V2Sidebar({
     <aside aria-label="Physics Tracker navigation" className={`sidebar sidebar-${mode}`}>
       <div className="sidebar-header">
         <div className="brand">
-          <BrandMark size={mode === 'collapsed' ? 32 : 38} />
+          <BrandMark size={mode === 'collapsed' ? 44 : 48} />
           <div className="brand-copy">
             <p className="brand-title">Physics Tracker</p>
             <p className="brand-subtitle">Four-exam foundation</p>

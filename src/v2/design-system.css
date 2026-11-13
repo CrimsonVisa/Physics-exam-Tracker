@@ -770,6 +770,10 @@ h3 {
   background: var(--canvas);
 }
 
+.v2-app-frame[data-sidebar-mode='collapsed'] {
+  --sidebar-width: 96px;
+}
+
 /* -------------------------------------------------------------- sidebar */
 
 .v2-app-frame .sidebar {
@@ -779,6 +783,7 @@ h3 {
 }
 
 .v2-app-frame .sidebar-header {
+  gap: 6px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--sidebar-border);
 }
@@ -787,8 +792,13 @@ h3 {
    user selects the larger appearance font size. The copy wraps rather than
    painting over the controls. */
 .v2-app-frame .sidebar-header .brand {
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
+}
+
+.v2-app-frame .sidebar-controls {
+  gap: 2px;
 }
 
 .v2-app-frame .sidebar-header .brand-copy {
@@ -812,18 +822,11 @@ h3 {
   place-items: center;
 }
 
-.brand-mark-svg svg {
+.brand-mark-svg img {
   display: block;
   width: 100%;
   height: 100%;
-}
-
-.brand-mark-svg .brand-tile {
-  fill: #2563eb;
-}
-
-.brand-mark-svg .brand-glyph {
-  fill: #ffffff;
+  object-fit: contain;
 }
 
 .brand-title {
@@ -933,9 +936,19 @@ h3 {
   display: none;
 }
 
-.sidebar-collapsed .brand-mark-svg {
-  width: 34px !important;
-  height: 34px !important;
+@media (min-width: 861px) {
+  .v2-app-frame .sidebar-collapsed .sidebar-controls {
+    display: grid;
+    grid-template-columns: repeat(2, 28px);
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+  }
+
+  .v2-app-frame .sidebar-collapsed .sidebar-controls .sidebar-control:last-child {
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
 }
 
 .sidebar-note {
