@@ -77,17 +77,28 @@ Do not commit build output. `dist/` and `src-tauri/target/` are ignored.
 ## Repository layout
 
 ```text
-src/v2/                    Active React application and tests
-src/components/            Shared components used by the active shell
-src/lib/                   Frontend utilities and API wrappers
-src-tauri/src/v2/          Active Rust backend, schema, seeds, and tests
-src-tauri/schema.sql       V2 schema
-src-tauri/migrations/      Historical migration files retained for compatibility
-src-tauri/capabilities/    Tauri permissions
-src-tauri/icons/           Application icons
-docs/                      Architecture, features, privacy, release, and audit docs
-tools/schema-validation/   Standalone schema specification and validation script
+src/main.tsx                    V2 entry point
+src/v2/                         Active React application and tests
+src/App.tsx, src/screens/       Retained V1 frontend, not loaded by src/main.tsx
+src/components/                 Shared active components plus retained V1 components
+src/lib/                        Shared active utilities plus retained V1 API wrappers
+src-tauri/src/v2/               Active Rust backend, schema, seeds, and tests
+src-tauri/src/*.rs              Tauri entry, shared helpers, and retained V1 modules
+src-tauri/src/v2/schema.sql     Current V2 schema
+src-tauri/migrations/           Historical V1 migrations retained for compatibility
+src-tauri/capabilities/         Tauri permissions
+src-tauri/nsis/                 NSIS installer template
+src-tauri/icons/                Application icons
+legal/                          MIT and third-party licence bundle
+docs/                           Architecture, features, privacy, release, and historical audit docs
+tools/schema-validation/        Historical initial-schema specification/validator
 ```
+
+Active V2 imports `BrandMark.tsx`, `NavIcon.tsx`, and `ThemeSwitch.tsx` from `src/components`. Most
+other components in that folder are V1-only. Active V2 also uses selected utilities from `src/lib`;
+the remaining V1 API wrappers are retained for historical compatibility and are not loaded by
+`src/main.tsx`. V1 backend root modules and migrations remain for historical compatibility; do not
+delete them without a separate migration and product decision.
 
 ## Code conventions
 
@@ -116,3 +127,18 @@ tools/schema-validation/   Standalone schema specification and validation script
 - **Formatting failures:** run `npm run format` only for intended files, or fix the listed files.
 - **Database state errors:** use a disposable database for development; do not modify a live user
   database to clear development errors.
+
+### MSVC temporary-file errors (`LNK1104`, `D8050`)
+
+If the error names a transient file under `%TEMP%` and normal temp writes work, use a dedicated
+existing temp directory for that build session:
+
+```powershell
+New-Item -ItemType Directory -Force src-tauri\target\build-temp | Out-Null
+$env:TMP = (Resolve-Path src-tauri\target\build-temp).Path
+$env:TEMP = $env:TMP
+npm.cmd run tauri:build
+```
+
+This is a local environment workaround, not project configuration. Investigate antivirus or
+temp-directory policy rather than committing a workaround.

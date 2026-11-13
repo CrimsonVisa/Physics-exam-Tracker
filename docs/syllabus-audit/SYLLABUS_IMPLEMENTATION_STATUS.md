@@ -1,5 +1,7 @@
 # Syllabus Corrections — Implementation Status
 
+> **Historical implementation snapshot (2026-11-11):** Test totals, Clippy/Prettier results, and Git state below are point-in-time implementation evidence. They are not current release metrics. See this folder's [`README.md`](README.md) for archive status and current release links.
+
 Date: **2026-11-11**
 
 Status: **Approved corrections implemented in source and seeds. No live database migration or application launch was performed.**

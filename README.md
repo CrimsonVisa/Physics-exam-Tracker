@@ -202,16 +202,26 @@ Do not use a live user database, personal study data, or exam PDFs during develo
 ## Project structure
 
 ```text
+src/main.tsx                  Active V2 frontend entry point
 src/v2/                       Active React application
+src/components/               Shared active components plus retained V1 components
+src/lib/                      Shared active utilities plus retained V1 API wrappers
 src-tauri/src/v2/             Active Rust backend, schema, and seed data
+src-tauri/src/*.rs            Tauri entry, shared helpers, and retained V1 Rust modules
 src-tauri/capabilities/       Tauri permissions
 src-tauri/nsis/               Installer template
+legal/                        MIT and third-party licence bundle
 docs/                         Architecture, features, privacy, development, and release docs
-tools/schema-validation/      Standalone database schema validation tooling
+tools/schema-validation/      Historical initial-schema specification and validator
 ```
 
-Legacy V1 source and migrations remain in the repository for historical compatibility. They are not
-part of the active V2 startup path.
+The active V2 frontend is under `src/v2`, and `src-tauri/src/v2` is the active Rust backend. The
+`src/components` and `src/lib` folders contain shared modules used by the active shell together with
+retained V1 components and API wrappers.
+
+Legacy V1 frontend, backend, and migrations remain in the repository for historical compatibility.
+They are not part of the active V2 startup path; do not delete them without a separate migration and
+product decision.
 
 ## Contributing
 

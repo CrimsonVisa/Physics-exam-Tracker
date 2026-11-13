@@ -26,6 +26,11 @@ Computer Modern Unicode fonts are released under the **SIL Open Font License, Ve
 The license permits bundling, embedding, and redistribution with software when the copyright and
 license notices are preserved. The full text is in [`OFL-1.1.txt`](OFL-1.1.txt).
 
+The Tauri installer maps [`public/fonts/OFL-1.1.txt`](../../../public/fonts/OFL-1.1.txt) to
+`legal/fonts/CMU-OFL-1.1.txt` inside the installed application bundle. `legal/fonts/` is not a
+directory in the source repository. This source-tree copy is retained for documentation and audit
+traceability; both copies are byte-identical.
+
 Copyright (C) original METAFONT authors, including Donald Ervin Knuth and the EC, LH, CB Greek,
 TIPA, Vietnamese, and CMBright contributors; Unicode adaptation Copyright (C) 2003-2009
 Andrey V. Panov, with Reserved Font Family Name "Computer Modern Unicode fonts".
