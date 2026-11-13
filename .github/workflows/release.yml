@@ -7,44 +7,106 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build'
+        description: 'Existing stable release tag on main (vX.Y.Z)'
         required: true
         type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   build:
     name: Build Windows release
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release_meta.outputs.tag }}
+      tag_sha: ${{ steps.release_meta.outputs.tag_sha }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      - name: Validate release tag
+        id: release_meta
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+
+          if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch' -and $env:GITHUB_REF -cne 'refs/heads/main') {
+            throw "workflow_dispatch is permitted only from refs/heads/main (current: $env:GITHUB_REF)."
+          }
+
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+            throw "Refusing to release: '$tag' is not a stable vX.Y.Z tag."
+          }
+
+          $tagRef = "refs/tags/$tag"
+          $tagCommit = git rev-parse --verify --quiet "$tagRef^{commit}"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+            throw "Refusing to release: tag '$tag' does not exist."
+          }
+          $tagCommit = $tagCommit.Trim()
+
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to resolve HEAD.'
+          }
+          $head = $head.Trim()
+          if ($head -ne $tagCommit) {
+            throw "Refusing to release: checked-out HEAD $head does not match tag commit $tagCommit."
+          }
+
+          git rev-parse --verify --quiet origin/main | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'origin/main is not available in the checkout.'
+          }
+
+          git merge-base --is-ancestor $tagCommit origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Refusing to release: tag '$tag' is not reachable from origin/main."
+          }
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "tag_sha=$tagCommit" >> $env:GITHUB_OUTPUT
+
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
+
+      - name: Clean stale NSIS output
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = 'src-tauri/target/release/bundle/nsis'
+          if (Test-Path -LiteralPath $bundle) {
+            Remove-Item -LiteralPath $bundle -Recurse -Force
+          }
 
       - name: Install dependencies
         run: npm.cmd ci
@@ -58,27 +120,351 @@ jobs:
       - name: Record installer checksum
         shell: pwsh
         run: |
-          $installer = Get-ChildItem -LiteralPath 'src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' | Select-Object -First 1
-          if (-not $installer) {
-            throw 'No NSIS installer was produced.'
+          $ErrorActionPreference = 'Stop'
+          $bundle = 'src-tauri/target/release/bundle/nsis'
+          $installers = @(Get-ChildItem -LiteralPath $bundle -Filter '*-setup.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installers.Count)."
           }
+
+          $installer = $installers[0]
+          $checksumPath = "$($installer.FullName).sha256"
           $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash
-          "$hash  $($installer.Name)" | Set-Content -LiteralPath "$($installer.FullName).sha256" -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+
+          $staging = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
+          if (Test-Path -LiteralPath $staging) {
+            Remove-Item -LiteralPath $staging -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+          Copy-Item -LiteralPath $installer.FullName -Destination $staging
+          Copy-Item -LiteralPath $checksumPath -Destination $staging
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: physics-tracker-windows
-          path: |
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/nsis/*.sha256
+          path: release-assets/*
           if-no-files-found: error
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+  publish:
+    name: Publish draft GitHub release
+    needs: build
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      # Optional later: add `environment: release` after configuring required reviewers.
+      - name: Download build artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: physics-tracker-windows
+          path: release-assets
+          digest-mismatch: error
+
+      - name: Verify downloaded installer and checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -LiteralPath 'release-assets' -Recurse -File -Filter '*-setup.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one downloaded installer, found $($installers.Count)."
+          }
+
+          $checksums = @(Get-ChildItem -LiteralPath 'release-assets' -Recurse -File -Filter '*.sha256')
+          if ($checksums.Count -ne 1) {
+            throw "Expected exactly one downloaded checksum, found $($checksums.Count)."
+          }
+
+          $installer = $installers[0]
+          $checksumPath = $checksums[0].FullName
+          $line = Get-Content -LiteralPath $checksumPath -Raw
+          if ($line -notmatch '^([0-9A-Fa-f]{64})\s{1,2}(.+?)\s*$') {
+            throw "Checksum file '$checksumPath' is malformed."
+          }
+
+          $expected = $Matches[1].ToUpperInvariant()
+          $recordedName = $Matches[2].Trim()
+          if ($recordedName -ne $installer.Name) {
+            throw "Checksum file references '$recordedName' but downloaded installer is '$($installer.Name)'."
+          }
+
+          $actual = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash
+          if ($actual -ne $expected) {
+            throw "Checksum mismatch: expected $expected, got $actual."
+          }
+
+      - name: Revalidate remote release tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          EXPECTED_TAG_SHA: ${{ needs.build.outputs.tag_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          $expectedSha = $env:EXPECTED_TAG_SHA
+
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+            throw "Invalid release tag '$tag'."
+          }
+          if ($expectedSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw "Invalid expected tag SHA '$expectedSha'."
+          }
+          $expectedSha = $expectedSha.ToLowerInvariant()
+
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_API_URL)) {
+            throw 'GITHUB_API_URL is not set.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
+            throw 'GITHUB_REPOSITORY is not set.'
+          }
+          $apiBase = $env:GITHUB_API_URL.TrimEnd('/')
+
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'User-Agent' = 'physics-tracker-release'
+          }
+          $escapedTag = [uri]::EscapeDataString($tag)
+          $refUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/git/ref/tags/$escapedTag"
+
+          try {
+            $ref = Invoke-RestMethod -Uri $refUri -Headers $headers -Method Get
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            throw "Unable to resolve remote tag '$tag' (HTTP $status)."
+          }
+
+          if ($null -eq $ref.object -or $ref.object -isnot [System.Management.Automation.PSCustomObject]) {
+            throw "Remote tag '$tag' returned an invalid object payload."
+          }
+
+          $objectType = $ref.object.type
+          if ($objectType -isnot [string]) {
+            throw "Remote tag '$tag' returned a non-string object type."
+          }
+          $objectSha = $ref.object.sha
+          if ($objectSha -isnot [string]) {
+            throw "Remote tag '$tag' returned a non-string object SHA."
+          }
+          if ($objectSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw "Remote tag '$tag' returned an invalid object SHA."
+          }
+          $peelDepth = 0
+
+          while ($objectType -ceq 'tag') {
+            if ($peelDepth -ge 10) {
+              throw "Remote tag '$tag' exceeded the tag-object peel limit."
+            }
+            if ($objectSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+              throw "Remote tag '$tag' returned an invalid tag object SHA."
+            }
+
+            $tagObjectUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/git/tags/$objectSha"
+            try {
+              $tagObject = Invoke-RestMethod -Uri $tagObjectUri -Headers $headers -Method Get
+            } catch {
+              $status = $_.Exception.Response.StatusCode.value__
+              throw "Unable to peel remote tag '$tag' (HTTP $status)."
+            }
+
+            if ($null -eq $tagObject.object -or $tagObject.object -isnot [System.Management.Automation.PSCustomObject]) {
+              throw "Remote tag '$tag' returned an invalid tag object payload."
+            }
+
+            $objectType = $tagObject.object.type
+            if ($objectType -isnot [string]) {
+              throw "Remote tag '$tag' returned a non-string tag object type."
+            }
+            $objectSha = $tagObject.object.sha
+            if ($objectSha -isnot [string]) {
+              throw "Remote tag '$tag' returned a non-string tag object SHA."
+            }
+            if ($objectSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+              throw "Remote tag '$tag' returned an invalid tag object SHA."
+            }
+            $peelDepth++
+          }
+
+          if ($objectType -cne 'commit') {
+            throw "Remote tag '$tag' resolves to '$objectType', not a commit."
+          }
+          if ($objectSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw "Remote tag '$tag' returned an invalid commit SHA."
+          }
+
+          $resolvedSha = $objectSha.ToLowerInvariant()
+          if ($resolvedSha -cne $expectedSha) {
+            throw "Remote tag '$tag' now points to $resolvedSha, expected $expectedSha."
+          }
+
+          # Compare tag...main: "ahead" means main is ahead of the tag commit;
+          # the merge base must be the validated tag commit.
+          $mainRefUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/git/ref/heads/main"
+          try {
+            $mainRef = Invoke-RestMethod -Uri $mainRefUri -Headers $headers -Method Get
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            throw "Unable to resolve current main ref (HTTP $status)."
+          }
+
+          $mainSha = $mainRef.object.sha
+          if ($mainSha -isnot [string]) {
+            throw 'Current main ref returned a non-string commit SHA.'
+          }
+          if ($mainSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw 'Current main ref returned an invalid commit SHA.'
+          }
+          $mainSha = $mainSha.ToLowerInvariant()
+
+          $compareUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/compare/$expectedSha...$mainSha"
+          try {
+            $comparison = Invoke-RestMethod -Uri $compareUri -Headers $headers -Method Get
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            throw "Unable to compare release tag with current main (HTTP $status)."
+          }
+
+          $compareStatus = $comparison.status
+          if ($compareStatus -isnot [string]) {
+            throw 'Comparison response status is not a string.'
+          }
+
+          $baseCommitSha = $comparison.base_commit.sha
+          if ($baseCommitSha -isnot [string]) {
+            throw 'Comparison response omitted or returned a non-string base commit SHA.'
+          }
+
+          $headCommitSha = $null
+          if ($null -ne $comparison.PSObject.Properties['head_commit']) {
+            $headCommit = $comparison.head_commit
+            if ($null -eq $headCommit -or $headCommit -isnot [System.Management.Automation.PSCustomObject]) {
+              throw 'Comparison head_commit is present but is not an object.'
+            }
+            $headCommitSha = $headCommit.sha
+            if ($headCommitSha -isnot [string]) {
+              throw 'Comparison head_commit.sha is present but is not a string.'
+            }
+          }
+
+          $mergeBaseSha = $comparison.merge_base_commit.sha
+          if ($mergeBaseSha -isnot [string]) {
+            throw 'Comparison response omitted or returned a non-string merge-base SHA.'
+          }
+
+          $aheadBy = $comparison.ahead_by
+          $behindBy = $comparison.behind_by
+          if ($null -eq $aheadBy -or $null -eq $behindBy) {
+            throw 'Comparison response omitted ahead/behind counts.'
+          }
+          if (-not (($aheadBy -is [int]) -or ($aheadBy -is [long]))) {
+            throw 'Comparison response returned a non-integer ahead count.'
+          }
+          if (-not (($behindBy -is [int]) -or ($behindBy -is [long]))) {
+            throw 'Comparison response returned a non-integer behind count.'
+          }
+          if ($aheadBy -lt 0 -or $behindBy -lt 0) {
+            throw 'Comparison response returned negative ahead/behind counts.'
+          }
+
+          $baseCommitSha = $baseCommitSha.ToLowerInvariant()
+          if ($null -ne $headCommitSha) {
+            $headCommitSha = $headCommitSha.ToLowerInvariant()
+          }
+          $mergeBaseSha = $mergeBaseSha.ToLowerInvariant()
+          $aheadBy = [int64]$aheadBy
+          $behindBy = [int64]$behindBy
+
+          if ($baseCommitSha -cnotmatch '^[0-9a-f]{40}\z') {
+            throw 'Comparison response returned an invalid base commit SHA.'
+          }
+          if ($null -ne $headCommitSha -and $headCommitSha -cnotmatch '^[0-9a-f]{40}\z') {
+            throw 'Comparison response returned an invalid head commit SHA.'
+          }
+          if ($mergeBaseSha -cnotmatch '^[0-9a-f]{40}\z') {
+            throw 'Comparison response returned an invalid merge-base SHA.'
+          }
+          if ($baseCommitSha -cne $expectedSha) {
+            throw "Comparison base commit $baseCommitSha does not equal tag commit $expectedSha."
+          }
+          if ($null -ne $headCommitSha -and $headCommitSha -cne $mainSha) {
+            throw "Comparison head commit $headCommitSha does not equal current main $mainSha."
+          }
+          if ($mergeBaseSha -cne $expectedSha) {
+            throw "Comparison merge-base $mergeBaseSha does not equal tag commit $expectedSha."
+          }
+
+          if ($compareStatus -ceq 'identical') {
+            if ($aheadBy -ne 0 -or $behindBy -ne 0) {
+              throw 'Tag commit and current main are marked identical but counts are inconsistent.'
+            }
+          } elseif ($compareStatus -ceq 'ahead') {
+            if ($behindBy -ne 0 -or $aheadBy -lt 1) {
+              throw "Tag commit is not an ancestor of current main (status=$compareStatus, ahead=$aheadBy, behind=$behindBy)."
+            }
+          } else {
+            throw "Tag commit is not an ancestor of current main (status=$compareStatus, ahead=$aheadBy, behind=$behindBy)."
+          }
+
+      # This guard is intentionally best-effort and not atomic: another actor can
+      # create a release after this check. draft: true and overwrite_files: false
+      # remain the publication safeguards.
+      - name: Refuse to overwrite an existing release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          GITHUB_API_URL: ${{ github.api_url }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+            throw "Invalid release tag '$tag'."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_API_URL)) {
+            throw 'GITHUB_API_URL is not set.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
+            throw 'GITHUB_REPOSITORY is not set.'
+          }
+          $apiBase = $env:GITHUB_API_URL.TrimEnd('/')
+
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'User-Agent' = 'physics-tracker-release'
+          }
+          $uri = "$apiBase/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+
+          $existing = $null
+          try {
+            $existing = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            if ($status -ne 404) {
+              throw
+            }
+          }
+
+          if ($null -ne $existing) {
+            throw "A release for tag '$tag' already exists; refusing to overwrite it."
+          }
+
+      - name: Publish draft GitHub release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          target_commitish: ${{ needs.build.outputs.tag_sha }}
           generate_release_notes: true
+          draft: true
+          prerelease: false
+          overwrite_files: false
+          fail_on_unmatched_files: true
           files: |
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/nsis/*.sha256
+            release-assets/*-setup.exe
+            release-assets/*.sha256
