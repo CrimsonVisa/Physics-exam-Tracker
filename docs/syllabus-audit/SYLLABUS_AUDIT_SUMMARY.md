@@ -1,7 +1,9 @@
 # Syllabus Audit — Executive Summary
 
+> **Historical snapshot (2026-11-11):** The counts and Git state below describe the audit baseline, not the current release. Current release status is in [`CHANGELOG.md`](../../CHANGELOG.md), [`docs/RELEASE.md`](../RELEASE.md), and CI. See [`README.md`](README.md) in this folder for archive status.
+
 Audit date: **2026-11-11**  
-Repository: `C:\Users\visa1\Documents\Application\csir-net-tracker`  
+Repository: `CrimsonVisa/Physics-exam-Tracker`\
 Branch: `main`  
 HEAD: `80d93b0297608b8ae8d2d74be5a3aea6d13cb406`
 

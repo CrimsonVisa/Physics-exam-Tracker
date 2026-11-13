@@ -96,7 +96,9 @@ interval alone.
 
 The UI is split across the shared design layer and feature styles:
 
-- `src/styles.css` — legacy base shell styles retained for compatibility;
+- `src/styles.css` — active global base stylesheet imported by `src/main.tsx`; it contains shared base
+  rules and retained legacy V1 rules. A future split should separate active/shared styles from
+  V1-only selectors;
 - `src/v2/v2.css` — V2 screen and component styles;
 - `src/v2/design-system.css` — V2 tokens and shared controls;
 - `src/v2/workspaces.css` — workspace and exam identity rules;
@@ -116,6 +118,21 @@ All application colors, typography, and surfaces are local CSS; there are no rem
 
 ## Legacy V1 material
 
-V1 source modules and migrations remain in the repository for historical compatibility. The V2
-startup path uses `src-tauri/src/v2` and the V2 schema. V1 application data is kept separate and
-is not opened by the V2 shell.
+The active V2 frontend entry is `src/main.tsx`, which renders `src/v2/App.tsx`. The retained V1
+frontend (`src/App.tsx`, `src/screens/`, and most of `src/components/` and `src/lib/`) is not loaded
+by that entry point. Active V2 imports only `BrandMark.tsx`, `NavIcon.tsx`, and `ThemeSwitch.tsx`
+from `src/components`, plus the shared utilities `appearance`, `appShortcuts`, `commandError`,
+`dateOnly`, `navigation`, `studyTime`, `timerEvents`, `uiPreferences`, and `useTodayDateOnly` from
+`src/lib`.
+
+The active backend is `src-tauri/src/v2`. `src-tauri/src/main.rs` is the active binary entry point
+calling `csir_net_tracker_lib::run()`, and `src-tauri/src/lib.rs` contains the Tauri setup and
+registers only `v2_*` commands. `error.rs` and `app_paths.rs` provide shared error and path helpers.
+`performance_audit.rs` is a test-only, ignored performance audit, not V1 runtime code. The remaining
+root Rust modules are marked `#[allow(dead_code)]` and retained as V1 code; their commands are not
+registered in the V2 `tauri::generate_handler!` list. V1 migrations remain under
+`src-tauri/migrations`.
+
+V1 source code and migrations remain in the repository for historical compatibility. V1 application
+data is kept separate and is not opened by the V2 shell. Do not delete V1 code or migrations without
+a separate migration and product decision.
