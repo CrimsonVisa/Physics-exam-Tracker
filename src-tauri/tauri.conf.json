@@ -40,6 +40,7 @@
     "targets": ["nsis"],
     "publisher": "CrimsonVisa",
     "copyright": "Copyright © 2026 CrimsonVisa",
+    "licenseFile": "../LICENSE",
     "category": "Education",
     "shortDescription": "Offline-first Windows study tracker for CSIR-UGC NET, GATE, TIFR and JEST Physics.",
     "longDescription": "A complete offline-first Windows study tracker for CSIR-UGC NET, GATE Physics, TIFR GS and JEST Physics: official-source syllabus progress, focus timer and sessions, checklist and calendar planning, PYQ and mock-test analytics, spaced-repetition revision scheduling, study insights, verified backup and restore, and CSV/JSON portability. All personal study data stays in a local SQLite database.",
@@ -50,6 +51,21 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../LICENSE": "legal/LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "legal/THIRD_PARTY_NOTICES.md",
+      "../legal/THIRD_PARTY_COVERAGE.md": "legal/THIRD_PARTY_COVERAGE.md",
+      "../legal/README.md": "legal/README.md",
+      "../legal/licenses": "legal/licenses",
+      "../legal/notices": "legal/notices",
+      "../public/fonts/NOTICE.txt": "legal/fonts/CMU-NOTICE.txt",
+      "../public/fonts/OFL-1.1.txt": "legal/fonts/CMU-OFL-1.1.txt",
+      "../src/assets/fonts/ui/inter/OFL.txt": "legal/fonts/Inter-OFL-1.1.txt",
+      "../src/assets/fonts/ui/manrope/OFL.txt": "legal/fonts/Manrope-OFL-1.1.txt",
+      "../src/assets/fonts/ui/ibm-plex-sans/OFL.txt": "legal/fonts/IBM-Plex-Sans-OFL-1.1.txt",
+      "../src/assets/fonts/ui/plus-jakarta-sans/OFL.txt": "legal/fonts/Plus-Jakarta-Sans-OFL-1.1.txt",
+      "../src/assets/fonts/ui/jetbrains-mono/OFL.txt": "legal/fonts/JetBrains-Mono-OFL-1.1.txt"
+    },
     "windows": {
       "allowDowngrades": false,
       "nsis": {

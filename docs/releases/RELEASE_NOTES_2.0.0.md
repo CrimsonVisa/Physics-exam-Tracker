@@ -1,7 +1,8 @@
 # Physics Tracker 2.0.0 — Release Notes
 
-**Status:** Public release preparation. The final tagged release is published through GitHub
-Releases.
+**Status:** Public release preparation. The final tagged release will be published manually through
+GitHub Releases after the draft is reviewed, the generated notes are replaced with this document,
+and the attached installer and checksum are verified.
 
 ## Overview
 
@@ -35,12 +36,17 @@ The application remains offline-first. Study records stay in a local SQLite data
 - WebView2 profile: `%LOCALAPPDATA%\com.crimsonvisa.physics-tracker\EBWebView`
 - Current schema version: 5
 
-The V2 application keeps its data separate from the retired V1 database. It does not open or modify
-V1 data.
+Physics Tracker 1.x and 2.x use separate application identities and data directories. Existing 1.x
+data under the legacy `com.crimsonvisa.csirnetphysics` identity is not imported automatically into
+2.x. Installing 2.x does not delete 1.x data; the versions can coexist.
 
 ## License
 
 Physics Tracker 2.0.0 is distributed under the MIT license. See [LICENSE](../../LICENSE).
+The NSIS installer displays the MIT license. Installed copies are under
+`%LOCALAPPDATA%\Physics Tracker\legal\`: `LICENSE`, `THIRD_PARTY_NOTICES.md`,
+`THIRD_PARTY_COVERAGE.md`, `licenses\`, `notices\`, and the bundled font license texts in `fonts\`.
+
 Third-party components remain under their respective licenses; see
 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).
 
@@ -52,9 +58,11 @@ The release artifact is a per-user NSIS installer:
 Physics Tracker_2.0.0_x64-setup.exe
 ```
 
-Windows 10/11 x64 and the Microsoft Edge WebView2 runtime are required. The current installer is
-unsigned; SmartScreen may display a warning. Verify the published SHA-256 checksum before running
-the installer.
+Windows 10/11 x64 and the Microsoft Edge WebView2 runtime are required. If WebView2 is absent, the
+installer downloads Microsoft's bootstrapper, which requires an internet connection. Offline
+WebView2 installation is not supported by this build. The current installer is unsigned;
+SmartScreen may display a warning. Verify the published SHA-256 checksum before running the
+installer.
 
 ## Known limitations
 
