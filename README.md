@@ -95,14 +95,13 @@ shared across the application.
 
 ### v2.0.0 release
 
-The v2.0.0 release will be available through GitHub Releases once published. The repository remains
-private, and the release has not been published, so the links below are not yet publicly available.
+The v2.0.0 release is available through GitHub Releases:
 
 [GitHub Releases — Physics Tracker v2.0.0](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/tag/v2.0.0)
 
-The release will include the per-user NSIS installer:
+The release asset is the per-user NSIS installer:
 
-[Physics.Tracker_2.0.0_x64-setup.exe](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/download/v2.0.0/Physics.Tracker_2.0.0_x64-setup.exe)
+[Download Physics.Tracker_2.0.0_x64-setup.exe](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/download/v2.0.0/Physics.Tracker_2.0.0_x64-setup.exe)
 
 **SHA-256:**
 
@@ -110,7 +109,7 @@ The release will include the per-user NSIS installer:
 A14816F743002C6BCF09CAC8F2203B9617B1609AC486E673AE741141D3FC4814
 ```
 
-After publication, verify the downloaded file from PowerShell:
+After downloading, verify the file from PowerShell:
 
 ```powershell
 Get-FileHash ".\Physics.Tracker_2.0.0_x64-setup.exe" -Algorithm SHA256
@@ -120,8 +119,7 @@ The reported hash must match the value above before you run the installer.
 
 ### Install
 
-1. After the release is published, download `Physics.Tracker_2.0.0_x64-setup.exe` from the link
-   above.
+1. Download `Physics.Tracker_2.0.0_x64-setup.exe` from the link above.
 2. Verify the SHA-256 checksum.
 3. Run the installer. It installs for the current Windows user and does not require administrator
    rights.
@@ -130,8 +128,7 @@ The reported hash must match the value above before you run the installer.
 The installer is **unsigned**, so Windows SmartScreen may display a warning. Verify the checksum
 before choosing to run the installer.
 
-Only the per-user NSIS installer will be distributed. No portable or standalone build will be
-provided.
+Only the per-user NSIS installer is distributed. No portable or standalone build is provided.
 
 ### System requirements
 

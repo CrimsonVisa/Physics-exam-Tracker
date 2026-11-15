@@ -33,14 +33,13 @@ dark theme.
 
 ## Download and install
 
-The v2.0.0 release is an unpublished draft, and the repository is currently private. The links below
-will not be publicly available until the release is published.
+The v2.0.0 release is available through GitHub Releases:
 
 [GitHub Releases — Physics Tracker v2.0.0](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/tag/v2.0.0)
 
-The release will include the per-user NSIS installer:
+The release asset is the per-user NSIS installer:
 
-[Physics.Tracker_2.0.0_x64-setup.exe](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/download/v2.0.0/Physics.Tracker_2.0.0_x64-setup.exe)
+[Download Physics.Tracker_2.0.0_x64-setup.exe](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/download/v2.0.0/Physics.Tracker_2.0.0_x64-setup.exe)
 
 **SHA-256:**
 
@@ -48,7 +47,7 @@ The release will include the per-user NSIS installer:
 A14816F743002C6BCF09CAC8F2203B9617B1609AC486E673AE741141D3FC4814
 ```
 
-After publication, verify the downloaded file from PowerShell before running it:
+Verify the downloaded file from PowerShell before running it:
 
 ```powershell
 Get-FileHash ".\Physics.Tracker_2.0.0_x64-setup.exe" -Algorithm SHA256
@@ -60,8 +59,7 @@ file using the SHA-256 value above.
 
 ### Installation
 
-1. After the release is published, download `Physics.Tracker_2.0.0_x64-setup.exe` from the GitHub
-   release.
+1. Download `Physics.Tracker_2.0.0_x64-setup.exe` from the GitHub release.
 2. Verify the SHA-256 checksum.
 3. Run the installer. It installs for the current Windows user and does not require administrator
    rights.
@@ -70,8 +68,7 @@ file using the SHA-256 value above.
 The installer is **unsigned**, so Windows SmartScreen may display a warning. Verify the checksum
 before choosing to run the installer.
 
-Only the per-user NSIS installer will be distributed. No portable or standalone build will be
-provided.
+Only the per-user NSIS installer is distributed. No portable or standalone build is provided.
 
 ## Requirements
 
@@ -127,7 +124,7 @@ Third-party components remain under their respective licenses; see
 - No automatic updater.
 - Backup and export files are unencrypted.
 - SQLite backups do not include managed PDF/resource files.
-- No portable or standalone build will be provided.
+- No portable or standalone build is provided.
 
 ## Support
 
