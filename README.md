@@ -15,6 +15,25 @@ see which topics need another pass before the exam. The current application vers
 Physics Tracker is an independent study tool. It is not affiliated with or endorsed by any
 examination authority.
 
+## Screenshots
+
+Genuine screenshots from Physics Tracker 2.0.0, captured with disposable demo data. The gallery uses
+the dark theme.
+
+![Physics Tracker combined dashboard showing the quick-start timer, recent study session, and four examination workspaces](docs/images/dashboard.png)
+
+### Plan and focus
+
+| Study timer                                                                                                    | Planner                                                                                      | Revision planning                                                                             |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| ![Study timer running with a 25-minute focus session and GATE Physics topic allocation](docs/images/timer.png) | ![Planner showing a demo checklist task and planned-block controls](docs/images/planner.png) | ![Revision planning showing a due revision and daily plan controls](docs/images/revision.png) |
+
+### Practice and data safety
+
+| Practice                                                                                        | Resources                                                                                               | Backup                                                                                     |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| ![GATE Physics practice with a verified pattern and 26 PYQ questions](docs/images/practice.png) | ![Resources catalogue with 12 official GATE question papers and answer keys](docs/images/resources.png) | ![Backup screen with demo manual backups and recovery information](docs/images/backup.png) |
+
 ## Supported examinations
 
 | Examination                    | Code               |
@@ -72,48 +91,176 @@ shared across the application.
 - Dark and light themes, adjustable typography, keyboard navigation, focus states, and reduced-motion
   support.
 
-## Screenshots
+## Download and install
 
-> **Screenshots pending.** No genuine application screenshots are stored in this repository yet.
-> Verified screenshots captured with disposable study data are still needed. No fabricated or generic
-> application images are included.
+### v2.0.0 release
 
-Suggested future captures: the combined dashboard, study timer, syllabus workspace, practice
-analytics, and revision planner.
+The v2.0.0 release will be available through GitHub Releases once published. The repository remains
+private, and the release has not been published, so the links below are not yet publicly available.
 
-## Installation
+[GitHub Releases — Physics Tracker v2.0.0](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/tag/v2.0.0)
 
-### Download
+The release will include the per-user NSIS installer:
 
-No public 2.0.0 installer has been published yet. When the 2.0.0 release is published, use the
-per-user NSIS installer from
-[GitHub Releases](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases) and verify the
-published SHA-256 checksum before running it.
+[Physics.Tracker_2.0.0_x64-setup.exe](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/download/v2.0.0/Physics.Tracker_2.0.0_x64-setup.exe)
 
-The installer targets Windows 10 or Windows 11, 64-bit, and requires the Microsoft Edge WebView2
-runtime. The current build configuration is unsigned, so Windows SmartScreen may display a warning.
+**SHA-256:**
+
+```text
+A14816F743002C6BCF09CAC8F2203B9617B1609AC486E673AE741141D3FC4814
+```
+
+After publication, verify the downloaded file from PowerShell:
+
+```powershell
+Get-FileHash ".\Physics.Tracker_2.0.0_x64-setup.exe" -Algorithm SHA256
+```
+
+The reported hash must match the value above before you run the installer.
+
+### Install
+
+1. After the release is published, download `Physics.Tracker_2.0.0_x64-setup.exe` from the link
+   above.
+2. Verify the SHA-256 checksum.
+3. Run the installer. It installs for the current Windows user and does not require administrator
+   rights.
+4. Launch Physics Tracker from the Start Menu or the desktop shortcut.
+
+The installer is **unsigned**, so Windows SmartScreen may display a warning. Verify the checksum
+before choosing to run the installer.
+
+Only the per-user NSIS installer will be distributed. No portable or standalone build will be
+provided.
+
+### System requirements
+
+- Windows 10 or Windows 11, 64-bit
+- Microsoft Edge WebView2 runtime
 
 If WebView2 is not already installed, the installer uses Microsoft's download bootstrapper, so an
 internet connection is required for that step. This build does not include an offline WebView2
 installer.
 
-### License and notices
+## First launch
 
-The NSIS installer displays the MIT license before installation. The installed application includes
-the MIT license at `%LOCALAPPDATA%\Physics Tracker\legal\LICENSE`, the third-party notice summary at
-`%LOCALAPPDATA%\Physics Tracker\legal\THIRD_PARTY_NOTICES.md`, the complete package coverage report at
-`%LOCALAPPDATA%\Physics Tracker\legal\THIRD_PARTY_COVERAGE.md`, and the full license texts and font
-notices under `%LOCALAPPDATA%\Physics Tracker\legal\licenses\`, `legal\notices\`, and `legal\fonts\`.
+1. Launch Physics Tracker from the Start Menu or desktop shortcut.
+2. No account, sign-in, or remote profile is required.
+3. The combined dashboard opens and the local SQLite database is created or opened automatically.
+4. Use **Settings** to set your preparation start date and daily study target, and to configure the
+   four examination profiles and exam dates.
 
-### Upgrading from 1.x
+If the application does not open, see [Troubleshooting](docs/TROUBLESHOOTING.md).
 
-Physics Tracker 2.x uses the application identity `com.crimsonvisa.physics-tracker` and a separate
-data directory. Existing Physics Tracker 1.x data is kept under its legacy
-`com.crimsonvisa.csirnetphysics` identity and is **not imported automatically** into 2.x. Installing
-2.x does not delete the 1.x data. The two versions can coexist; retain the 1.x installation or a copy
-of its data if you need those records.
+## Your data
 
-### Build from source
+Study data stays on the local Windows profile:
+
+```text
+%APPDATA%\com.crimsonvisa.physics-tracker\physics-tracker.sqlite3
+```
+
+SQLite may create `-wal` and `-shm` sidecars next to the database. Managed PDF/resource copies are
+stored separately under:
+
+```text
+%APPDATA%\com.crimsonvisa.physics-tracker\resources
+```
+
+The WebView2 profile is stored separately at:
+
+```text
+%LOCALAPPDATA%\com.crimsonvisa.physics-tracker\EBWebView
+```
+
+Backups default to:
+
+```text
+%APPDATA%\com.crimsonvisa.physics-tracker\backups
+```
+
+Core study features work offline. The application may use the network when you ask it to discover
+resources, open an official source, or follow an external reference link.
+
+## Backup and restore
+
+Open **Backup** in the sidebar to manage local database backups.
+
+### Create a backup
+
+1. Optionally enable automatic backups and choose a frequency.
+2. Choose an absolute destination folder, or leave it blank to use the default backup folder.
+3. Set the retention count (1–100 backups).
+4. Select **Save backup settings**.
+5. Select **Create backup now** to create a manual backup immediately.
+
+Backups are SQLite database snapshots. They contain the local database and its records/checksums,
+but they do **not** contain the bytes of managed PDF/resource files.
+
+To preserve managed PDFs as well:
+
+1. Close Physics Tracker.
+2. Copy the entire resources folder shown under **Your data** to the same secure location as your
+   backup.
+3. Keep the backup file and the resources folder together when moving to another computer.
+
+External resource links are references only; their remote files are not included in a backup.
+
+### Restore a backup
+
+1. Open **Backup**.
+2. Select **Preview restore** beside a backup.
+3. Review the schema, exam count, and integrity result.
+4. Select **Confirm restore** only after the preview is accepted.
+
+Physics Tracker creates a safety copy before every restore and validates the backup schema, exam
+records, integrity, and foreign keys before replacing the live database. Do not edit or replace the
+live database manually.
+
+Backups and exports are unencrypted. Store them in a location you control and protect them according
+to the sensitivity of your study records.
+
+## Privacy
+
+- No account, telemetry, advertising, or remote study-data upload is required.
+- Backup and export files are unencrypted; store them securely.
+- The active application does not open the retired V1 database.
+- 2.x does not automatically import or delete 1.x data.
+- The application uses the network only for explicit resource discovery, official-source links, and
+  external reference links.
+
+See [docs/PRIVACY.md](docs/PRIVACY.md) for the full privacy statement.
+
+## Troubleshooting
+
+| Problem                                       | What to check                                                                                                                                                                           |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows SmartScreen warns about the installer | The installer is unsigned. Verify the SHA-256 before running it, and only continue if it matches.                                                                                       |
+| WebView2 is missing or installation fails     | The installer uses Microsoft's download bootstrapper and needs internet access for that step. Install the Microsoft Edge WebView2 runtime manually if the bootstrapper cannot complete. |
+| The app does not open                         | Launch it from the Start Menu, confirm WebView2 is installed, and try reinstalling. Reinstalling does not delete the V2 database.                                                       |
+| A backup fails                                | Use an absolute, writable destination folder that is not inside the V1 app-data folder. Retention must be between 1 and 100, and the destination must have free space.                  |
+| A restore is rejected                         | The backup may be invalid or from an unsupported schema. Keep the original backup, review the preview, and restore a verified backup instead.                                           |
+| A managed PDF is missing                      | Managed PDFs are separate from the database. Use **Relink PDF** or **Attach PDF** on the resource card, or restore the file from your own copy. The app does not modify original PDFs.  |
+| Data appears to be missing                    | Confirm you are using the same Windows profile and the database path shown above. Do not create or replace a database manually; restore a verified backup or ask for help.              |
+
+For more detail, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+## Support
+
+- **Bug reports and feature requests:** [GitHub Issues](https://github.com/CrimsonVisa/Physics-exam-Tracker/issues)
+- **Security vulnerabilities:** follow [SECURITY.md](SECURITY.md), not a public issue
+
+When reporting a bug, include:
+
+- Physics Tracker version
+- Windows version
+- clear reproduction steps using disposable data
+- screenshots or logs only after removing personal study data, credentials, databases, backups, and
+  PDFs
+
+Do not attach real databases, backups, personal notes, exam PDFs, credentials, or private keys.
+
+## Build from source
 
 Source builds require:
 
@@ -139,36 +286,7 @@ npm run tauri:build
 If PowerShell blocks the npm shim, use `npm.cmd` instead of `npm`. The full development and release
 instructions are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and [docs/RELEASE.md](docs/RELEASE.md).
 
-## Data storage and privacy
-
-Study data stays on the local Windows profile:
-
-```text
-%APPDATA%\com.crimsonvisa.physics-tracker\physics-tracker.sqlite3
-```
-
-SQLite may create `-wal` and `-shm` sidecars next to the database. The WebView2 profile is stored
-separately at:
-
-```text
-%LOCALAPPDATA%\com.crimsonvisa.physics-tracker\EBWebView
-```
-
-Backups default to:
-
-```text
-%APPDATA%\com.crimsonvisa.physics-tracker\backups
-```
-
-Core study features work offline. The application may use the network when you ask it to discover
-resources, open an official source, or follow an external reference link.
-
-- No account, telemetry, advertising, or remote study-data upload is required.
-- Backup and export files are unencrypted; store them somewhere you control.
-- The active application does not open the retired V1 database.
-- 2.x does not automatically import or delete 1.x data.
-
-See [docs/PRIVACY.md](docs/PRIVACY.md) for the full privacy statement.
+Do not use a live user database, personal study data, or exam PDFs during development.
 
 ## Technology stack
 
@@ -179,25 +297,16 @@ See [docs/PRIVACY.md](docs/PRIVACY.md) for the full privacy statement.
 - **Mathematics:** KaTeX
 - **Testing:** Vitest and Rust tests
 
-## Development setup
+## Documentation
 
-Install the prerequisites listed under [Build from source](#build-from-source), then run:
-
-```powershell
-npm.cmd ci
-npm.cmd run tauri:dev
-```
-
-Useful commands:
-
-```powershell
-npm.cmd run dev          # Vite frontend only; Tauri commands are unavailable in a browser
-npm.cmd run check        # TypeScript, ESLint, Prettier, frontend tests, Rust format, Clippy, Rust tests
-npm.cmd run tauri:build  # Production desktop build
-```
-
-Development rules and data-safety guidance are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
-Do not use a live user database, personal study data, or exam PDFs during development.
+- [Feature guide](docs/FEATURES.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Privacy and data handling](docs/PRIVACY.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Development guide](docs/DEVELOPMENT.md)
+- [Release process](docs/RELEASE.md)
+- [v2.0.0 release notes](docs/releases/RELEASE_NOTES_2.0.0.md)
+- [Changelog](CHANGELOG.md)
 
 ## Project structure
 
@@ -211,7 +320,7 @@ src-tauri/src/*.rs            Tauri entry, shared helpers, and retained V1 Rust 
 src-tauri/capabilities/       Tauri permissions
 src-tauri/nsis/               Installer template
 legal/                        MIT and third-party licence bundle
-docs/                         Architecture, features, privacy, development, and release docs
+docs/                         Architecture, features, privacy, development, troubleshooting, and release docs
 tools/schema-validation/      Historical initial-schema specification and validator
 ```
 

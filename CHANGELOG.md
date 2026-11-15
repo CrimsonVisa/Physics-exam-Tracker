@@ -3,9 +3,10 @@
 All notable changes to Physics Tracker are recorded here. The project follows semantic versioning
 for the application release line.
 
-## [2.0.0] - 2026-11-11
+## [2.0.0] - 2026-11-14
 
-Initial Physics Tracker 2.0 public release preparation.
+Initial Physics Tracker 2.0 release. See the
+[v2.0.0 release notes](docs/releases/RELEASE_NOTES_2.0.0.md).
 
 ### Added
 
@@ -46,7 +47,9 @@ Initial Physics Tracker 2.0 public release preparation.
 - Windows-only; the installer targets NSIS per-user installation.
 - Builds are currently unsigned.
 - No automatic updater is configured.
-- Public screenshots, code signing, and release artifacts are still being prepared.
+- Backup and export files are unencrypted.
+- SQLite backups do not include managed PDF/resource files; those files must be preserved
+  separately.
 
 ## [1.2.0] - 2026-10-31
 
