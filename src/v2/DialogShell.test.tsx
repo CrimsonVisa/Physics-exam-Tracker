@@ -67,4 +67,16 @@ describe('DialogShell', () => {
     fireEvent.mouseDown(backdrop as Element);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('locks body and root scrolling while open and restores them on close', () => {
+    const { unmount } = render(<Harness onClose={vi.fn()} open />);
+
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.documentElement.style.overflow).toBe('hidden');
+
+    unmount();
+
+    expect(document.body.style.overflow).toBe('');
+    expect(document.documentElement.style.overflow).toBe('');
+  });
 });

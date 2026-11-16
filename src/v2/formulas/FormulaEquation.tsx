@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { loadKatex, type KatexRenderer } from '../katex';
+import { MathExpression } from '../math/MathExpression';
 
 type FormulaEquationProps = {
   latex: string;
@@ -18,72 +17,23 @@ function classNames(display: boolean, className?: string): string {
     .join(' ');
 }
 
-function renderToHtml(katex: KatexRenderer, latex: string, display: boolean): string | null {
-  try {
-    return katex.renderToString(latex, {
-      displayMode: display,
-      throwOnError: true,
-      strict: 'warn',
-      trust: false,
-      output: 'htmlAndMathml',
-    });
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Backwards-compatible formula wrapper around the shared mathematical
+ * renderer. Kept so every formula surface uses one KaTeX implementation.
+ */
 export function FormulaEquation({
   latex,
   plainText,
   display = false,
   className,
 }: FormulaEquationProps) {
-  const [katex, setKatex] = useState<KatexRenderer | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadKatex()
-      .then((loaded) => {
-        if (!cancelled) {
-          setKatex(() => loaded);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadFailed(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!katex) {
-    return (
-      <span
-        className={`${classNames(display, className)} v2-formula-equation-fallback`}
-        title={loadFailed ? 'Formula rendering unavailable' : 'Rendering formula'}
-      >
-        {plainText}
-      </span>
-    );
-  }
-
-  const html = renderToHtml(katex, latex, display);
-
-  if (html === null) {
-    return (
-      <span
-        className={`${classNames(display, className)} v2-formula-equation-fallback`}
-        title="Formula rendering unavailable"
-      >
-        {plainText}
-      </span>
-    );
-  }
-
   return (
-    <span className={classNames(display, className)} dangerouslySetInnerHTML={{ __html: html }} />
+    <MathExpression
+      className={classNames(display, className)}
+      display={display}
+      fallbackTitle="Formula rendering unavailable"
+      latex={latex}
+      plainText={plainText}
+    />
   );
 }

@@ -77,7 +77,7 @@ use v2::{
     v2_list_pyq_answer_keys, v2_list_pyq_attempts, v2_list_pyq_extraction_candidates,
     v2_list_pyq_questions, v2_list_pyq_sources, v2_list_question_mock_candidates,
     v2_list_quick_start_configs, v2_list_resources, v2_list_sessions, v2_list_sticky_notes,
-    v2_move_revision_plan_item, v2_pause_timer, v2_preview_exam_date_change,
+    v2_move_revision_plan_item, v2_open_resource_file, v2_pause_timer, v2_preview_exam_date_change,
     v2_preview_pyq_answer_key, v2_preview_pyq_import, v2_preview_restore_backup,
     v2_rebalance_revision_daily_plan, v2_reconcile_pyq_source, v2_record_pyq_attempt,
     v2_reject_pyq_extraction_candidate, v2_remove_resource_file, v2_replay_concept_mastery,
@@ -89,12 +89,13 @@ use v2::{
     v2_save_quick_start_config, v2_save_resource, v2_save_sticky_note, v2_save_task,
     v2_schedule_revision_concept, v2_search_concepts, v2_set_block_status, v2_set_exam_active,
     v2_set_flashcard_archived, v2_set_mock_test_status, v2_set_pyq_source_status,
-    v2_set_revision_status, v2_set_session_allocations, v2_set_task_status,
+    v2_set_revision_status, v2_set_session_allocations, v2_set_session_exams, v2_set_task_status,
     v2_set_timer_allocations, v2_start_question_mock, v2_start_timer, v2_submit_question_mock,
     v2_update_app_settings, v2_update_backup_settings, v2_update_concept_mapping,
     v2_update_concept_mastery, v2_update_pyq_extraction_candidate, v2_update_resource_progress,
     v2_update_revision_settings, v2_update_study_session, v2_update_syllabus_node_progress,
-    v2_update_timer_settings, v2_verify_mastery_run, v2_verify_pyq_extraction_candidate,
+    v2_update_timer_settings, v2_validate_resource_pdf, v2_verify_mastery_run,
+    v2_verify_pyq_extraction_candidate,
 };
 
 async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, AppError>
@@ -1544,6 +1545,27 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            let channel = app_paths::build_channel();
+            app_paths::ensure_tauri_identity(channel, &app.config().identifier)
+                .map_err(|error| std::io::Error::other(error.message))?;
+
+            let base_data_dir = app.path().data_dir().map_err(|error| {
+                eprintln!("Platform data directory could not be resolved: {error}");
+                std::io::Error::other(
+                    "The platform data folder could not be located. Restart the app; \
+                     if the problem continues, check your Windows user profile.",
+                )
+            })?;
+            let base_local_data_dir = app.path().local_data_dir().map_err(|error| {
+                eprintln!("Platform local-data directory could not be resolved: {error}");
+                std::io::Error::other(
+                    "The platform local-data folder could not be located. Restart the app; \
+                     if the problem continues, check your Windows user profile.",
+                )
+            })?;
+            let storage = app_paths::resolve_v2_storage_paths(&base_data_dir, &base_local_data_dir)
+                .map_err(|error| std::io::Error::other(error.message))?;
+
             let window_config = app.config().app.windows.first().cloned().ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::NotFound,
@@ -1551,30 +1573,14 @@ pub fn run() {
                 )
             })?;
 
-            let app_local_data_dir = app.path().app_local_data_dir()?;
-
             WebviewWindowBuilder::from_config(app.handle(), &window_config)?
-                .data_directory(app_local_data_dir)
+                .data_directory(storage.webview_data_dir.clone())
                 .build()?;
 
-            let resolved = app
-                .path()
-                .data_dir()
-                .map_err(|error| {
-                    eprintln!("Platform data directory could not be resolved: {error}");
-                    AppError::database_unavailable(
-                        "The platform data folder could not be located. Restart the app; \
-                         if the problem continues, check your Windows user profile.",
-                    )
-                })
-                .and_then(|base| app_paths::resolve_v2_data_dir(&base));
-
-            let v2_state = match resolved {
-                Ok(v2_data_dir) => V2State::initialize(&v2_data_dir),
-                Err(error) => V2State::unavailable(error),
-            };
+            let v2_state = V2State::initialize(&storage.data_dir);
 
             let _ = app.manage(v2_state);
+            let _ = app.manage(v2::study::CompletionNotificationState::default());
             if app.state::<V2State>().status().initialized {
                 v2::study::start_heartbeat(app.handle().clone());
                 let backup_handle = app.handle().clone();
@@ -1613,6 +1619,7 @@ pub fn run() {
             v2_update_timer_settings,
             v2_list_sessions,
             v2_set_session_allocations,
+            v2_set_session_exams,
             v2_get_study_totals,
             v2_search_concepts,
             v2_get_concept_detail,
@@ -1645,7 +1652,9 @@ pub fn run() {
             v2_update_resource_progress,
             v2_link_resource_exam,
             v2_import_resource_file,
+            v2_validate_resource_pdf,
             v2_remove_resource_file,
+            v2_open_resource_file,
             v2_get_backup_overview,
             v2_update_backup_settings,
             v2_create_manual_backup,
@@ -1754,7 +1763,23 @@ mod tests {
     fn v2_startup_source_does_not_initialize_or_heartbeat_v1() {
         let source = include_str!("lib.rs");
         let run_source = source.split("pub fn run()").nth(1).expect("run function");
-        assert!(run_source.contains("resolve_v2_data_dir"));
+        let identity_check = run_source
+            .find("ensure_tauri_identity")
+            .expect("identity check");
+        let storage_resolution = run_source
+            .find("resolve_v2_storage_paths")
+            .expect("storage resolution");
+        let window_build = run_source
+            .find("WebviewWindowBuilder::from_config")
+            .expect("window build");
+        let database_initialization = run_source
+            .find("V2State::initialize")
+            .expect("database initialization");
+
+        assert!(identity_check < storage_resolution);
+        assert!(identity_check < window_build);
+        assert!(storage_resolution < window_build);
+        assert!(storage_resolution < database_initialization);
         assert!(!run_source.contains("db::AppState::initialize"));
         assert!(!run_source.contains("db::AppState::unavailable"));
         assert!(!run_source.contains("timer::start_heartbeat"));

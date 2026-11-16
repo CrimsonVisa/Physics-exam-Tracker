@@ -69,8 +69,10 @@ existing compatible V2 database. The schema includes:
 - sticky notes, resources, and file metadata;
 - backup settings and portability import batches.
 
-The database identity is `com.crimsonvisa.physics-tracker`. User data is stored under the active
-application-data directory; the retired V1 database is not opened by this application.
+The production database identity is `com.crimsonvisa.physics-tracker`. User data is stored under the
+active application-data directory; the retired V1 database is not opened by this application.
+Debug builds use the isolated identity `com.crimsonvisa.physics-tracker.dev` for the database,
+backups, resources, settings, and WebView2 profile, so `tauri dev` cannot open production storage.
 
 ## Timer lifecycle
 

@@ -27,8 +27,10 @@ export function DialogShell({ ariaLabel, className = '', onClose, children }: Di
   useEffect(() => {
     restoreRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousRootOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
 
     const focusTimer = window.setTimeout(() => {
       const dialog = dialogRef.current;
@@ -44,7 +46,8 @@ export function DialogShell({ ariaLabel, className = '', onClose, children }: Di
 
     return () => {
       window.clearTimeout(focusTimer);
-      document.body.style.overflow = previousOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousRootOverflow;
       restoreRef.current?.focus?.({ preventScroll: true });
     };
   }, []);

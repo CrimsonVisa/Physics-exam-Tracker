@@ -2908,7 +2908,7 @@ mod tests {
                 .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp"))
         );
         assert_eq!(result.manifest.schema_version, 12);
-        assert_eq!(result.manifest.application_version, "2.0.0");
+        assert_eq!(result.manifest.application_version, "2.1.0");
         assert_eq!(result.manifest.integrity_check, "ok");
         assert_eq!(
             result.manifest.backup_size_bytes,

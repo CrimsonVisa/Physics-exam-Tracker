@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toCommandError } from '../../lib/commandError';
 import { deleteV2CustomFormula, listV2CustomFormulas, type V2CustomFormula } from '../api';
+import { MathText } from '../MathText';
 import { FormulaEquation } from './FormulaEquation';
 import { CustomFormulaDetail } from './CustomFormulaDetail';
 import { CustomFormulaEditor } from './CustomFormulaEditor';
@@ -31,6 +32,7 @@ export function CustomFormulaLibrary() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<V2CustomFormula | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,11 +75,15 @@ export function CustomFormulaLibrary() {
   function openCreate() {
     setEditing(null);
     setEditorOpen(true);
+    setNotice(null);
+    setActionError(null);
   }
 
   function openEdit(formula: V2CustomFormula) {
     setEditing(formula);
     setEditorOpen(true);
+    setNotice(null);
+    setActionError(null);
   }
 
   async function remove(formula: V2CustomFormula) {
@@ -93,7 +99,9 @@ export function CustomFormulaLibrary() {
         setSelectedId(null);
       }
       setActionError(null);
+      setNotice(`Formula "${formula.name}" deleted.`);
     } catch (error) {
+      setNotice(null);
       setActionError(toCommandError(error).message);
     }
   }
@@ -109,6 +117,10 @@ export function CustomFormulaLibrary() {
     });
     setSelectedId(saved.id);
     setEditorOpen(false);
+    setQuery('');
+    setCategory('all');
+    setActionError(null);
+    setNotice(`Formula "${saved.name}" saved.`);
   }
 
   if (selected) {
@@ -117,6 +129,11 @@ export function CustomFormulaLibrary() {
         {actionError ? (
           <p className="v2-inline-error" role="alert">
             {actionError}
+          </p>
+        ) : null}
+        {notice ? (
+          <p className="v2-study-notice" role="status">
+            {notice}
           </p>
         ) : null}
         <CustomFormulaDetail
@@ -208,6 +225,11 @@ export function CustomFormulaLibrary() {
           {actionError}
         </p>
       ) : null}
+      {notice ? (
+        <p className="v2-study-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
 
       {empty ? (
         <div className="v2-empty-panel v2-reference-empty">
@@ -254,7 +276,9 @@ export function CustomFormulaLibrary() {
                 <span className="v2-reference-card-equation">
                   <FormulaEquation latex={formula.latex} plainText={formula.plainText} />
                 </span>
-                <span className="v2-reference-card-description">{formula.description}</span>
+                <span className="v2-reference-card-description">
+                  <MathText text={formula.description} />
+                </span>
                 <span className="v2-reference-card-meta">
                   <span className="v2-reference-badge" data-tone="category">
                     {formula.category}

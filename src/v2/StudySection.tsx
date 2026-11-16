@@ -1,5 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { toCommandError } from '../lib/commandError';
+import { emitStudySessionsChanged } from '../lib/studyEvents';
 import {
   createV2ManualSession,
   deleteV2StudySession,
@@ -10,7 +12,7 @@ import {
   listV2Sessions,
   pauseV2Timer,
   resumeV2Timer,
-  setV2SessionAllocations,
+  setV2SessionExams,
   setV2TimerAllocations,
   startV2Timer,
   updateV2StudySession,
@@ -65,6 +67,13 @@ function modeDurationMinutes(mode: V2TimerMode, settings: V2TimerSettings): numb
   return mode === 'shortBreak' ? settings.shortBreakMinutes : settings.longBreakMinutes;
 }
 
+async function ensureNotificationPermission(): Promise<boolean> {
+  if (await isPermissionGranted()) {
+    return true;
+  }
+  return (await requestPermission()) === 'granted';
+}
+
 const PROGRESS_LABELS: Record<string, string> = {
   not_started: 'Not started',
   learning: 'Learning',
@@ -111,12 +120,12 @@ export function StudySection({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [mode, setMode] = useState<V2TimerMode>('focus');
-  const [selectedExamId, setSelectedExamId] = useState(() =>
-    focusExam && focusExam.isActive ? String(focusExam.id) : '',
+  const [selectedExamIds, setSelectedExamIds] = useState<number[]>(() =>
+    focusExam && focusExam.isActive ? [focusExam.id] : [],
   );
   const [settingsDraft, setSettingsDraft] = useState<V2TimerSettings | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<number | null>(null);
-  const [allocationDraft, setAllocationDraft] = useState<Record<number, string>>({});
+  const [sessionExamDraft, setSessionExamDraft] = useState<number[]>([]);
   const [allocationError, setAllocationError] = useState<string | null>(null);
   const [syllabi, setSyllabi] = useState<Record<number, V2ExamSyllabus>>({});
   const [allocationRows, setAllocationRows] = useState<AllocationDraft[]>([]);
@@ -124,7 +133,7 @@ export function StudySection({
   const allocationKey = useRef(1);
   const [manualDate, setManualDate] = useState(today);
   const [manualMinutes, setManualMinutes] = useState('30');
-  const [manualExamId, setManualExamId] = useState('');
+  const [manualExamIds, setManualExamIds] = useState<number[]>([]);
   const [manualNotes, setManualNotes] = useState('');
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
@@ -291,18 +300,6 @@ export function StudySection({
       )
     : sessions;
 
-  const editingSession = visibleSessions.find((session) => session.id === editingSessionId) ?? null;
-
-  const draftAllocatedSeconds = useMemo(() => {
-    if (!editingSession) {
-      return 0;
-    }
-    return exams.reduce((total, exam) => {
-      const value = Number(allocationDraft[exam.id] ?? '0');
-      return total + (Number.isFinite(value) ? Math.round(Math.max(0, value) * 60) : 0);
-    }, 0);
-  }, [allocationDraft, editingSession, exams]);
-
   const timerAllocationInputs = useMemo<V2TopicAllocationInput[]>(
     () =>
       allocationRows
@@ -347,7 +344,7 @@ export function StudySection({
     : 0;
 
   function addAllocation() {
-    const firstExam = exams.find((exam) => exam.isActive);
+    const firstExam = allocationExamOptions[0];
     setAllocationRows((rows) => [
       ...rows,
       {
@@ -371,7 +368,48 @@ export function StudySection({
     setTimerAllocationError(null);
   }
 
+  function toggleSelectedExam(examId: number, selected: boolean) {
+    setSelectedExamIds((current) =>
+      selected
+        ? current.includes(examId)
+          ? current
+          : [...current, examId]
+        : current.filter((value) => value !== examId),
+    );
+  }
+
+  function toggleManualExam(examId: number, selected: boolean) {
+    setManualExamIds((current) =>
+      selected
+        ? current.includes(examId)
+          ? current
+          : [...current, examId]
+        : current.filter((value) => value !== examId),
+    );
+  }
+
+  function toggleSessionExam(examId: number, selected: boolean) {
+    setSessionExamDraft((current) =>
+      selected
+        ? current.includes(examId)
+          ? current
+          : [...current, examId]
+        : current.filter((value) => value !== examId),
+    );
+  }
+
   function validateTimerAllocations(): boolean {
+    const running = timer?.state.status !== 'idle';
+    const allowedExamIds = running ? (timer?.examIds ?? []) : selectedExamIds;
+    if (
+      (running || allowedExamIds.length > 0) &&
+      timerAllocationInputs.some((allocation) => !allowedExamIds.includes(allocation.examId))
+    ) {
+      setTimerAllocationError(
+        'Remove topic allocations for examinations that are not selected for this timer.',
+      );
+      return false;
+    }
     if (timerAllocationSeconds > timerAllocationLimitSeconds) {
       setTimerAllocationError(
         `Allocations total ${formatDuration(timerAllocationSeconds)}, but the timer is ${formatDuration(
@@ -437,13 +475,14 @@ export function StudySection({
     if (mode === 'focus' && !validateTimerAllocations()) {
       return;
     }
-    const activeExamId = mode === 'focus' && selectedExamId ? Number(selectedExamId) : null;
+    const activeExamId = mode === 'focus' && selectedExamIds.length > 0 ? selectedExamIds[0] : null;
     void runTimerAction(
       () =>
         startV2Timer({
           mode,
           sessionDate: today,
           activeExamId,
+          examIds: mode === 'focus' ? selectedExamIds : [],
           allocations: mode === 'focus' ? timerAllocationInputs : [],
         }),
       () => 'Timer started.',
@@ -495,8 +534,18 @@ export function StudySection({
     setError(null);
     setNotice(null);
     try {
+      if (settingsDraft.notificationsEnabled && !(await ensureNotificationPermission())) {
+        setError(
+          'Windows did not grant notification permission. Timer settings were not saved. You can still use the timer without notifications.',
+        );
+        return;
+      }
       await runMutation(() => updateV2TimerSettings(settingsDraft));
-      setNotice('Timer lengths saved for the next timer.');
+      setNotice(
+        settingsDraft.notificationsEnabled
+          ? 'Timer lengths and desktop notification preference saved for the next timer.'
+          : 'Timer lengths saved for the next timer.',
+      );
     } catch (settingsError) {
       setError(toCommandError(settingsError).message);
     } finally {
@@ -504,43 +553,28 @@ export function StudySection({
     }
   }
 
-  function openAllocationEditor(session: V2StudySession) {
-    const draft: Record<number, string> = {};
-    for (const exam of exams) {
-      const existing = session.allocations.find((allocation) => allocation.examId === exam.id);
-      draft[exam.id] = existing ? String(existing.allocatedSeconds / 60) : '';
-    }
-    setAllocationDraft(draft);
+  function openExamEditor(session: V2StudySession) {
+    setSessionExamDraft(session.allocations.map((allocation) => allocation.examId));
     setAllocationError(null);
     setEditingSessionId(session.id);
   }
 
-  async function handleSaveAllocations(session: V2StudySession) {
+  async function handleSaveSessionExams(session: V2StudySession) {
     setAllocationError(null);
-    if (draftAllocatedSeconds > session.durationSeconds) {
-      setAllocationError(
-        `Allocated time is ${formatDuration(draftAllocatedSeconds)}, but the session is ${formatDuration(
-          session.durationSeconds,
-        )}. Reduce the allocations before saving.`,
-      );
+    if (sessionExamDraft.length === 0) {
+      setAllocationError('Choose at least one examination for this session.');
       return;
     }
-
-    const allocations = exams
-      .map((exam) => ({
-        examId: exam.id,
-        allocatedSeconds: Math.round(Math.max(0, Number(allocationDraft[exam.id] ?? '0')) * 60),
-      }))
-      .filter((allocation) => allocation.allocatedSeconds > 0);
 
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await setV2SessionAllocations({ sessionId: session.id, allocations });
+      await setV2SessionExams({ sessionId: session.id, examIds: sessionExamDraft });
+      emitStudySessionsChanged();
       await refreshRecords();
       setEditingSessionId(null);
-      setNotice('Session allocations saved.');
+      setNotice('Session exam associations saved.');
     } catch (allocationFailure) {
       setAllocationError(toCommandError(allocationFailure).message);
     } finally {
@@ -563,9 +597,12 @@ export function StudySection({
         sessionDate: manualDate,
         durationSeconds: Math.round(minutes * 60),
         notes: manualNotes.trim(),
-        primaryExamId: manualExamId ? Number(manualExamId) : null,
+        primaryExamId: manualExamIds[0] ?? null,
+        examIds: manualExamIds,
       });
       setManualNotes('');
+      setManualExamIds([]);
+      emitStudySessionsChanged();
       await refreshRecords();
       setNotice('Manual study session saved.');
     } catch (manualError) {
@@ -594,6 +631,7 @@ export function StudySection({
         primaryExamId: session.primaryExamId,
       });
       setEditingNoteId(null);
+      emitStudySessionsChanged();
       await refreshRecords();
       setNotice('Session note saved.');
     } catch (noteError) {
@@ -615,6 +653,7 @@ export function StudySection({
     try {
       await deleteV2StudySession(session.id);
       setDeletingSessionId(null);
+      emitStudySessionsChanged();
       await refreshRecords();
       setNotice('Study session deleted.');
     } catch (deleteError) {
@@ -686,6 +725,12 @@ export function StudySection({
   const statusLabel = completed ? 'Completed' : STATUS_LABELS[status];
   const selectedModeMinutes = modeDurationMinutes(mode, timer.settings);
   const activeExams = exams.filter((exam) => exam.isActive);
+  const allocationExamOptions =
+    timer?.state.status !== 'idle'
+      ? activeExams.filter((exam) => timer.examIds.includes(exam.id))
+      : selectedExamIds.length > 0
+        ? activeExams.filter((exam) => selectedExamIds.includes(exam.id))
+        : activeExams;
 
   function renderAllocationBuilder(editable: boolean) {
     return (
@@ -724,9 +769,9 @@ export function StudySection({
                   value={row.examId}
                 >
                   <option value="">Choose exam</option>
-                  {activeExams.map((exam) => (
+                  {allocationExamOptions.map((exam) => (
                     <option key={exam.id} value={exam.id}>
-                      {exam.shortName} — {exam.code}
+                      {exam.shortName} - {exam.code}
                     </option>
                   ))}
                 </select>
@@ -783,7 +828,7 @@ export function StudySection({
         <div className="v2-timer-allocation-actions">
           <button
             className="secondary-button"
-            disabled={!editable || busy}
+            disabled={!editable || busy || allocationExamOptions.length === 0}
             onClick={addAllocation}
             type="button"
           >
@@ -800,6 +845,12 @@ export function StudySection({
             </button>
           )}
         </div>
+        {editable && timer?.state.status !== 'idle' && (
+          <p className="v2-empty-copy">
+            Only the examinations selected when this timer started can receive topic allocations.
+            Exam associations are locked for the running timer.
+          </p>
+        )}
         <p className="v2-empty-copy">
           {timerAllocationSeconds === 0
             ? 'No allocation selected. The session will still be recorded as combined study time.'
@@ -904,25 +955,33 @@ export function StudySection({
                         ))}
                       </select>
                     </label>
-                    <label className="v2-field">
-                      <span>Study context</span>
-                      <select
-                        disabled={mode !== 'focus'}
-                        onChange={(event) => setSelectedExamId(event.target.value)}
-                        value={mode === 'focus' ? selectedExamId : ''}
-                      >
-                        <option value="">No exam (combined)</option>
+                    <fieldset className="v2-exam-selector" disabled={mode !== 'focus'}>
+                      <legend>Examinations</legend>
+                      <div className="v2-exam-choice-grid">
                         {activeExams.map((exam) => (
-                          <option key={exam.code} value={exam.id}>
-                            {exam.shortName} — {exam.code}
-                          </option>
+                          <label className="v2-checkbox-field" key={exam.code}>
+                            <input
+                              checked={selectedExamIds.includes(exam.id)}
+                              onChange={(event) =>
+                                toggleSelectedExam(exam.id, event.target.checked)
+                              }
+                              type="checkbox"
+                            />
+                            <span>
+                              {exam.shortName} — {exam.code}
+                            </span>
+                          </label>
                         ))}
-                      </select>
-                    </label>
+                      </div>
+                    </fieldset>
                   </div>
                   <p className="v2-empty-copy">
                     {mode === 'focus'
-                      ? `A ${selectedModeMinutes}-minute focus timer will start. Study time is allocated to the selected examination topics when the session is saved.`
+                      ? `A ${selectedModeMinutes}-minute focus timer will start. Every selected examination receives the full session duration; combined study time still counts the session once.${
+                          selectedExamIds.length === 0
+                            ? ' No examination is selected, so the session will be recorded as combined study time only.'
+                            : ''
+                        }`
                       : `A ${selectedModeMinutes}-minute break timer will start. Breaks do not create study sessions.`}
                   </p>
                   {mode === 'focus' && renderAllocationBuilder(true)}
@@ -977,6 +1036,32 @@ export function StudySection({
                 </div>
               )}
 
+              {status !== 'idle' && timer.state.mode === 'focus' && (
+                <div className="v2-timer-exam-context">
+                  <p className="eyebrow">Exam associations</p>
+                  <div className="v2-allocation-chips">
+                    {timer.examIds.length === 0 ? (
+                      <span className="v2-allocation-chip v2-allocation-unallocated">
+                        Combined study time only
+                      </span>
+                    ) : (
+                      timer.examIds.map((examId) => {
+                        const exam = exams.find((item) => item.id === examId);
+                        return (
+                          <span className="v2-allocation-chip" key={examId}>
+                            {exam?.shortName ?? `Exam ${examId}`}: full session duration
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+                  <p className="v2-empty-copy">
+                    Exam associations are locked for this running timer. Each selected exam will
+                    receive the full session duration; combined time is counted once.
+                  </p>
+                </div>
+              )}
+
               {status !== 'idle' && timer.state.mode === 'focus' && renderAllocationBuilder(true)}
 
               {settingsDraft && (
@@ -1028,6 +1113,19 @@ export function StudySection({
                         value={settingsDraft.longBreakMinutes}
                       />
                     </label>
+                    <label className="v2-checkbox-field">
+                      <input
+                        checked={settingsDraft.notificationsEnabled}
+                        onChange={(event) =>
+                          setSettingsDraft({
+                            ...settingsDraft,
+                            notificationsEnabled: event.target.checked,
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      <span>Desktop notifications</span>
+                    </label>
                   </div>
                   <button
                     className="secondary-button"
@@ -1039,7 +1137,9 @@ export function StudySection({
                   </button>
                   <p className="v2-empty-copy">
                     Length changes apply to the next timer. A running timer keeps its original
-                    length.
+                    length. Desktop notifications appear when a focus session completes, including
+                    while the window is minimized. If they do not appear, check Windows Settings →
+                    System → Notifications.
                   </p>
                 </details>
               )}
@@ -1060,7 +1160,7 @@ export function StudySection({
                   <dd>{formatDuration(totals.totalSeconds)}</dd>
                 </div>
                 <div>
-                  <dt>Allocated to exams</dt>
+                  <dt>Time credited to an exam</dt>
                   <dd>{formatDuration(totals.allocatedSeconds)}</dd>
                 </div>
                 <div>
@@ -1072,7 +1172,7 @@ export function StudySection({
                   <dd>{totals.sessionCount}</dd>
                 </div>
               </dl>
-              <h4>Exam allocations</h4>
+              <h4>Exam credit (may overlap)</h4>
               <ul className="v2-total-exams">
                 {totals.exams.map((examTotal) => {
                   const exam = exams.find((item) => item.id === examTotal.examId);
@@ -1136,8 +1236,9 @@ export function StudySection({
                 </>
               )}
               <p className="v2-empty-copy">
-                Combined time counts every session once. Exam totals use allocation records only;
-                topic totals are a breakdown of those allocations.
+                Combined time counts every session once. A session associated with several
+                examinations credits its full duration to each of them, so exam totals may overlap.
+                Topic totals are a separate breakdown of recorded topic detail.
               </p>
             </>
           ) : (
@@ -1183,20 +1284,21 @@ export function StudySection({
                   value={manualMinutes}
                 />
               </label>
-              <label className="v2-field">
-                <span>Examination context</span>
-                <select
-                  onChange={(event) => setManualExamId(event.target.value)}
-                  value={manualExamId}
-                >
-                  <option value="">Unallocated</option>
+              <fieldset className="v2-exam-selector v2-manual-session-exams">
+                <legend>Examinations</legend>
+                <div className="v2-exam-choice-grid">
                   {activeExams.map((exam) => (
-                    <option key={exam.id} value={exam.id}>
-                      {exam.shortName}
-                    </option>
+                    <label className="v2-checkbox-field" key={exam.id}>
+                      <input
+                        checked={manualExamIds.includes(exam.id)}
+                        onChange={(event) => toggleManualExam(exam.id, event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span>{exam.shortName}</span>
+                    </label>
                   ))}
-                </select>
-              </label>
+                </div>
+              </fieldset>
               <label className="v2-field v2-manual-session-notes">
                 <span>Notes</span>
                 <input
@@ -1299,10 +1401,10 @@ export function StudySection({
                   <div className="v2-session-actions">
                     <button
                       className="secondary-button v2-allocate-button"
-                      onClick={() => openAllocationEditor(session)}
+                      onClick={() => openExamEditor(session)}
                       type="button"
                     >
-                      {editingSessionId === session.id ? 'Close allocation' : 'Allocate time'}
+                      {editingSessionId === session.id ? 'Close exams' : 'Edit exams'}
                     </button>
                     <button
                       className="secondary-button v2-allocate-button"
@@ -1327,54 +1429,43 @@ export function StudySection({
                     className="v2-allocation-form"
                     onSubmit={(event) => {
                       event.preventDefault();
-                      void handleSaveAllocations(session);
+                      void handleSaveSessionExams(session);
                     }}
                   >
-                    <h4>Allocate session time</h4>
+                    <h4>Edit session examinations</h4>
                     <p className="v2-empty-copy">
-                      Session duration: {formatDuration(session.durationSeconds)}. Enter time in
-                      minutes for one or more examinations. Existing inactive allocations are
-                      preserved and cannot be changed.
+                      Session duration: {formatDuration(session.durationSeconds)}. Select one or
+                      more examinations. Each selected examination receives the full session
+                      duration; combined study time still counts this session once. Inactive
+                      examinations with an existing association are preserved.
                     </p>
-                    <div className="v2-allocation-grid">
+                    <div className="v2-exam-choice-grid">
                       {exams.map((exam) => {
-                        const existing = session.allocations.find(
+                        const existing = session.allocations.some(
                           (allocation) => allocation.examId === exam.id,
                         );
                         const unavailable = !exam.isActive && !existing;
                         return (
-                          <label className="v2-field" key={exam.id}>
+                          <label className="v2-checkbox-field" key={exam.id}>
+                            <input
+                              checked={sessionExamDraft.includes(exam.id)}
+                              disabled={unavailable || (!exam.isActive && existing)}
+                              onChange={(event) => toggleSessionExam(exam.id, event.target.checked)}
+                              type="checkbox"
+                            />
                             <span>
                               {exam.shortName}
                               {!exam.isActive && ' (inactive)'}
+                              {unavailable && ' — not available'}
                             </span>
-                            <input
-                              disabled={unavailable || (!exam.isActive && Boolean(existing))}
-                              min={0}
-                              onChange={(event) =>
-                                setAllocationDraft((current) => ({
-                                  ...current,
-                                  [exam.id]: event.target.value,
-                                }))
-                              }
-                              placeholder={unavailable ? 'Not available' : '0'}
-                              step={0.5}
-                              type="number"
-                              value={allocationDraft[exam.id] ?? ''}
-                            />
                           </label>
                         );
                       })}
                     </div>
-                    <p
-                      className={
-                        draftAllocatedSeconds > session.durationSeconds
-                          ? 'v2-study-error'
-                          : 'v2-empty-copy'
-                      }
-                    >
-                      Allocated: {formatDuration(draftAllocatedSeconds)} · Unallocated:{' '}
-                      {formatDuration(Math.max(0, session.durationSeconds - draftAllocatedSeconds))}
+                    <p className="v2-empty-copy">
+                      {sessionExamDraft.length} examination
+                      {sessionExamDraft.length === 1 ? '' : 's'} selected ·{' '}
+                      {formatDuration(session.durationSeconds)} credited to each.
                     </p>
                     {allocationError && (
                       <p className="v2-study-error" role="alert">
@@ -1383,7 +1474,7 @@ export function StudySection({
                     )}
                     <div className="v2-form-actions">
                       <button className="primary-button" disabled={busy} type="submit">
-                        Save allocations
+                        Save exams
                       </button>
                       <button
                         className="secondary-button"

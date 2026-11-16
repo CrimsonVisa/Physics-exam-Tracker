@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
-const DEFAULT_SECTIONS: [(&str, &str); 10] = [
+const DEFAULT_SECTIONS: [(&str, &str); 11] = [
     ("quickstart", "Quick start timer"),
     ("today", "Today's overview"),
+    ("countdown", "Exam countdown"),
     ("plan", "Today's study plan"),
     ("revision", "Revision overview"),
     ("recent", "Recently studied"),
@@ -77,11 +78,25 @@ pub fn load_layout(
             row.map_err(|error| AppError::database("A dashboard section row is invalid", error))?;
         overrides.insert(key, (visible, order));
     }
+    let saved_layout = !overrides.is_empty();
+    let mut next_unplaced_order = overrides
+        .values()
+        .map(|(_, display_order)| *display_order)
+        .max()
+        .map_or(0, |order| order + 1);
     let mut sections = DEFAULT_SECTIONS
         .iter()
         .enumerate()
         .map(|(index, (key, title))| {
-            let (visible, display_order) = overrides.remove(*key).unwrap_or((true, index as i64));
+            let (visible, display_order) = match overrides.remove(*key) {
+                Some(saved) => saved,
+                None if saved_layout => {
+                    let order = next_unplaced_order;
+                    next_unplaced_order += 1;
+                    (true, order)
+                }
+                None => (true, index as i64),
+            };
             V2DashboardSection {
                 section_key: (*key).to_owned(),
                 title: (*title).to_owned(),
@@ -241,17 +256,18 @@ mod tests {
         }
     }
 
-    const DEFAULT_LAYOUT: [(&str, bool, i64); 10] = [
+    const DEFAULT_LAYOUT: [(&str, bool, i64); 11] = [
         ("quickstart", true, 0),
         ("today", true, 1),
-        ("plan", true, 2),
-        ("revision", true, 3),
-        ("recent", true, 4),
-        ("performance", true, 5),
-        ("overview", true, 6),
-        ("study", true, 7),
-        ("exams", true, 8),
-        ("database", true, 9),
+        ("countdown", true, 2),
+        ("plan", true, 3),
+        ("revision", true, 4),
+        ("recent", true, 5),
+        ("performance", true, 6),
+        ("overview", true, 7),
+        ("study", true, 8),
+        ("exams", true, 9),
+        ("database", true, 10),
     ];
 
     fn order_of(sections: &[V2DashboardSection]) -> Vec<&str> {
@@ -275,6 +291,7 @@ mod tests {
             [
                 "quickstart",
                 "today",
+                "countdown",
                 "plan",
                 "revision",
                 "recent",
@@ -308,6 +325,7 @@ mod tests {
                         ("revision", true, 3),
                         ("recent", true, 4),
                         ("performance", true, 5),
+                        ("countdown", true, 6),
                     ]),
                     at(0),
                 )
@@ -322,6 +340,7 @@ mod tests {
                 "revision",
                 "recent",
                 "performance",
+                "countdown",
                 "study",
                 "database",
                 "overview",
@@ -329,8 +348,20 @@ mod tests {
             ]
         );
         assert_eq!(saved.iter().filter(|section| !section.visible).count(), 2);
-        assert!(!saved[8].visible);
-        assert!(!saved[9].visible);
+        assert!(
+            !saved
+                .iter()
+                .find(|section| section.section_key == "overview")
+                .expect("overview")
+                .visible
+        );
+        assert!(
+            !saved
+                .iter()
+                .find(|section| section.section_key == "exams")
+                .expect("exams")
+                .visible
+        );
         drop(state);
 
         let reopened = V2State::initialize(&data_dir);
@@ -348,14 +379,27 @@ mod tests {
                 "revision",
                 "recent",
                 "performance",
+                "countdown",
                 "study",
                 "database",
                 "overview",
                 "exams",
             ]
         );
-        assert!(!loaded[8].visible);
-        assert!(!loaded[9].visible);
+        assert!(
+            !loaded
+                .iter()
+                .find(|section| section.section_key == "overview")
+                .expect("overview")
+                .visible
+        );
+        assert!(
+            !loaded
+                .iter()
+                .find(|section| section.section_key == "exams")
+                .expect("exams")
+                .visible
+        );
 
         let reset = reopened
             .with_connection(|connection| {
@@ -367,6 +411,7 @@ mod tests {
             [
                 "quickstart",
                 "today",
+                "countdown",
                 "plan",
                 "revision",
                 "recent",
@@ -414,9 +459,9 @@ mod tests {
                 load_layout(connection, V2DashboardLayoutScope { exam_id: None })
             })
             .expect("load layout");
-        assert_eq!(loaded.len(), 10);
+        assert_eq!(loaded.len(), 11);
         // Saved visibility for legacy keys is preserved; new sections default to
-        // visible so an existing customization is not overwritten.
+        // visible and are appended so existing saved order values stay valid.
         for section in &loaded {
             match section.section_key.as_str() {
                 "study" | "database" => assert!(!section.visible),
@@ -433,11 +478,16 @@ mod tests {
                 .iter()
                 .any(|section| section.section_key == "performance")
         );
+        assert!(
+            loaded
+                .iter()
+                .any(|section| section.section_key == "countdown")
+        );
 
         let saved = state
             .with_connection(|connection| save_layout(connection, layout(&DEFAULT_LAYOUT), at(0)))
             .expect("full layout save");
-        assert_eq!(saved.len(), 10);
+        assert_eq!(saved.len(), 11);
         assert!(saved.iter().all(|section| section.visible));
     }
 

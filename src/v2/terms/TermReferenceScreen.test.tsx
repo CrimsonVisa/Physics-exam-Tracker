@@ -69,6 +69,13 @@ describe('TermReferenceScreen', () => {
     expect(screen.getByRole('button', { name: 'Open term newton' })).toBeInTheDocument();
   });
 
+  it('keeps constants available under Terms & Units', () => {
+    renderScreen();
+
+    expect(screen.getByRole('tab', { name: 'Constants' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'My Units' })).toBeInTheDocument();
+  });
+
   it('searches exact terms, aliases, Unicode symbols, units and dimensions', () => {
     renderScreen();
 

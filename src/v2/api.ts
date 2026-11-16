@@ -115,6 +115,7 @@ export type V2TimerSnapshot = {
   state: V2TimerState;
   settings: V2TimerSettings;
   allocations: V2TopicAllocation[];
+  examIds: number[];
   serverNowMs: number;
 };
 
@@ -128,6 +129,8 @@ export type V2StartTimerInput = {
   mode: V2TimerMode;
   sessionDate: string;
   activeExamId: number | null;
+  /** Full-credit exam associations. Each selected exam receives the whole session. */
+  examIds?: number[];
   allocations?: V2TopicAllocationInput[];
   /**
    * Optional planned focus duration in minutes (quick-start only). When
@@ -169,6 +172,11 @@ export type V2SessionAllocationInput = {
 export type V2SetSessionAllocationsInput = {
   sessionId: number;
   allocations: V2SessionAllocationInput[];
+};
+
+export type V2SetSessionExamsInput = {
+  sessionId: number;
+  examIds: number[];
 };
 
 export type V2ExamStudyTotal = {
@@ -246,6 +254,10 @@ export function setV2SessionAllocations(
   input: V2SetSessionAllocationsInput,
 ): Promise<V2StudySession> {
   return invoke<V2StudySession>('v2_set_session_allocations', { input });
+}
+
+export function setV2SessionExams(input: V2SetSessionExamsInput): Promise<V2StudySession> {
+  return invoke<V2StudySession>('v2_set_session_exams', { input });
 }
 
 export function getV2StudyTotals(): Promise<V2StudyTotals> {
@@ -565,6 +577,8 @@ export type V2CreateManualSessionInput = {
   durationSeconds: number;
   notes?: string;
   primaryExamId: number | null;
+  /** Full-credit exam associations. Each selected exam receives the whole session. */
+  examIds?: number[];
 };
 
 export type V2UpdateSessionInput = {
@@ -725,7 +739,6 @@ export type V2ResourceExamLink = {
 
 export type V2ResourceFile = {
   fileName: string;
-  filePath: string;
   sha256: string;
   sizeBytes: number;
   storageMode: string;
@@ -820,8 +833,16 @@ export function importV2ResourceFile(input: V2ResourceFileInput): Promise<V2Reso
   return invoke<V2Resource>('v2_import_resource_file', { input });
 }
 
+export function validateV2ResourcePdf(filePath: string): Promise<void> {
+  return invoke<void>('v2_validate_resource_pdf', { filePath });
+}
+
 export function removeV2ResourceFile(resourceId: number): Promise<V2Resource> {
   return invoke<V2Resource>('v2_remove_resource_file', { resourceId });
+}
+
+export function openV2ResourceFile(resourceId: number): Promise<void> {
+  return invoke<void>('v2_open_resource_file', { resourceId });
 }
 
 export type V2BackupSettings = {
@@ -1076,6 +1097,10 @@ export type V2RevisionSchedule = {
   overdueDays: number;
   masteryScore: number | null;
   selectionReason: string;
+  eligible: boolean;
+  approvedExamCodes: string[];
+  pendingExamCodes: string[];
+  alreadyScheduled: boolean;
 };
 
 export type V2RevisionHistoryEntry = {
@@ -1106,6 +1131,7 @@ export type V2RevisionDashboard = {
   dueToday: V2RevisionSchedule[];
   overdue: V2RevisionSchedule[];
   upcoming: V2RevisionSchedule[];
+  awaitingApproval: V2RevisionSchedule[];
   recentHistory: V2RevisionHistoryEntry[];
   stats: V2RevisionStats;
   examId: number | null;

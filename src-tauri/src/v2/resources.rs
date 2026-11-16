@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -7,6 +8,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
+
+const MAX_RESOURCE_PDF_BYTES: u64 = 512 * 1024 * 1024;
+const PDF_HEADER_WINDOW_BYTES: usize = 1_024;
+const PDF_EOF_WINDOW_BYTES: u64 = 8_192;
+const PDF_READ_BUFFER_BYTES: usize = 64 * 1_024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +39,7 @@ pub struct V2ResourceExamLink {
 #[serde(rename_all = "camelCase")]
 pub struct V2ResourceFile {
     pub file_name: String,
+    #[serde(skip_serializing)]
     pub file_path: String,
     pub sha256: String,
     pub size_bytes: i64,
@@ -163,11 +170,15 @@ pub fn list_resources(
         .filter(|value| !value.is_empty())
     {
         where_parts.push(
-            "(r.title LIKE ? OR r.description LIKE ? OR r.subject_area LIKE ? OR r.source LIKE ?)"
-                .to_owned(),
+            "(r.title LIKE ? OR r.description LIKE ? OR r.subject_area LIKE ? OR r.source LIKE ?
+              OR EXISTS (
+                SELECT 1 FROM resource_files rf
+                WHERE rf.resource_id = r.id AND rf.file_name LIKE ?
+              ))"
+            .to_owned(),
         );
         let pattern = format!("%{query}%");
-        for _ in 0..4 {
+        for _ in 0..5 {
             values.push(pattern.clone());
         }
     }
@@ -512,19 +523,91 @@ pub fn link_resource_exam(
     get_resource(connection, input.resource_id)
 }
 
-pub fn import_resource_file(
-    connection: &mut Connection,
-    data_dir: &Path,
-    input: V2ResourceFileInput,
-    now: DateTime<Utc>,
-) -> Result<V2Resource, AppError> {
-    if !matches!(input.storage_mode.as_str(), "managed" | "external") {
+fn sha256_file(path: &Path) -> Result<String, AppError> {
+    let mut file = fs::File::open(path)
+        .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; PDF_READ_BUFFER_BYTES];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn managed_pdf_file_name(sha256: &str, original_file_name: &str) -> String {
+    let stem = Path::new(original_file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("resource");
+    let safe_stem: String = stem
+        .chars()
+        .filter(|value| {
+            !value.is_control()
+                && !matches!(value, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
+        .take(80)
+        .collect();
+    let safe_stem = safe_stem.trim();
+    if safe_stem.is_empty() {
+        format!("{sha256}.pdf")
+    } else {
+        format!("{sha256}-{safe_stem}.pdf")
+    }
+}
+
+/// Validate the PDF container without parsing the full document. The header
+/// must occur within the first 1 KB and the final EOF marker must be present in
+/// the last 8 KB, which catches renamed non-PDFs, empty files, and truncated
+/// downloads while keeping large files out of memory.
+fn validate_pdf_file(path: &Path) -> Result<(), AppError> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
+    if metadata.len() == 0 {
         return Err(AppError::validation(
-            "storageMode",
-            "Choose managed or external storage.",
+            "filePath",
+            "The selected PDF file is empty.",
         ));
     }
-    let path = Path::new(input.file_path.trim());
+    if metadata.len() > MAX_RESOURCE_PDF_BYTES {
+        return Err(AppError::validation(
+            "filePath",
+            "PDF size must be between 1 byte and 512 MB.",
+        ));
+    }
+    let mut file = fs::File::open(path)
+        .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
+    let header_length = PDF_HEADER_WINDOW_BYTES.min(metadata.len() as usize);
+    let mut header = vec![0_u8; header_length];
+    file.read_exact(&mut header)
+        .map_err(|error| AppError::file_operation("The PDF header could not be read", error))?;
+    if !header.windows(5).any(|window| window == b"%PDF-") {
+        return Err(AppError::validation(
+            "filePath",
+            "The selected file is not a valid PDF.",
+        ));
+    }
+    let tail_length = PDF_EOF_WINDOW_BYTES.min(metadata.len());
+    file.seek(SeekFrom::End(-(tail_length as i64)))
+        .map_err(|error| AppError::file_operation("The PDF footer could not be read", error))?;
+    let mut tail = vec![0_u8; tail_length as usize];
+    file.read_exact(&mut tail)
+        .map_err(|error| AppError::file_operation("The PDF footer could not be read", error))?;
+    if !tail.windows(5).any(|window| window == b"%%EOF") {
+        return Err(AppError::validation(
+            "filePath",
+            "The selected PDF is incomplete or corrupted.",
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_pdf_source(path: &Path) -> Result<(), AppError> {
     if !path.is_file() {
         return Err(AppError::validation(
             "filePath",
@@ -542,24 +625,48 @@ pub fn import_resource_file(
             "Only PDF files are supported.",
         ));
     }
-    let metadata = fs::metadata(path)
-        .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
-    if metadata.len() == 0 || metadata.len() > 512 * 1024 * 1024 {
+    validate_pdf_file(path)
+}
+
+pub fn import_resource_file(
+    connection: &mut Connection,
+    data_dir: &Path,
+    input: V2ResourceFileInput,
+    now: DateTime<Utc>,
+) -> Result<V2Resource, AppError> {
+    if !matches!(input.storage_mode.as_str(), "managed" | "external") {
         return Err(AppError::validation(
-            "filePath",
-            "PDF size must be between 1 byte and 512 MB.",
+            "storageMode",
+            "Choose managed or external storage.",
         ));
     }
-    let bytes = fs::read(path)
+    let path = Path::new(input.file_path.trim());
+    validate_pdf_source(path)?;
+    let metadata = fs::metadata(path)
         .map_err(|error| AppError::file_operation("The PDF could not be read", error))?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let sha256 = format!("{:x}", hasher.finalize());
+    let resource_exists: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM resources WHERE id = ?1)",
+            [input.resource_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::database("Resource could not be checked", error))?;
+    if resource_exists == 0 {
+        return Err(AppError::resource_not_found());
+    }
+    let sha256 = sha256_file(path)?;
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| AppError::validation("filePath", "The PDF file name is invalid."))?
         .to_owned();
+    if file_name.chars().count() > 260 {
+        return Err(AppError::validation(
+            "filePath",
+            "The PDF file name must be 260 characters or fewer.",
+        ));
+    }
+    let mut created_managed_file = None;
     let (file_path, normalized, size_bytes) = if input.storage_mode == "managed" {
         let directory = data_dir
             .join("resources")
@@ -567,20 +674,27 @@ pub fn import_resource_file(
         fs::create_dir_all(&directory).map_err(|error| {
             AppError::v2_file_operation("The managed resource folder could not be created", error)
         })?;
-        let destination = directory.join(format!("{sha256}-{file_name}"));
+        let destination = directory.join(managed_pdf_file_name(&sha256, &file_name));
         if !destination.exists() {
-            fs::copy(path, &destination).map_err(|error| {
-                AppError::v2_file_operation("The managed PDF copy could not be created", error)
-            })?;
+            if let Err(error) = fs::copy(path, &destination) {
+                let _ = fs::remove_file(&destination);
+                return Err(AppError::v2_file_operation(
+                    "The managed PDF copy could not be created",
+                    error,
+                ));
+            }
+            created_managed_file = Some(destination.clone());
         }
-        let copied = fs::read(&destination).map_err(|error| {
-            AppError::file_operation("The managed PDF could not be verified", error)
-        })?;
-        let mut copied_hasher = Sha256::new();
-        copied_hasher.update(&copied);
-        if format!("{:x}", copied_hasher.finalize()) != sha256
-            || copied.len() as u64 != metadata.len()
-        {
+        let copied_hash = sha256_file(&destination)?;
+        let copied_size = fs::metadata(&destination)
+            .map_err(|error| {
+                AppError::file_operation("The managed PDF could not be verified", error)
+            })?
+            .len();
+        if copied_hash != sha256 || copied_size != metadata.len() {
+            if created_managed_file.is_some() {
+                let _ = fs::remove_file(&destination);
+            }
             return Err(AppError::file_operation(
                 "The managed PDF copy did not match the source file",
                 "checksum mismatch",
@@ -589,7 +703,7 @@ pub fn import_resource_file(
         (
             destination.display().to_string(),
             destination.to_string_lossy().to_lowercase(),
-            copied.len() as i64,
+            copied_size as i64,
         )
     } else {
         let canonical = path.canonicalize().map_err(|error| {
@@ -601,94 +715,111 @@ pub fn import_resource_file(
     };
     let now_text = now.to_rfc3339_opts(SecondsFormat::Millis, true);
 
-    let transaction = connection.transaction().map_err(|error| {
-        AppError::database("The resource file transaction could not start", error)
-    })?;
-    let exists: i64 = transaction
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM resources WHERE id = ?1)",
-            [input.resource_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| AppError::database("Resource could not be checked", error))?;
-    if exists == 0 {
-        return Err(AppError::resource_not_found());
+    let mut previous_for_cleanup = None;
+    let save_result: Result<(), AppError> = (|| {
+        let transaction = connection.transaction().map_err(|error| {
+            AppError::database("The resource file transaction could not start", error)
+        })?;
+        let exists: i64 = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM resources WHERE id = ?1)",
+                [input.resource_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::database("Resource could not be checked", error))?;
+        if exists == 0 {
+            return Err(AppError::resource_not_found());
+        }
+        let previous: Option<(String, String, String, i64, String)> = transaction
+            .query_row(
+                "SELECT file_name, file_path, sha256, size_bytes, storage_mode
+                 FROM resource_files WHERE resource_id = ?1",
+                [input.resource_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| {
+                AppError::database("Existing resource file could not be read", error)
+            })?;
+        previous_for_cleanup = previous.clone();
+        transaction
+            .execute(
+                "INSERT INTO resource_files (
+                    resource_id, file_name, file_path, file_path_normalized, sha256, size_bytes,
+                    storage_mode, status, imported_at, last_verified_at, missing_since, notes,
+                    updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ok', ?8, ?8, NULL, '', ?8)
+                 ON CONFLICT(resource_id) DO UPDATE SET
+                    file_name = excluded.file_name,
+                    file_path = excluded.file_path,
+                    file_path_normalized = excluded.file_path_normalized,
+                    sha256 = excluded.sha256,
+                    size_bytes = excluded.size_bytes,
+                    storage_mode = excluded.storage_mode,
+                    status = 'ok',
+                    imported_at = excluded.imported_at,
+                    last_verified_at = excluded.last_verified_at,
+                    missing_since = NULL,
+                    updated_at = excluded.updated_at",
+                params![
+                    input.resource_id,
+                    file_name,
+                    file_path,
+                    normalized,
+                    sha256,
+                    size_bytes,
+                    input.storage_mode,
+                    now_text,
+                ],
+            )
+            .map_err(|error| {
+                AppError::database("Resource PDF metadata could not be saved", error)
+            })?;
+        let action = match &previous {
+            None => "import",
+            Some((_, old_path, _, _, _)) if !Path::new(old_path).is_file() => "relink",
+            Some(_) => "replace",
+        };
+        transaction
+            .execute(
+                "INSERT INTO resource_file_history (
+                    resource_id, file_name, file_path, sha256, size_bytes, storage_mode,
+                    action, occurred_at, notes
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '')",
+                params![
+                    input.resource_id,
+                    file_name,
+                    file_path,
+                    sha256,
+                    size_bytes,
+                    input.storage_mode,
+                    action,
+                    now_text,
+                ],
+            )
+            .map_err(|error| {
+                AppError::database("Resource file history could not be saved", error)
+            })?;
+        transaction.commit().map_err(|error| {
+            AppError::database("Resource PDF metadata could not be committed", error)
+        })?;
+        Ok(())
+    })();
+    if let Err(error) = save_result {
+        if let Some(created) = created_managed_file {
+            let _ = fs::remove_file(created);
+        }
+        return Err(error);
     }
-    let previous: Option<(String, String, String, i64, String)> = transaction
-        .query_row(
-            "SELECT file_name, file_path, sha256, size_bytes, storage_mode
-             FROM resource_files WHERE resource_id = ?1",
-            [input.resource_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|error| AppError::database("Existing resource file could not be read", error))?;
-    transaction
-        .execute(
-            "INSERT INTO resource_files (
-                resource_id, file_name, file_path, file_path_normalized, sha256, size_bytes,
-                storage_mode, status, imported_at, last_verified_at, missing_since, notes,
-                updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ok', ?8, ?8, NULL, '', ?8)
-             ON CONFLICT(resource_id) DO UPDATE SET
-                file_name = excluded.file_name,
-                file_path = excluded.file_path,
-                file_path_normalized = excluded.file_path_normalized,
-                sha256 = excluded.sha256,
-                size_bytes = excluded.size_bytes,
-                storage_mode = excluded.storage_mode,
-                status = 'ok',
-                imported_at = excluded.imported_at,
-                last_verified_at = excluded.last_verified_at,
-                missing_since = NULL,
-                updated_at = excluded.updated_at",
-            params![
-                input.resource_id,
-                file_name,
-                file_path,
-                normalized,
-                sha256,
-                size_bytes,
-                input.storage_mode,
-                now_text,
-            ],
-        )
-        .map_err(|error| AppError::database("Resource PDF metadata could not be saved", error))?;
-    let action = match &previous {
-        None => "import",
-        Some((_, old_path, _, _, _)) if !Path::new(old_path).is_file() => "relink",
-        Some(_) => "replace",
-    };
-    transaction
-        .execute(
-            "INSERT INTO resource_file_history (
-                resource_id, file_name, file_path, sha256, size_bytes, storage_mode,
-                action, occurred_at, notes
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '')",
-            params![
-                input.resource_id,
-                file_name,
-                file_path,
-                sha256,
-                size_bytes,
-                input.storage_mode,
-                action,
-                now_text,
-            ],
-        )
-        .map_err(|error| AppError::database("Resource file history could not be saved", error))?;
-    transaction.commit().map_err(|error| {
-        AppError::database("Resource PDF metadata could not be committed", error)
-    })?;
-    if let Some((_, old_path, _, _, old_mode)) = previous
+    if let Some((_, old_path, _, _, old_mode)) = previous_for_cleanup
         && old_mode == "managed"
         && old_path != file_path
         && let Some(old_file) = managed_file_for_deletion(data_dir, &old_path)
@@ -766,6 +897,93 @@ pub fn remove_resource_file(
     {
         let _ = fs::remove_file(managed_file);
     }
+    get_resource(connection, resource_id)
+}
+
+/// Resolve a managed PDF path for opening. Only files that are still inside
+/// the application's managed resources folder are accepted; no frontend path is
+/// trusted or returned across IPC.
+pub fn managed_file_path_for_open(
+    connection: &Connection,
+    data_dir: &Path,
+    resource_id: i64,
+) -> Result<std::path::PathBuf, AppError> {
+    let file: Option<(String, String, i64)> = connection
+        .query_row(
+            "SELECT file_path, storage_mode, size_bytes
+             FROM resource_files WHERE resource_id = ?1",
+            [resource_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| AppError::database("Resource file could not be read", error))?;
+    let Some((file_path, storage_mode, size_bytes)) = file else {
+        return Err(AppError::validation(
+            "resourceId",
+            "This resource does not have an imported PDF.",
+        ));
+    };
+    if storage_mode != "managed" {
+        return Err(AppError::validation(
+            "resourceId",
+            "Only imported managed PDFs can be opened from the resource library.",
+        ));
+    }
+    let managed_root = data_dir.join("resources").canonicalize().map_err(|error| {
+        AppError::v2_file_operation("The managed resource folder could not be accessed", error)
+    })?;
+    let candidate = Path::new(&file_path).canonicalize().map_err(|error| {
+        AppError::file_operation(
+            "The imported PDF is missing. Relink or replace the local copy.",
+            error,
+        )
+    })?;
+    if !candidate.is_file() || !candidate.starts_with(&managed_root) {
+        return Err(AppError::validation(
+            "resourceId",
+            "The imported PDF is outside the application's managed resource storage.",
+        ));
+    }
+    let metadata = fs::metadata(&candidate)
+        .map_err(|error| AppError::file_operation("The imported PDF could not be read", error))?;
+    if metadata.len() as i64 != size_bytes {
+        return Err(AppError::file_operation(
+            "The imported PDF has changed size. Relink or replace the local copy.",
+            "size mismatch",
+        ));
+    }
+    Ok(candidate)
+}
+
+pub fn mark_resource_opened(
+    connection: &mut Connection,
+    resource_id: i64,
+    now: DateTime<Utc>,
+) -> Result<V2Resource, AppError> {
+    let exists: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM resources WHERE id = ?1)",
+            [resource_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::database("Resource could not be checked", error))?;
+    if exists == 0 {
+        return Err(AppError::resource_not_found());
+    }
+    let now_text = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+    connection
+        .execute(
+            "INSERT INTO resource_progress (
+                resource_id, study_status, personal_notes, last_opened_at, updated_at
+             ) VALUES (?1, 'not_started', '', ?2, ?2)
+             ON CONFLICT(resource_id) DO UPDATE SET
+                last_opened_at = excluded.last_opened_at,
+                updated_at = excluded.updated_at",
+            params![resource_id, now_text],
+        )
+        .map_err(|error| {
+            AppError::database("Resource opened timestamp could not be saved", error)
+        })?;
     get_resource(connection, resource_id)
 }
 
@@ -1009,6 +1227,52 @@ mod tests {
             + chrono::Duration::seconds(seconds)
     }
 
+    fn pdf_bytes(body: &str) -> Vec<u8> {
+        format!("%PDF-1.4\n{body}\n%%EOF\n").into_bytes()
+    }
+
+    fn new_resource(state: &V2State, title: &str) -> V2Resource {
+        state
+            .with_connection(|connection| {
+                save_resource(
+                    connection,
+                    V2ResourceInput {
+                        id: None,
+                        title: title.to_owned(),
+                        description: String::new(),
+                        subject_area: String::new(),
+                        url: None,
+                        resource_type: "book".to_owned(),
+                        source: "Local PDF".to_owned(),
+                        concept_ids: Vec::new(),
+                        exam_links: Vec::new(),
+                    },
+                    at(0),
+                )
+            })
+            .expect("resource")
+    }
+
+    fn import_managed(
+        state: &V2State,
+        resource_id: i64,
+        path: &Path,
+    ) -> Result<V2Resource, AppError> {
+        let data_dir = state.data_directory().expect("data dir");
+        state.with_connection(|connection| {
+            import_resource_file(
+                connection,
+                &data_dir,
+                V2ResourceFileInput {
+                    resource_id,
+                    file_path: path.display().to_string(),
+                    storage_mode: "managed".to_owned(),
+                },
+                at(1),
+            )
+        })
+    }
+
     fn concept_id(state: &V2State) -> i64 {
         state
             .with_connection(|connection| {
@@ -1074,7 +1338,7 @@ mod tests {
             .suffix(".pdf")
             .tempfile()
             .expect("pdf");
-        fs::write(pdf.path(), b"%PDF-1.4\ntest resource\n").expect("write pdf");
+        fs::write(pdf.path(), pdf_bytes("test resource")).expect("write pdf");
         let data_dir = state.data_directory().expect("data dir");
         let with_file = state
             .with_connection(|connection| {
@@ -1164,7 +1428,7 @@ mod tests {
             .suffix(".pdf")
             .tempfile()
             .expect("source pdf");
-        fs::write(source.path(), b"%PDF-1.4\nmanaged source\n").expect("source");
+        fs::write(source.path(), pdf_bytes("managed source")).expect("source");
 
         let imported = state
             .with_connection(|connection| {
@@ -1206,7 +1470,7 @@ mod tests {
             .suffix(".pdf")
             .tempfile()
             .expect("replacement pdf");
-        fs::write(replacement.path(), b"%PDF-1.4\nreplacement source\n").expect("replacement");
+        fs::write(replacement.path(), pdf_bytes("replacement source")).expect("replacement");
         let relinked = state
             .with_connection(|connection| {
                 import_resource_file(
@@ -1326,12 +1590,12 @@ mod tests {
             })
             .expect("resource");
         let outside = data_dir.join("outside.pdf");
-        fs::write(&outside, b"%PDF-1.4\noutside managed guard\n").expect("outside pdf");
+        fs::write(&outside, pdf_bytes("outside managed guard")).expect("outside pdf");
         let source = tempfile::Builder::new()
             .suffix(".pdf")
             .tempfile()
             .expect("source pdf");
-        fs::write(source.path(), b"%PDF-1.4\nfirst managed\n").expect("source");
+        fs::write(source.path(), pdf_bytes("first managed")).expect("source");
         state
             .with_connection(|connection| {
                 import_resource_file(
@@ -1409,7 +1673,7 @@ mod tests {
             .suffix(".pdf")
             .tempfile()
             .expect("replacement pdf");
-        fs::write(replacement.path(), b"%PDF-1.4\nreplacement managed\n").expect("replacement");
+        fs::write(replacement.path(), pdf_bytes("replacement managed")).expect("replacement");
         let replaced = state
             .with_connection(|connection| {
                 import_resource_file(
@@ -1490,5 +1754,457 @@ mod tests {
             })
             .expect_err("invalid exam");
         assert_eq!(invalid_link.field, Some("examId"));
+    }
+
+    #[test]
+    fn pdf_validation_rejects_extension_signature_empty_truncated_and_oversized_files() {
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Validation");
+        let directory = tempfile::tempdir().expect("source directory");
+
+        let text_file = directory.path().join("notes.txt");
+        fs::write(&text_file, pdf_bytes("renamed text file")).expect("text file");
+        let wrong_extension =
+            import_managed(&state, resource.id, &text_file).expect_err("extension");
+        assert_eq!(wrong_extension.field, Some("filePath"));
+        assert!(wrong_extension.message.contains("Only PDF files"));
+
+        let fake_pdf = directory.path().join("fake.pdf");
+        fs::write(&fake_pdf, b"not a PDF").expect("fake pdf");
+        let fake = import_managed(&state, resource.id, &fake_pdf).expect_err("signature");
+        assert_eq!(fake.field, Some("filePath"));
+        assert!(fake.message.contains("not a valid PDF"));
+
+        let empty_pdf = directory.path().join("empty.pdf");
+        fs::write(&empty_pdf, []).expect("empty pdf");
+        let empty = import_managed(&state, resource.id, &empty_pdf).expect_err("empty");
+        assert!(empty.message.contains("empty"));
+
+        let truncated_pdf = directory.path().join("truncated.pdf");
+        fs::write(&truncated_pdf, b"%PDF-1.4\nmissing footer\n").expect("truncated pdf");
+        let truncated = import_managed(&state, resource.id, &truncated_pdf).expect_err("truncated");
+        assert!(truncated.message.contains("incomplete or corrupted"));
+
+        let oversized_pdf = directory.path().join("oversized.pdf");
+        let oversized = fs::File::create(&oversized_pdf).expect("oversized pdf");
+        oversized
+            .set_len(MAX_RESOURCE_PDF_BYTES + 1)
+            .expect("oversized length");
+        let large = import_managed(&state, resource.id, &oversized_pdf).expect_err("oversized");
+        assert!(large.message.contains("512 MB"));
+
+        let managed_dir = state
+            .data_directory()
+            .expect("data dir")
+            .join("resources")
+            .join(resource.id.to_string());
+        if managed_dir.exists() {
+            assert_eq!(
+                fs::read_dir(managed_dir)
+                    .expect("managed directory")
+                    .count(),
+                0
+            );
+        }
+        let file_rows: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM resource_files WHERE resource_id = ?1",
+                        [resource.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("invalid file count", error))
+            })
+            .expect("invalid file count");
+        assert_eq!(file_rows, 0);
+    }
+
+    #[test]
+    fn managed_folder_failure_does_not_create_file_metadata() {
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Folder failure");
+        let directory = tempfile::tempdir().expect("source directory");
+        let source = directory.path().join("notes.pdf");
+        fs::write(&source, pdf_bytes("folder failure")).expect("pdf");
+        let data_dir = state.data_directory().expect("data dir");
+        let resources_root = data_dir.join("resources");
+        fs::create_dir_all(&resources_root).expect("resources root");
+        fs::write(
+            resources_root.join(resource.id.to_string()),
+            b"not a directory",
+        )
+        .expect("blocking file");
+
+        let error = import_managed(&state, resource.id, &source).expect_err("folder failure");
+        assert_eq!(error.code, "file_operation_error");
+        let file_rows: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM resource_files WHERE resource_id = ?1",
+                        [resource.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("file count", error))
+            })
+            .expect("file count");
+        assert_eq!(file_rows, 0);
+        assert!(source.is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unreadable_pdf_is_rejected_without_creating_metadata() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Unreadable PDF");
+        let directory = tempfile::tempdir().expect("source directory");
+        let source = directory.path().join("locked.pdf");
+        fs::write(&source, pdf_bytes("locked content")).expect("pdf");
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&source)
+            .expect("lock file");
+
+        let error = import_managed(&state, resource.id, &source).expect_err("unreadable");
+        assert_eq!(error.code, "file_operation_error");
+        drop(lock);
+        let file_rows: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM resource_files WHERE resource_id = ?1",
+                        [resource.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("file count", error))
+            })
+            .expect("file count");
+        assert_eq!(file_rows, 0);
+    }
+
+    #[test]
+    fn managed_destination_names_are_bounded_and_sanitized() {
+        let sha = "a".repeat(64);
+        let long_name = format!("{}.pdf", "Very Long Physics Notes ".repeat(20));
+        let stored = managed_pdf_file_name(&sha, &long_name);
+        assert!(stored.len() <= 64 + 1 + 80 + 4);
+        assert!(stored.ends_with(".pdf"));
+
+        let unsafe_name = "Physics/Notes?<>|*.pdf";
+        let sanitized = managed_pdf_file_name(&sha, unsafe_name);
+        assert!(!sanitized.contains(['/', '?', '<', '>', '|', '*']));
+        assert!(sanitized.starts_with(&sha));
+        assert!(sanitized.ends_with(".pdf"));
+    }
+
+    #[test]
+    fn serialized_resource_files_do_not_expose_managed_paths() {
+        let serialized = serde_json::to_value(V2ResourceFile {
+            file_name: "notes.pdf".to_owned(),
+            file_path: "C:\\private\\resources\\1\\notes.pdf".to_owned(),
+            sha256: "a".repeat(64),
+            size_bytes: 120,
+            storage_mode: "managed".to_owned(),
+            status: "ok".to_owned(),
+            imported_at: "2026-11-04T10:00:00Z".to_owned(),
+            last_verified_at: Some("2026-11-04T10:00:00Z".to_owned()),
+            missing_since: None,
+        })
+        .expect("serialized resource file");
+        assert!(serialized.get("filePath").is_none());
+        assert_eq!(
+            serialized.get("fileName").and_then(|value| value.as_str()),
+            Some("notes.pdf")
+        );
+    }
+
+    #[test]
+    fn unicode_and_space_filenames_are_preserved_in_managed_storage() {
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Unicode PDF");
+        let source_directory = tempfile::tempdir().expect("source directory");
+        let file_name = "Physics Notes – Ω (Final).pdf";
+        let source = source_directory.path().join(file_name);
+        fs::write(&source, pdf_bytes("unicode content")).expect("unicode pdf");
+
+        let imported = import_managed(&state, resource.id, &source).expect("unicode import");
+        let file = imported.file.expect("file");
+        assert_eq!(file.file_name, file_name);
+        assert!(Path::new(&file.file_path).is_file());
+        assert!(
+            file.file_path
+                .split(['\\', '/'])
+                .any(|part| part.ends_with(file_name))
+        );
+        assert!(source.is_file());
+
+        let by_file_name = state
+            .with_connection(|connection| {
+                list_resources(
+                    connection,
+                    V2ResourceSearchFilter {
+                        query: Some("Ω".to_owned()),
+                        exam_code: None,
+                        include_archived: Some(true),
+                    },
+                )
+            })
+            .expect("search by filename");
+        assert!(by_file_name.iter().any(|item| item.id == resource.id));
+    }
+
+    #[test]
+    fn same_named_replacements_use_unique_paths_and_remove_the_old_managed_file() {
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Replacements");
+        let first_directory = tempfile::tempdir().expect("first directory");
+        let first = first_directory.path().join("notes.pdf");
+        fs::write(&first, pdf_bytes("first version")).expect("first pdf");
+        let first_result = import_managed(&state, resource.id, &first).expect("first import");
+        let first_path = first_result.file.expect("first file").file_path;
+
+        let second_directory = tempfile::tempdir().expect("second directory");
+        let second = second_directory.path().join("notes.pdf");
+        fs::write(&second, pdf_bytes("second version")).expect("second pdf");
+        let second_result = import_managed(&state, resource.id, &second).expect("second import");
+        let second_path = second_result.file.expect("second file").file_path;
+
+        assert_ne!(first_path, second_path);
+        assert!(!Path::new(&first_path).is_file());
+        assert!(Path::new(&second_path).is_file());
+        assert!(first.is_file());
+        assert!(second.is_file());
+    }
+
+    #[test]
+    fn duplicate_imports_do_not_duplicate_metadata_or_overwrite_the_managed_file() {
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Duplicate import");
+        let directory = tempfile::tempdir().expect("source directory");
+        let source = directory.path().join("notes.pdf");
+        fs::write(&source, pdf_bytes("duplicate content")).expect("pdf");
+
+        let first = import_managed(&state, resource.id, &source).expect("first import");
+        let first_path = first.file.expect("first file").file_path;
+        let second = import_managed(&state, resource.id, &source).expect("second import");
+        let second_path = second.file.expect("second file").file_path;
+
+        assert_eq!(first_path, second_path);
+        assert!(Path::new(&first_path).is_file());
+        let count: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM resource_files WHERE resource_id = ?1",
+                        [resource.id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("file count", error))
+            })
+            .expect("file count");
+        assert_eq!(count, 1);
+        let managed_dir = state
+            .data_directory()
+            .expect("data dir")
+            .join("resources")
+            .join(resource.id.to_string());
+        assert_eq!(
+            fs::read_dir(managed_dir)
+                .expect("managed directory")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn metadata_failure_removes_a_newly_copied_managed_file() {
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Metadata failure");
+        let directory = tempfile::tempdir().expect("source directory");
+        let source = directory.path().join("notes.pdf");
+        fs::write(&source, pdf_bytes("metadata failure cleanup")).expect("pdf");
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute_batch(
+                        "CREATE TRIGGER test_resource_file_insert_failure
+                         BEFORE INSERT ON resource_files
+                         BEGIN SELECT RAISE(ABORT,'forced metadata failure'); END;",
+                    )
+                    .map_err(|error| AppError::database("failure trigger", error))
+            })
+            .expect("failure trigger");
+
+        let error = import_managed(&state, resource.id, &source).expect_err("metadata failure");
+        assert_eq!(error.code, "database_error");
+
+        let managed_dir = state
+            .data_directory()
+            .expect("data dir")
+            .join("resources")
+            .join(resource.id.to_string());
+        if managed_dir.exists() {
+            assert_eq!(
+                fs::read_dir(managed_dir)
+                    .expect("managed directory")
+                    .count(),
+                0,
+                "failed metadata writes must not leave an orphaned PDF"
+            );
+        }
+        assert!(source.is_file());
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute_batch("DROP TRIGGER test_resource_file_insert_failure;")
+                    .map_err(|error| AppError::database("drop failure trigger", error))
+            })
+            .expect("drop trigger");
+        let retried = import_managed(&state, resource.id, &source).expect("retry import");
+        assert_eq!(retried.file.expect("file").status, "ok");
+    }
+
+    #[test]
+    fn managed_open_and_last_opened_metadata_are_validated() {
+        let (_root, state) = state();
+        let resource = new_resource(&state, "Open guard");
+        let directory = tempfile::tempdir().expect("source directory");
+        let source = directory.path().join("notes.pdf");
+        fs::write(&source, pdf_bytes("open content")).expect("pdf");
+        import_managed(&state, resource.id, &source).expect("import");
+        let data_dir = state.data_directory().expect("data dir");
+
+        let path = state
+            .with_connection(|connection| {
+                managed_file_path_for_open(connection, &data_dir, resource.id)
+            })
+            .expect("managed path");
+        assert!(path.is_file());
+        let managed_root = data_dir.join("resources").canonicalize().expect("root");
+        assert!(path.starts_with(managed_root));
+
+        let opened = state
+            .with_connection(|connection| mark_resource_opened(connection, resource.id, at(2)))
+            .expect("mark opened");
+        assert!(opened.progress.last_opened_at.is_some());
+
+        let outside = data_dir.join("outside.pdf");
+        fs::write(&outside, pdf_bytes("outside open guard")).expect("outside pdf");
+        let outside_size = fs::metadata(&outside).expect("outside metadata").len() as i64;
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "UPDATE resource_files
+                         SET file_path = ?1, file_path_normalized = ?2, size_bytes = ?3
+                         WHERE resource_id = ?4",
+                        rusqlite::params![
+                            outside.display().to_string(),
+                            outside.to_string_lossy().to_lowercase(),
+                            outside_size,
+                            resource.id
+                        ],
+                    )
+                    .map_err(|error| AppError::database("outside open path", error))
+            })
+            .expect("outside open path");
+        let outside_error = state
+            .with_connection(|connection| {
+                managed_file_path_for_open(connection, &data_dir, resource.id)
+            })
+            .expect_err("outside open");
+        assert!(outside_error.message.contains("outside the application's"));
+        assert!(outside.is_file());
+
+        let external_source = directory.path().join("external.pdf");
+        fs::write(&external_source, pdf_bytes("external content")).expect("external pdf");
+        state
+            .with_connection(|connection| {
+                import_resource_file(
+                    connection,
+                    &data_dir,
+                    V2ResourceFileInput {
+                        resource_id: resource.id,
+                        file_path: external_source.display().to_string(),
+                        storage_mode: "external".to_owned(),
+                    },
+                    at(3),
+                )
+            })
+            .expect("external import");
+        let external_error = state
+            .with_connection(|connection| {
+                managed_file_path_for_open(connection, &data_dir, resource.id)
+            })
+            .expect_err("external open");
+        assert!(
+            external_error
+                .message
+                .contains("Only imported managed PDFs")
+        );
+    }
+
+    #[test]
+    fn imported_pdf_survives_reopening_and_metadata_edits() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let data_directory = root.path().join("v2");
+        let source_directory = tempfile::tempdir().expect("source directory");
+        let source = source_directory.path().join("persistent notes.pdf");
+        fs::write(&source, pdf_bytes("persistent content")).expect("pdf");
+        let (resource_id, managed_path) = {
+            let state = V2State::initialize(&data_directory);
+            let resource = new_resource(&state, "Persistent PDF");
+            let imported = import_managed(&state, resource.id, &source).expect("import");
+            let managed_path = imported.file.expect("file").file_path;
+            let edited = state
+                .with_connection(|connection| {
+                    save_resource(
+                        connection,
+                        V2ResourceInput {
+                            id: Some(resource.id),
+                            title: "Renamed PDF".to_owned(),
+                            description: "Edited description".to_owned(),
+                            subject_area: "Optics".to_owned(),
+                            url: None,
+                            resource_type: "book".to_owned(),
+                            source: "Local PDF".to_owned(),
+                            concept_ids: Vec::new(),
+                            exam_links: Vec::new(),
+                        },
+                        at(2),
+                    )
+                })
+                .expect("metadata edit");
+            assert_eq!(edited.title, "Renamed PDF");
+            assert!(edited.file.as_ref().is_some_and(|file| file.status == "ok"));
+            (resource.id, managed_path)
+        };
+
+        let reopened = V2State::initialize(&data_directory);
+        let resources = reopened
+            .with_connection(|connection| {
+                list_resources(
+                    connection,
+                    V2ResourceSearchFilter {
+                        query: Some("Renamed PDF".to_owned()),
+                        exam_code: None,
+                        include_archived: Some(true),
+                    },
+                )
+            })
+            .expect("reopened resources");
+        let restored = resources
+            .iter()
+            .find(|item| item.id == resource_id)
+            .expect("restored resource");
+        assert_eq!(restored.description, "Edited description");
+        let file = restored.file.as_ref().expect("restored file");
+        assert_eq!(file.status, "ok");
+        assert_eq!(file.file_path, managed_path);
+        assert!(Path::new(&managed_path).is_file());
     }
 }

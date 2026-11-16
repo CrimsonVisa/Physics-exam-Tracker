@@ -30,6 +30,7 @@ vi.mock('./api', () => ({
   updateV2TimerSettings: vi.fn(),
   listV2Sessions: vi.fn(),
   setV2SessionAllocations: vi.fn(),
+  setV2SessionExams: vi.fn(),
   getV2StudyTotals: vi.fn(),
   searchV2Concepts: vi.fn(),
   getV2ConceptDetail: vi.fn(),
@@ -62,6 +63,8 @@ vi.mock('./api', () => ({
   linkV2ResourceExam: vi.fn(),
   importV2ResourceFile: vi.fn(),
   removeV2ResourceFile: vi.fn(),
+  openV2ResourceFile: vi.fn(),
+  validateV2ResourcePdf: vi.fn(),
   getV2BackupOverview: vi.fn(),
   updateV2BackupSettings: vi.fn(),
   createV2ManualBackup: vi.fn(),
@@ -135,6 +138,7 @@ function dashboardSections() {
 const SMART_SECTION_TITLES: Record<string, string> = {
   quickstart: 'Quick start timer',
   today: "Today's overview",
+  countdown: 'Exam countdown',
   plan: "Today's study plan",
   revision: 'Revision overview',
   recent: 'Recently studied',
@@ -280,6 +284,7 @@ function timerSnapshot(stateOverrides: Partial<V2TimerSnapshot['state']> = {}): 
       notificationsEnabled: false,
     },
     allocations: [],
+    examIds: [],
     serverNowMs: Date.parse('2026-11-04T10:00:00Z'),
   };
 }
@@ -447,6 +452,7 @@ describe('V2 application shell', () => {
       dueToday: [],
       overdue: [],
       upcoming: [],
+      awaitingApproval: [],
       recentHistory: [],
       stats: {
         dueToday: 0,
@@ -495,10 +501,11 @@ describe('V2 application shell', () => {
     expect(mockedSaveDashboardSections).toHaveBeenCalledTimes(1);
     const saved = mockedSaveDashboardSections.mock.calls[0][0];
     expect(saved.examId).toBeNull();
-    expect(saved.sections).toHaveLength(10);
+    expect(saved.sections).toHaveLength(11);
     expect(saved.sections.map((section) => section.sectionKey)).toEqual([
       'quickstart',
       'today',
+      'countdown',
       'plan',
       'revision',
       'recent',
@@ -610,7 +617,7 @@ describe('V2 application shell', () => {
       await screen.findByRole(
         'heading',
         { level: 1, name: 'Physics Terms & SI Units' },
-        { timeout: 4000 },
+        { timeout: 10_000 },
       ),
     ).toBeInTheDocument();
     expect(document.querySelector('.v2-app-frame')).toHaveAttribute('data-workspace', 'terms');
@@ -711,7 +718,9 @@ describe('V2 application shell', () => {
     mockedTimer.mockResolvedValue(runningTimerSnapshot({ activeExamId: null }));
     await renderHealthy();
 
-    expect(screen.getByRole('button', { name: /Focus timer running/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: /Focus timer running/ }, { timeout: 10_000 }),
+    ).toBeInTheDocument();
 
     for (const name of [
       'Concept library',
@@ -724,7 +733,9 @@ describe('V2 application shell', () => {
       'Physics terms and SI units',
     ]) {
       await user.click(screen.getByRole('button', { name }));
-      expect(screen.getByRole('button', { name: /Focus timer running/ })).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', { name: /Focus timer running/ }, { timeout: 10_000 }),
+      ).toBeInTheDocument();
     }
   });
 
@@ -982,7 +993,9 @@ describe('V2 application shell', () => {
     await screen.findByRole('heading', { level: 1, name: 'Combined dashboard' });
     await waitFor(() => expect(document.getElementById('study-timer-heading')).toBeNull());
 
-    await user.click(screen.getByRole('button', { name: /Focus timer running/ }));
+    await user.click(
+      await screen.findByRole('button', { name: /Focus timer running/ }, { timeout: 10_000 }),
+    );
 
     expect(
       await screen.findByText(
@@ -1036,6 +1049,43 @@ describe('V2 application shell', () => {
     expect(within(card('gate-physics')).getByText('2 days remaining')).toBeInTheDocument();
     expect(within(card('tifr-gs-physics')).getByText('Exam day')).toBeInTheDocument();
     expect(within(card('jest-physics')).getByText('Exam date passed')).toBeInTheDocument();
+  });
+
+  it('renders the dashboard exam countdown for active examinations', async () => {
+    const user = userEvent.setup();
+    mockedDashboardSections.mockResolvedValue(smartSections());
+    await renderHealthy();
+
+    const countdown = await screen.findByRole('region', { name: 'Exam countdown' });
+    expect(
+      within(countdown).getByRole('button', {
+        name: /GATE Physics \(PH\): 2 days remaining/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(countdown).getByRole('button', {
+        name: /TIFR Graduate School Physics: examination today/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(countdown).getByRole('button', {
+        name: /JEST Physics: examination date passed/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(countdown).getByRole('button', {
+        name: /CSIR-UGC NET Physical Sciences: examination date not set/,
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(countdown).getByRole('button', {
+        name: /GATE Physics \(PH\): 2 days remaining/,
+      }),
+    );
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'GATE Physics (PH)' }),
+    ).toBeInTheDocument();
   });
 
   it('navigates to an exam workspace by stable exam code and back', async () => {

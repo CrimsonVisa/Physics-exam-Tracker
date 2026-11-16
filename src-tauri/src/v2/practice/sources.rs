@@ -2899,7 +2899,11 @@ mod tests {
 
     fn fake_pdf(root: &TempDir, name: &str, bytes: &[u8]) -> PathBuf {
         let path = root.path().join(name);
-        fs::write(&path, bytes).expect("fake pdf");
+        let mut content = bytes.to_vec();
+        if !content.windows(5).any(|window| window == b"%%EOF") {
+            content.extend_from_slice(b"\n%%EOF");
+        }
+        fs::write(&path, content).expect("fake pdf");
         path
     }
 
@@ -3031,7 +3035,7 @@ Q.4 This question has no extracted answer choices and should remain pending revi
         assert_eq!(first.source.verification_status, STATUS_ACQUIRED);
         assert!(first.source.resource_id.is_some());
         assert_eq!(first.source.sha256.as_ref().map(String::len), Some(64));
-        assert_eq!(first.source.size_bytes, Some(24));
+        assert_eq!(first.source.size_bytes, Some(30));
         assert_eq!(
             first.source.resource_file_name.as_deref(),
             Some("ph-2022.pdf")

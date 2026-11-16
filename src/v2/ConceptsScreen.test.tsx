@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { REVISIONS_CHANGED_EVENT } from '../lib/revisionEvents';
 import type {
   V2ConceptDetail,
   V2ConceptMasterySummary,
@@ -332,6 +333,8 @@ describe('V2 concept library', () => {
   it('reviews a proposed mapping without auto-approving it', async () => {
     const user = userEvent.setup();
     const proposed = mapping();
+    const revisionListener = vi.fn();
+    window.addEventListener(REVISIONS_CHANGED_EVENT, revisionListener);
     mockedDetail.mockResolvedValue(detail(concept(), { mappings: [proposed] }));
     mockedMappingUpdate.mockResolvedValue(
       detail(concept(), {
@@ -362,8 +365,12 @@ describe('V2 concept library', () => {
       }),
     );
     expect(
-      await screen.findByText('Mapping approved. It is now eligible for revision planning.'),
+      await screen.findByText(
+        'Mapping approved. It is now eligible for revision planning and any missing initial revision schedule has been created.',
+      ),
     ).toBeInTheDocument();
+    expect(revisionListener).toHaveBeenCalledTimes(1);
+    window.removeEventListener(REVISIONS_CHANGED_EVENT, revisionListener);
   });
 
   it('distinguishes missing evidence from low mastery', async () => {

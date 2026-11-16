@@ -413,23 +413,39 @@
 }
 
 .v2-reference-dialog {
-  width: min(920px, calc(100vw - 36px));
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
+  display: flex;
+  width: 100%;
+  max-width: 920px;
+  max-height: calc(100vh - var(--v2-dialog-gutter) - var(--v2-dialog-gutter));
+  max-height: calc(100dvh - var(--v2-dialog-gutter) - var(--v2-dialog-gutter));
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .v2-reference-editor {
-  display: grid;
-  gap: 18px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .v2-reference-editor-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding-bottom: 12px;
+  padding: 20px 22px 12px;
   border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.v2-reference-editor-body {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 18px;
+  min-height: 0;
+  padding: 18px 22px;
 }
 
 .v2-reference-editor-header h2 {
@@ -447,10 +463,15 @@
   grid-column: 1 / -1;
 }
 
-.v2-field-hint {
+.v2-field-hint,
+.v2-field > .v2-field-hint,
+.v2-checkbox-field > .v2-field-hint {
   color: var(--muted);
   font-size: 0.7rem;
+  font-weight: 400;
   line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .v2-field-error {
@@ -515,10 +536,13 @@
 
 .v2-reference-editor-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
-  padding-top: 4px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
 }
 
 @media (max-width: 860px) {
@@ -535,6 +559,19 @@
   .v2-reference-editor-grid,
   .v2-reference-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .v2-reference-editor-header {
+    padding: 16px 16px 10px;
+  }
+
+  .v2-reference-editor-body {
+    gap: 14px;
+    padding: 14px 16px;
+  }
+
+  .v2-reference-editor-actions {
+    padding: 12px 16px 14px;
   }
 
   .v2-reference-variable-row {

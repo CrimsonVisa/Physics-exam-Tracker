@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toCommandError } from '../../lib/commandError';
+import { emitStudySessionsChanged } from '../../lib/studyEvents';
 import { onTimerUpdated } from '../../lib/timerEvents';
 import { getV2Timer, heartbeatV2Timer, type V2TimerSnapshot } from '../api';
 import { TimerContext, type TimerContextValue } from './timerContext';
@@ -28,6 +29,7 @@ export function TimerProvider({ children }: TimerProviderProps) {
   const eventRefreshDrainingRef = useRef(false);
   const drainEventRefreshesRef = useRef<() => void>(() => undefined);
   const lastResumeRefreshRef = useRef<number | null>(null);
+  const lastNotifiedCompletedSessionIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -37,10 +39,16 @@ export function TimerProvider({ children }: TimerProviderProps) {
   }, []);
 
   const applySnapshot = useCallback((next: V2TimerSnapshot) => {
+    const completedSessionId = next.state.lastCompletedSessionId;
+    const previousCompletedSessionId = lastNotifiedCompletedSessionIdRef.current;
+    lastNotifiedCompletedSessionIdRef.current = completedSessionId;
     setSnapshot(next);
     setReceivedAt(monotonicNow());
     setClock(monotonicNow());
     setError(null);
+    if (completedSessionId !== null && completedSessionId !== previousCompletedSessionId) {
+      emitStudySessionsChanged();
+    }
   }, []);
 
   const enqueueOperation = useCallback(function enqueue<T>(

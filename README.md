@@ -3,21 +3,21 @@
 [![CI](https://github.com/CrimsonVisa/Physics-exam-Tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/CrimsonVisa/Physics-exam-Tracker/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-informational)](docs/DEVELOPMENT.md)
-[![Version: 2.0.0](https://img.shields.io/badge/version-2.0.0-informational)](CHANGELOG.md)
+[![Version: 2.1.0](https://img.shields.io/badge/version-2.1.0-informational)](CHANGELOG.md)
 
 Physics Tracker is a local-first Windows desktop study app for four physics entrance examinations.
 It keeps syllabus progress, focused study sessions, planning, practice, revision, reference
 material, notes, and analytics in one place.
 
 Use it to decide what to study next, record focused sessions, practise previous-year questions, and
-see which topics need another pass before the exam. The current application version is **2.0.0**.
+see which topics need another pass before the exam. The current application version is **2.1.0**.
 
 Physics Tracker is an independent study tool. It is not affiliated with or endorsed by any
 examination authority.
 
 ## Screenshots
 
-Genuine screenshots from Physics Tracker 2.0.0, captured with disposable demo data. The gallery uses
+Genuine screenshots from Physics Tracker, captured with disposable demo data. The gallery uses
 the dark theme.
 
 ![Physics Tracker combined dashboard showing the quick-start timer, recent study session, and four examination workspaces](docs/images/dashboard.png)
@@ -93,33 +93,33 @@ shared across the application.
 
 ## Download and install
 
-### v2.0.0 release
+### v2.1.0 release
 
-The v2.0.0 release is available through GitHub Releases:
+The v2.1.0 release is distributed through GitHub Releases:
 
-[GitHub Releases — Physics Tracker v2.0.0](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/tag/v2.0.0)
+[GitHub Releases — Physics Tracker v2.1.0](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/tag/v2.1.0)
 
 The release asset is the per-user NSIS installer:
 
-[Download Physics.Tracker_2.0.0_x64-setup.exe](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/download/v2.0.0/Physics.Tracker_2.0.0_x64-setup.exe)
+[Download Physics.Tracker_2.1.0_x64-setup.exe](https://github.com/CrimsonVisa/Physics-exam-Tracker/releases/download/v2.1.0/Physics.Tracker_2.1.0_x64-setup.exe)
 
 **SHA-256:**
 
 ```text
-A14816F743002C6BCF09CAC8F2203B9617B1609AC486E673AE741141D3FC4814
+15E0117D3C1161E5241ADC0FE43AF7638E34D8A6316BDCA3696605B83376429A
 ```
 
 After downloading, verify the file from PowerShell:
 
 ```powershell
-Get-FileHash ".\Physics.Tracker_2.0.0_x64-setup.exe" -Algorithm SHA256
+Get-FileHash ".\Physics.Tracker_2.1.0_x64-setup.exe" -Algorithm SHA256
 ```
 
 The reported hash must match the value above before you run the installer.
 
 ### Install
 
-1. Download `Physics.Tracker_2.0.0_x64-setup.exe` from the link above.
+1. Download `Physics.Tracker_2.1.0_x64-setup.exe` from the link above.
 2. Verify the SHA-256 checksum.
 3. Run the installer. It installs for the current Windows user and does not require administrator
    rights.
@@ -302,6 +302,7 @@ Do not use a live user database, personal study data, or exam PDFs during develo
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Release process](docs/RELEASE.md)
+- [v2.1.0 release notes](docs/releases/RELEASE_NOTES_2.1.0.md)
 - [v2.0.0 release notes](docs/releases/RELEASE_NOTES_2.0.0.md)
 - [Changelog](CHANGELOG.md)
 

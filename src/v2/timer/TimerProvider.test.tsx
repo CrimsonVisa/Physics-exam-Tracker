@@ -2,6 +2,7 @@ import { act, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { V2TimerSnapshot, V2TimerState } from '../api';
+import { onStudySessionsChanged } from '../../lib/studyEvents';
 import { emitTimerUpdated } from '../../lib/timerEvents';
 import { TimerProvider } from './TimerProvider';
 import { useV2Timer } from './timerContext';
@@ -69,6 +70,7 @@ function snapshot(state: Partial<V2TimerState> = {}): V2TimerSnapshot {
       notificationsEnabled: false,
     },
     allocations: [],
+    examIds: [],
     serverNowMs: Date.parse('2026-11-04T10:00:00Z'),
   };
 }
@@ -300,6 +302,75 @@ describe('TimerProvider', () => {
     expect(mockedHeartbeat).toHaveBeenCalledTimes(1);
     expect(result.current.snapshot?.state.status).toBe('idle');
     expect(result.current.snapshot?.state.lastEvent).toBe('completed');
+  });
+
+  it('announces a newly completed session for dashboard refresh', async () => {
+    mockedGetTimer.mockResolvedValue(
+      snapshot({ status: 'running', elapsedMs: 25 * 60_000, remainingMs: 0 }),
+    );
+    mockedHeartbeat.mockResolvedValue(
+      snapshot({
+        status: 'idle',
+        lastEvent: 'completed',
+        lastEventDurationMs: 25 * 60_000,
+        lastCompletedSessionId: 25,
+      }),
+    );
+    const listener = vi.fn();
+    const unsubscribe = onStudySessionsChanged(listener);
+
+    try {
+      renderHook(() => useV2Timer(), { wrapper });
+      await flushPromises();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('does not re-announce the same completed session after renders or refresh events', async () => {
+    mockedGetTimer.mockResolvedValueOnce(snapshot({ status: 'running' })).mockResolvedValue(
+      snapshot({
+        status: 'idle',
+        lastEvent: 'completed',
+        lastCompletedSessionId: 25,
+      }),
+    );
+    mockedHeartbeat.mockResolvedValue(
+      snapshot({
+        status: 'idle',
+        lastEvent: 'completed',
+        lastCompletedSessionId: 25,
+      }),
+    );
+    const listener = vi.fn();
+    const unsubscribe = onStudySessionsChanged(listener);
+
+    try {
+      const { result, rerender } = renderHook(() => useV2Timer(), { wrapper });
+      await flushPromises();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      rerender();
+      await act(async () => {
+        emitTimerUpdated();
+      });
+      await flushPromises();
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(result.current.snapshot?.state.lastCompletedSessionId).toBe(25);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('cleans up the clock interval, heartbeat and event listener on unmount', async () => {

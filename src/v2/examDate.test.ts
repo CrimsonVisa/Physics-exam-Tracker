@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { addDaysDateOnly } from '../lib/dateOnly';
 import { examDateDisplay } from './examDate';
 
 const TODAY = '2026-11-04';
@@ -46,6 +47,44 @@ describe('V2 exam date display', () => {
     expect(examDateDisplay('2026-02-30', TODAY)).toMatchObject({
       state: 'invalid',
       label: 'Invalid date',
+    });
+  });
+
+  it('classifies countdown urgency at the configured boundaries', () => {
+    const at = (days: number) => addDaysDateOnly(TODAY, days)!;
+
+    expect(examDateDisplay(at(31), TODAY)).toMatchObject({
+      urgency: 'far',
+      daysRemaining: 31,
+    });
+    expect(examDateDisplay(at(30), TODAY)).toMatchObject({
+      urgency: 'approaching',
+      daysRemaining: 30,
+    });
+    expect(examDateDisplay(at(8), TODAY)).toMatchObject({
+      urgency: 'approaching',
+      daysRemaining: 8,
+    });
+    expect(examDateDisplay(at(7), TODAY)).toMatchObject({
+      urgency: 'imminent',
+      daysRemaining: 7,
+    });
+    expect(examDateDisplay(TODAY, TODAY)).toMatchObject({
+      urgency: 'today',
+      daysRemaining: 0,
+    });
+    expect(examDateDisplay(at(-1), TODAY)).toMatchObject({
+      urgency: 'passed',
+      daysRemaining: null,
+      daysSinceExam: 1,
+    });
+  });
+
+  it('uses calendar days across a daylight-saving transition', () => {
+    expect(examDateDisplay('2026-03-30', '2026-03-28')).toMatchObject({
+      state: 'upcoming',
+      daysRemaining: 2,
+      label: '2 days remaining',
     });
   });
 });

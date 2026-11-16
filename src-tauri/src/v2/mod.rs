@@ -11,7 +11,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{app_paths::V2_APP_IDENTIFIER, error::AppError};
+use crate::{app_paths, error::AppError};
 
 pub mod admin;
 pub mod analytics;
@@ -56,7 +56,7 @@ pub use commands::{
     v2_list_pyq_answer_keys, v2_list_pyq_attempts, v2_list_pyq_extraction_candidates,
     v2_list_pyq_questions, v2_list_pyq_sources, v2_list_question_mock_candidates,
     v2_list_quick_start_configs, v2_list_resources, v2_list_sessions, v2_list_sticky_notes,
-    v2_move_revision_plan_item, v2_pause_timer, v2_preview_exam_date_change,
+    v2_move_revision_plan_item, v2_open_resource_file, v2_pause_timer, v2_preview_exam_date_change,
     v2_preview_pyq_answer_key, v2_preview_pyq_import, v2_preview_restore_backup,
     v2_rebalance_revision_daily_plan, v2_reconcile_pyq_source, v2_record_pyq_attempt,
     v2_reject_pyq_extraction_candidate, v2_remove_resource_file, v2_replay_concept_mastery,
@@ -68,12 +68,13 @@ pub use commands::{
     v2_save_quick_start_config, v2_save_resource, v2_save_sticky_note, v2_save_task,
     v2_schedule_revision_concept, v2_search_concepts, v2_set_block_status, v2_set_exam_active,
     v2_set_flashcard_archived, v2_set_mock_test_status, v2_set_pyq_source_status,
-    v2_set_revision_status, v2_set_session_allocations, v2_set_task_status,
+    v2_set_revision_status, v2_set_session_allocations, v2_set_session_exams, v2_set_task_status,
     v2_set_timer_allocations, v2_start_question_mock, v2_start_timer, v2_submit_question_mock,
     v2_update_app_settings, v2_update_backup_settings, v2_update_concept_mapping,
     v2_update_concept_mastery, v2_update_pyq_extraction_candidate, v2_update_resource_progress,
     v2_update_revision_settings, v2_update_study_session, v2_update_syllabus_node_progress,
-    v2_update_timer_settings, v2_verify_mastery_run, v2_verify_pyq_extraction_candidate,
+    v2_update_timer_settings, v2_validate_resource_pdf, v2_verify_mastery_run,
+    v2_verify_pyq_extraction_candidate,
 };
 
 pub const V2_DATABASE_FILE_NAME: &str = "physics-tracker.sqlite3";
@@ -269,6 +270,7 @@ impl V2State {
         }
     }
 
+    #[cfg(test)]
     pub fn unavailable(error: AppError) -> Self {
         Self {
             database: Mutex::new(Err(error)),
@@ -404,7 +406,7 @@ impl V2State {
     pub fn status(&self) -> V2DatabaseStatus {
         let mut status = V2DatabaseStatus {
             state: V2DatabaseState::NotInitialized,
-            app_identifier: V2_APP_IDENTIFIER.to_owned(),
+            app_identifier: app_paths::active_v2_identifier().to_owned(),
             data_dir: self
                 .data_dir
                 .as_ref()

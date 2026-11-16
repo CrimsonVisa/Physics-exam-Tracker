@@ -57,9 +57,9 @@ use crate::{
             V2RevisionSettingsInput, V2RevisionStatusInput,
         },
         study::{
-            V2CreateManualSessionInput, V2SetSessionAllocationsInput, V2SetTimerAllocationsInput,
-            V2StartTimerInput, V2StudySession, V2StudyTotals, V2TimerSettingsInput,
-            V2TimerSnapshot, V2UpdateSessionInput,
+            TimerActionOutcome, V2CreateManualSessionInput, V2SetSessionAllocationsInput,
+            V2SetSessionExamsInput, V2SetTimerAllocationsInput, V2StartTimerInput, V2StudySession,
+            V2StudyTotals, V2TimerSettingsInput, V2TimerSnapshot, V2UpdateSessionInput,
         },
         syllabus::{V2ExamSyllabus, V2SyllabusExamInput, V2SyllabusProgressInput},
     },
@@ -78,6 +78,25 @@ where
     .map_err(|_| {
         AppError::internal(
             "The V2 database operation ended unexpectedly. Restart the app and try again.",
+        )
+    })?
+}
+
+async fn run_timer_action<F>(app: AppHandle, operation: F) -> Result<V2TimerSnapshot, AppError>
+where
+    F: FnOnce(&V2State) -> Result<TimerActionOutcome, AppError> + Send + 'static,
+{
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<V2State>();
+        let outcome = operation(state.inner())?;
+        super::study::notify_timer_completion(&worker_app, state.inner(), outcome.completion);
+        Ok(outcome.snapshot)
+    })
+    .await
+    .map_err(|_| {
+        AppError::internal(
+            "The V2 timer operation ended unexpectedly. Restart the app and try again.",
         )
     })?
 }
@@ -124,8 +143,10 @@ pub async fn v2_check_integrity(app: AppHandle, full: bool) -> Result<V2Integrit
 
 #[tauri::command]
 pub async fn v2_get_timer(app: AppHandle) -> Result<V2TimerSnapshot, AppError> {
-    run_blocking(app, |state| {
-        state.with_connection(|connection| super::study::get_timer(connection, Utc::now()))
+    run_timer_action(app, |state| {
+        state.with_connection(|connection| {
+            super::study::get_timer_with_completion(connection, Utc::now())
+        })
     })
     .await
 }
@@ -135,8 +156,10 @@ pub async fn v2_start_timer(
     app: AppHandle,
     input: V2StartTimerInput,
 ) -> Result<V2TimerSnapshot, AppError> {
-    run_blocking(app, move |state| {
-        state.with_connection(|connection| super::study::start_timer(connection, Utc::now(), input))
+    run_timer_action(app, move |state| {
+        state.with_connection(|connection| {
+            super::study::start_timer_with_completion(connection, Utc::now(), input)
+        })
     })
     .await
 }
@@ -146,9 +169,9 @@ pub async fn v2_set_timer_allocations(
     app: AppHandle,
     input: V2SetTimerAllocationsInput,
 ) -> Result<V2TimerSnapshot, AppError> {
-    run_blocking(app, move |state| {
+    run_timer_action(app, move |state| {
         state.with_connection(|connection| {
-            super::study::set_timer_allocations(connection, input, Utc::now())
+            super::study::set_timer_allocations_with_completion(connection, input, Utc::now())
         })
     })
     .await
@@ -156,24 +179,30 @@ pub async fn v2_set_timer_allocations(
 
 #[tauri::command]
 pub async fn v2_pause_timer(app: AppHandle) -> Result<V2TimerSnapshot, AppError> {
-    run_blocking(app, |state| {
-        state.with_connection(|connection| super::study::pause_timer(connection, Utc::now()))
+    run_timer_action(app, |state| {
+        state.with_connection(|connection| {
+            super::study::pause_timer_with_completion(connection, Utc::now())
+        })
     })
     .await
 }
 
 #[tauri::command]
 pub async fn v2_resume_timer(app: AppHandle) -> Result<V2TimerSnapshot, AppError> {
-    run_blocking(app, |state| {
-        state.with_connection(|connection| super::study::resume_timer(connection, Utc::now()))
+    run_timer_action(app, |state| {
+        state.with_connection(|connection| {
+            super::study::resume_timer_with_completion(connection, Utc::now())
+        })
     })
     .await
 }
 
 #[tauri::command]
 pub async fn v2_finish_timer(app: AppHandle) -> Result<V2TimerSnapshot, AppError> {
-    run_blocking(app, |state| {
-        state.with_connection(|connection| super::study::finish_timer(connection, Utc::now()))
+    run_timer_action(app, |state| {
+        state.with_connection(|connection| {
+            super::study::finish_timer_with_completion(connection, Utc::now())
+        })
     })
     .await
 }
@@ -188,8 +217,10 @@ pub async fn v2_discard_timer(app: AppHandle) -> Result<V2TimerSnapshot, AppErro
 
 #[tauri::command]
 pub async fn v2_heartbeat_timer(app: AppHandle) -> Result<V2TimerSnapshot, AppError> {
-    run_blocking(app, |state| {
-        state.with_connection(|connection| super::study::heartbeat_timer(connection, Utc::now()))
+    run_timer_action(app, |state| {
+        state.with_connection(|connection| {
+            super::study::heartbeat_timer_with_completion(connection, Utc::now())
+        })
     })
     .await
 }
@@ -223,6 +254,19 @@ pub async fn v2_set_session_allocations(
     run_blocking(app, move |state| {
         state.with_connection(|connection| {
             super::study::set_session_allocations(connection, input, Utc::now())
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn v2_set_session_exams(
+    app: AppHandle,
+    input: V2SetSessionExamsInput,
+) -> Result<V2StudySession, AppError> {
+    run_blocking(app, move |state| {
+        state.with_connection(|connection| {
+            super::study::set_session_exams(connection, input, Utc::now())
         })
     })
     .await
@@ -265,7 +309,12 @@ pub async fn v2_update_concept_mapping(
 ) -> Result<V2ConceptDetail, AppError> {
     run_blocking(app, move |state| {
         state.with_connection(|connection| {
-            super::concepts::update_mapping(connection, input, Utc::now())
+            super::concepts::update_mapping(
+                connection,
+                input,
+                Local::now().date_naive(),
+                Utc::now(),
+            )
         })
     })
     .await
@@ -588,6 +637,14 @@ pub async fn v2_link_resource_exam(
 }
 
 #[tauri::command]
+pub async fn v2_validate_resource_pdf(app: AppHandle, file_path: String) -> Result<(), AppError> {
+    run_blocking(app, move |_state| {
+        super::resources::validate_pdf_source(std::path::Path::new(file_path.trim()))
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn v2_import_resource_file(
     app: AppHandle,
     input: V2ResourceFileInput,
@@ -617,6 +674,37 @@ pub async fn v2_remove_resource_file(
         })
     })
     .await
+}
+
+#[tauri::command]
+pub async fn v2_open_resource_file(app: AppHandle, resource_id: i64) -> Result<(), AppError> {
+    let worker_app = app.clone();
+    let path = run_blocking(app, move |state| {
+        let data_dir = state.data_directory().ok_or_else(|| {
+            AppError::database_unavailable("The V2 data directory is unavailable.")
+        })?;
+        state.with_connection(|connection| {
+            super::resources::managed_file_path_for_open(connection, &data_dir, resource_id)
+        })
+    })
+    .await?;
+
+    use tauri_plugin_opener::OpenerExt;
+    worker_app
+        .opener()
+        .open_path(path.to_string_lossy().into_owned(), None::<String>)
+        .map_err(|error| AppError::file_operation("The imported PDF could not be opened", error))?;
+
+    if let Err(error) = run_blocking(worker_app, move |state| {
+        state.with_connection(|connection| {
+            super::resources::mark_resource_opened(connection, resource_id, Utc::now()).map(|_| ())
+        })
+    })
+    .await
+    {
+        eprintln!("Resource last-opened timestamp could not be saved: {error:?}");
+    }
+    Ok(())
 }
 
 #[tauri::command]

@@ -3309,7 +3309,7 @@ mod tests {
             serde_json::from_slice(&bytes).expect("JSON should parse");
         assert_eq!(envelope.format_version, 4);
         assert_eq!(envelope.schema_version, 12);
-        assert_eq!(envelope.application_version, "2.0.0");
+        assert_eq!(envelope.application_version, "2.1.0");
         assert_eq!(envelope.import_batch_id.as_deref().map(str::len), Some(32));
         assert_eq!(envelope.tables.keys().count(), 27);
         assert_eq!(envelope.record_counts["study_sessions"], 1);

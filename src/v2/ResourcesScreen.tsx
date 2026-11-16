@@ -1,14 +1,17 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { toCommandError } from '../lib/commandError';
+import { MathText } from './MathText';
 import {
   archiveV2Resource,
   importV2ResourceFile,
   linkV2ResourceExam,
   listV2Resources,
+  openV2ResourceFile,
   removeV2ResourceFile,
   saveV2Resource,
   updateV2ResourceProgress,
+  validateV2ResourcePdf,
   type V2ExamSummary,
   type V2Resource,
 } from './api';
@@ -17,6 +20,12 @@ type ResourcesScreenProps = {
   exams: V2ExamSummary[];
   initialQuery?: string | null;
 };
+
+function titleFromPdfPath(filePath: string): string {
+  const fileName = filePath.split(/[\\/]/).pop() ?? '';
+  const title = fileName.replace(/\.pdf$/i, '').trim();
+  return (title || 'Imported PDF').slice(0, 300);
+}
 
 export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenProps) {
   const [resources, setResources] = useState<V2Resource[]>([]);
@@ -31,8 +40,17 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [importingPdf, setImportingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  function resetResourceForm() {
+    setTitle('');
+    setUrl('');
+    setSubjectArea('');
+    setSource('');
+    setDescription('');
+  }
 
   const load = useCallback(async (search: string) => {
     try {
@@ -74,11 +92,7 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
         conceptIds: [],
         examLinks: [],
       });
-      setTitle('');
-      setUrl('');
-      setSubjectArea('');
-      setSource('');
-      setDescription('');
+      resetResourceForm();
       await load(query);
       setNotice('Resource saved.');
     } catch (saveError) {
@@ -168,9 +182,96 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
     }
   }
 
+  async function importPdf() {
+    setImportingPdf(true);
+    setError(null);
+    setNotice(null);
+    let selected: string | string[] | null;
+    try {
+      selected = await open({
+        multiple: false,
+        directory: false,
+        title: 'Import PDF',
+        filters: [{ name: 'PDF documents', extensions: ['pdf'] }],
+      });
+    } catch (pickerError) {
+      setError(toCommandError(pickerError).message);
+      setImportingPdf(false);
+      return;
+    }
+    if (typeof selected !== 'string') {
+      setImportingPdf(false);
+      return;
+    }
+
+    const fallbackTitle = titleFromPdfPath(selected);
+    setBusy(true);
+    try {
+      try {
+        await validateV2ResourcePdf(selected);
+      } catch (validationError) {
+        setError(`The PDF could not be imported: ${toCommandError(validationError).message}`);
+        return;
+      }
+      const saved = await saveV2Resource({
+        title: title.trim() || fallbackTitle,
+        description,
+        subjectArea,
+        url: url.trim() || null,
+        resourceType: resourceType === 'website' ? 'book' : resourceType,
+        source: source.trim() || 'Local PDF',
+        conceptIds: [],
+        examLinks: [],
+      });
+      resetResourceForm();
+      try {
+        const imported = await importV2ResourceFile({
+          resourceId: saved.id,
+          filePath: selected,
+        });
+        await load(query);
+        setNotice(
+          `Imported ${imported.file?.fileName ?? fallbackTitle} into managed PDF storage. The original file was not changed.`,
+        );
+      } catch (importError) {
+        await load(query);
+        setError(
+          `The PDF could not be imported: ${toCommandError(importError).message} The resource entry was saved without a PDF; use Attach PDF to retry.`,
+        );
+      }
+    } catch (saveError) {
+      setError(toCommandError(saveError).message);
+    } finally {
+      setImportingPdf(false);
+      setBusy(false);
+    }
+  }
+
+  async function openPdf(resource: V2Resource) {
+    if (
+      !resource.file ||
+      resource.file.storageMode !== 'managed' ||
+      resource.file.status !== 'ok'
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await openV2ResourceFile(resource.id);
+      setNotice(`Opened ${resource.file.fileName} in the default PDF viewer.`);
+    } catch (openError) {
+      setError(toCommandError(openError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function attachPdf(resource: V2Resource) {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const selected = await open({
         multiple: false,
@@ -196,6 +297,7 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
   async function removePdf(resource: V2Resource) {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const updated = await removeV2ResourceFile(resource.id);
       setResources((current) => current.map((item) => (item.id === updated.id ? updated : item)));
@@ -245,6 +347,27 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
           Search
         </button>
       </form>
+
+      <section className="v2-concept-card" aria-labelledby="import-pdf-heading">
+        <div className="v2-section-heading">
+          <div>
+            <p className="eyebrow">Local files</p>
+            <h2 id="import-pdf-heading">Import a PDF</h2>
+          </div>
+          <button
+            className="primary-button"
+            disabled={busy || importingPdf}
+            onClick={() => void importPdf()}
+            type="button"
+          >
+            {importingPdf ? 'Importing…' : 'Import PDF'}
+          </button>
+        </div>
+        <p className="v2-empty-copy">
+          Choose a PDF from this computer. Physics Tracker validates it and stores a managed copy,
+          so moving or deleting the original file later does not break the resource.
+        </p>
+      </section>
 
       <section className="v2-concept-card" aria-labelledby="add-resource-heading">
         <p className="eyebrow">Catalogue</p>
@@ -315,7 +438,9 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
         {loading ? (
           <p className="v2-empty-copy">Loading resources…</p>
         ) : resources.length === 0 ? (
-          <p className="v2-empty-panel-copy">No resources have been saved yet.</p>
+          <p className="v2-empty-panel-copy">
+            No resources have been saved yet. Add a URL resource or import a PDF.
+          </p>
         ) : (
           <ul className="v2-resource-list">
             {resources.map((resource) => (
@@ -337,7 +462,11 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
                     {resource.url}
                   </a>
                 )}
-                {resource.description && <p className="v2-empty-copy">{resource.description}</p>}
+                {resource.description && (
+                  <p className="v2-empty-copy">
+                    <MathText text={resource.description} />
+                  </p>
+                )}
                 <div className="v2-allocation-chips">
                   {resource.examLinks.map((link) => (
                     <span className="v2-allocation-chip" key={link.examId}>
@@ -412,6 +541,16 @@ export function ResourcesScreen({ exams, initialQuery = null }: ResourcesScreenP
                   >
                     Link exam
                   </button>
+                  {resource.file?.storageMode === 'managed' && resource.file.status === 'ok' && (
+                    <button
+                      className="primary-button"
+                      disabled={busy}
+                      onClick={() => void openPdf(resource)}
+                      type="button"
+                    >
+                      Open PDF
+                    </button>
+                  )}
                   <button
                     className="secondary-button"
                     disabled={busy}

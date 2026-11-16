@@ -1,10 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { V2CustomUnit } from '../api';
-import {
-  CONVERSION_KIND_LABELS,
-  SI_CLASSIFICATION_LABELS,
-  conversionSummary,
-} from '../reference/catalog';
+import { MathText } from '../MathText';
+import { MathExpression } from '../math/MathExpression';
+import { CONVERSION_KIND_LABELS, SI_CLASSIFICATION_LABELS } from '../reference/catalog';
+import { UnitConversionSummary } from './UnitConversionSummary';
 
 type CustomUnitDetailProps = {
   unit: V2CustomUnit;
@@ -62,17 +61,23 @@ export function CustomUnitDetail({ unit, onBack, onDelete, onEdit }: CustomUnitD
       </header>
 
       <div className="v2-reference-value-panel">
-        <span className="v2-reference-value-symbol">{unit.symbol}</span>
+        <span className="v2-reference-value-symbol">
+          <MathExpression latex={unit.symbol} plainText={unit.symbol} />
+        </span>
         <span className="v2-reference-value">{unit.quantity}</span>
         {unit.dimension ? (
-          <span className="v2-reference-value-unit">[{unit.dimension}]</span>
+          <span className="v2-reference-value-unit">
+            [<MathExpression latex={unit.dimension} plainText={unit.dimension} />]
+          </span>
         ) : null}
       </div>
 
       <dl className="v2-reference-definition">
         <div>
           <dt>Symbol</dt>
-          <dd>{unit.symbol}</dd>
+          <dd>
+            <MathExpression latex={unit.symbol} plainText={unit.symbol} />
+          </dd>
         </div>
         <div>
           <dt>Physical quantity</dt>
@@ -80,7 +85,13 @@ export function CustomUnitDetail({ unit, onBack, onDelete, onEdit }: CustomUnitD
         </div>
         <div>
           <dt>Dimension</dt>
-          <dd>{unit.dimension || 'Not specified'}</dd>
+          <dd>
+            {unit.dimension ? (
+              <MathExpression latex={unit.dimension} plainText={unit.dimension} />
+            ) : (
+              'Not specified'
+            )}
+          </dd>
         </div>
         <div>
           <dt>SI classification</dt>
@@ -92,7 +103,9 @@ export function CustomUnitDetail({ unit, onBack, onDelete, onEdit }: CustomUnitD
         </div>
         <div>
           <dt>Conversion</dt>
-          <dd>{conversionSummary(unit)}</dd>
+          <dd>
+            <UnitConversionSummary unit={unit} />
+          </dd>
         </div>
         {unit.conversionKind === 'scalar' ? (
           <>
@@ -102,14 +115,21 @@ export function CustomUnitDetail({ unit, onBack, onDelete, onEdit }: CustomUnitD
             </div>
             <div>
               <dt>Reference unit</dt>
-              <dd>{unit.conversionReferenceUnit}</dd>
+              <dd>
+                <MathExpression
+                  latex={unit.conversionReferenceUnit}
+                  plainText={unit.conversionReferenceUnit}
+                />
+              </dd>
             </div>
           </>
         ) : null}
         {unit.conversionKind === 'contextual' ? (
           <div>
             <dt>Conversion context</dt>
-            <dd>{unit.conversionNote}</dd>
+            <dd>
+              <MathText text={unit.conversionNote} />
+            </dd>
           </div>
         ) : null}
         <div>
@@ -124,13 +144,17 @@ export function CustomUnitDetail({ unit, onBack, onDelete, onEdit }: CustomUnitD
 
       <section className="v2-reference-section">
         <h3>Description</h3>
-        <p>{unit.description}</p>
+        <p>
+          <MathText text={unit.description} />
+        </p>
       </section>
 
       {unit.notes ? (
         <section className="v2-reference-section">
           <h3>Notes</h3>
-          <p>{unit.notes}</p>
+          <p>
+            <MathText text={unit.notes} />
+          </p>
         </section>
       ) : null}
 

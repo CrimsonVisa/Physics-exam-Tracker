@@ -7,6 +7,7 @@ import 'katex/dist/katex.min.css';
 import './styles.css';
 import './v2/v2.css';
 import './v2/design-system.css';
+import './v2/math.css';
 import './v2/workspaces.css';
 import './v2/global-search.css';
 import './v2/flashcards.css';

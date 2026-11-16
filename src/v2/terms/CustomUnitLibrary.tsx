@@ -6,13 +6,12 @@ import {
   type V2CustomUnit,
   type V2CustomUnitSiClassification,
 } from '../api';
-import {
-  CONVERSION_KIND_LABELS,
-  SI_CLASSIFICATION_LABELS,
-  conversionSummary,
-} from '../reference/catalog';
+import { MathText } from '../MathText';
+import { MathExpression } from '../math/MathExpression';
+import { CONVERSION_KIND_LABELS, SI_CLASSIFICATION_LABELS } from '../reference/catalog';
 import { CustomUnitDetail } from './CustomUnitDetail';
 import { CustomUnitEditor } from './CustomUnitEditor';
+import { UnitConversionSummary } from './UnitConversionSummary';
 
 function matches(unit: V2CustomUnit, query: string): boolean {
   const term = query.trim().toLowerCase();
@@ -45,6 +44,7 @@ export function CustomUnitLibrary() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<V2CustomUnit | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,11 +95,15 @@ export function CustomUnitLibrary() {
   function openCreate() {
     setEditing(null);
     setEditorOpen(true);
+    setNotice(null);
+    setActionError(null);
   }
 
   function openEdit(unit: V2CustomUnit) {
     setEditing(unit);
     setEditorOpen(true);
+    setNotice(null);
+    setActionError(null);
   }
 
   async function remove(unit: V2CustomUnit) {
@@ -113,7 +117,9 @@ export function CustomUnitLibrary() {
         setSelectedId(null);
       }
       setActionError(null);
+      setNotice(`Unit "${unit.name}" deleted.`);
     } catch (error) {
+      setNotice(null);
       setActionError(toCommandError(error).message);
     }
   }
@@ -129,6 +135,11 @@ export function CustomUnitLibrary() {
     });
     setSelectedId(saved.id);
     setEditorOpen(false);
+    setQuery('');
+    setQuantity('all');
+    setSiClassification('all');
+    setActionError(null);
+    setNotice(`Unit "${saved.name}" saved.`);
   }
 
   if (selected) {
@@ -137,6 +148,11 @@ export function CustomUnitLibrary() {
         {actionError ? (
           <p className="v2-inline-error" role="alert">
             {actionError}
+          </p>
+        ) : null}
+        {notice ? (
+          <p className="v2-study-notice" role="status">
+            {notice}
           </p>
         ) : null}
         <CustomUnitDetail
@@ -238,6 +254,11 @@ export function CustomUnitLibrary() {
           {actionError}
         </p>
       ) : null}
+      {notice ? (
+        <p className="v2-study-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
 
       {empty ? (
         <div className="v2-empty-panel v2-reference-empty">
@@ -270,7 +291,10 @@ export function CustomUnitLibrary() {
               >
                 <span className="v2-reference-card-heading">
                   <span className="v2-reference-card-title">
-                    {unit.name} <span className="v2-reference-card-symbol">({unit.symbol})</span>
+                    {unit.name}{' '}
+                    <span className="v2-reference-card-symbol">
+                      (<MathExpression latex={unit.symbol} plainText={unit.symbol} />)
+                    </span>
                   </span>
                   <span className="v2-reference-badge" data-tone="user">
                     User-defined
@@ -278,9 +302,17 @@ export function CustomUnitLibrary() {
                 </span>
                 <span className="v2-reference-card-value">
                   {unit.quantity}
-                  {unit.dimension ? ` · [${unit.dimension}]` : ''}
+                  {unit.dimension ? (
+                    <>
+                      {' · ['}
+                      <MathExpression latex={unit.dimension} plainText={unit.dimension} />
+                      {']'}
+                    </>
+                  ) : null}
                 </span>
-                <span className="v2-reference-card-description">{unit.description}</span>
+                <span className="v2-reference-card-description">
+                  <MathText text={unit.description} />
+                </span>
                 <span className="v2-reference-card-meta">
                   <span className="v2-reference-badge" data-tone="category">
                     {SI_CLASSIFICATION_LABELS[unit.siClassification]}
@@ -290,7 +322,7 @@ export function CustomUnitLibrary() {
                   </span>
                   {unit.conversionKind !== 'none' ? (
                     <span className="v2-reference-badge" data-tone="conversion">
-                      {conversionSummary(unit)}
+                      <UnitConversionSummary unit={unit} />
                     </span>
                   ) : null}
                 </span>

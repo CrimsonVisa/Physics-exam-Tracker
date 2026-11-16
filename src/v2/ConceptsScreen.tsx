@@ -1,5 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import { toCommandError } from '../lib/commandError';
+import { emitRevisionsChanged } from '../lib/revisionEvents';
+import { MathText } from './MathText';
 import {
   getV2ConceptDetail,
   replayV2ConceptMastery,
@@ -311,9 +313,10 @@ export function ConceptsScreen({
       });
       setDetail(next);
       await refreshResult();
+      emitRevisionsChanged();
       setNotice(
         status === 'approved'
-          ? 'Mapping approved. It is now eligible for revision planning.'
+          ? 'Mapping approved. It is now eligible for revision planning and any missing initial revision schedule has been created.'
           : 'Mapping review saved.',
       );
     } catch (mappingError) {
@@ -426,7 +429,9 @@ export function ConceptsScreen({
             {detail.concept.domain} · Difficulty {detail.concept.difficulty} / 5
           </p>
           <h1>{detail.concept.title}</h1>
-          <p className="page-lede">{detail.concept.description}</p>
+          <p className="page-lede">
+            <MathText text={detail.concept.description} />
+          </p>
           <div className="v2-concept-badges">
             {detail.concept.isArchived && (
               <span className="v2-status-badge v2-status-inactive">Archived concept</span>
@@ -639,7 +644,11 @@ export function ConceptsScreen({
                     Algorithm {evidence.algorithmVersion} · source #{evidence.sourceId ?? '—'} ·
                     version {evidence.sourceVersion} · occurred {evidence.occurredAt}
                   </p>
-                  {evidence.notes && <p className="v2-evidence-note">{evidence.notes}</p>}
+                  {evidence.notes && (
+                    <p className="v2-evidence-note">
+                      <MathText text={evidence.notes} />
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>
@@ -866,7 +875,9 @@ function ConceptRow({
         <div className="v2-concept-row-main">
           <p className="eyebrow">{concept.domain}</p>
           <h3>{concept.title}</h3>
-          <p>{concept.description}</p>
+          <p>
+            <MathText text={concept.description} />
+          </p>
           <div className="v2-allocation-chips">
             {concept.examCodes.length === 0 ? (
               <span className="v2-allocation-chip v2-allocation-unallocated">No exam mappings</span>

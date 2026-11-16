@@ -3,6 +3,8 @@ import { toCommandError } from '../lib/commandError';
 import { Icon } from '../components/NavIcon';
 import { globalSearchV2, type V2ExamSummary, type V2GlobalSearchResult } from './api';
 import { DialogShell } from './DialogShell';
+import { MathText } from './MathText';
+import { containsExplicitMath } from './math/render';
 import type { V2View } from './navigation';
 
 type GlobalSearchProps = {
@@ -66,6 +68,13 @@ function highlight(text: string, query: string): ReactNode {
       {text.slice(index + needle.length)}
     </>
   );
+}
+
+function SearchResultText({ text, query }: { text: string; query: string }) {
+  if (containsExplicitMath(text)) {
+    return <MathText text={text} />;
+  }
+  return <>{highlight(text, query)}</>;
 }
 
 function buildItems(result: V2GlobalSearchResult | null, exams: V2ExamSummary[]): SearchItem[] {
@@ -362,8 +371,12 @@ export function GlobalSearch({ exams, onClose, onNavigate }: GlobalSearchProps) 
                       type="button"
                     >
                       <span className="v2-search-result-copy">
-                        <strong>{highlight(item.title, trimmed)}</strong>
-                        <span>{highlight(item.secondary, trimmed)}</span>
+                        <strong>
+                          <SearchResultText query={trimmed} text={item.title} />
+                        </strong>
+                        <span>
+                          <SearchResultText query={trimmed} text={item.secondary} />
+                        </span>
                       </span>
                       <span className="v2-search-badge">{item.badge}</span>
                     </button>

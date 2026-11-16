@@ -1,0 +1,106 @@
+/* Shared mathematical rendering, previews and graceful fallbacks. */
+
+.v2-math-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.v2-math-expression {
+  color: inherit;
+}
+
+.v2-math-expression-inline {
+  display: inline;
+}
+
+.v2-math-expression-display,
+.v2-math-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 0;
+  overscroll-behavior-x: contain;
+}
+
+.v2-math-inline {
+  display: inline;
+}
+
+.v2-math-expression-display .katex-display,
+.v2-math-display .katex-display {
+  margin: 0;
+}
+
+.v2-math-fallback {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--error-soft);
+  color: var(--error);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.v2-katex-error {
+  color: var(--error);
+}
+
+.v2-math-preview {
+  display: grid;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 9px 11px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.v2-field > .v2-math-preview,
+.v2-checkbox-field > .v2-math-preview {
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.v2-math-preview-compact {
+  padding: 6px 8px;
+  font-size: 0.85rem;
+}
+
+.v2-math-preview-label {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.v2-math-preview-empty {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-style: italic;
+}
+
+.v2-math-preview .v2-math-text,
+.v2-math-preview .v2-math-expression-display {
+  max-width: 100%;
+}
+
+@media (max-width: 680px) {
+  .v2-math-expression-display,
+  .v2-math-display {
+    padding: 6px 0;
+  }
+
+  .v2-math-preview {
+    padding: 8px;
+  }
+}

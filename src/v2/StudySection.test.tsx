@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -26,6 +26,7 @@ vi.mock('./api', () => ({
   updateV2TimerSettings: vi.fn(),
   listV2Sessions: vi.fn(),
   setV2SessionAllocations: vi.fn(),
+  setV2SessionExams: vi.fn(),
   setV2TimerAllocations: vi.fn(),
   getV2StudyTotals: vi.fn(),
   getV2ExamSyllabus: vi.fn(),
@@ -34,7 +35,16 @@ vi.mock('./api', () => ({
   deleteV2StudySession: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/plugin-notification', () => ({
+  isPermissionGranted: vi.fn(),
+  requestPermission: vi.fn(),
+}));
+
 import * as api from './api';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+
+const mockedPermissionGranted = vi.mocked(isPermissionGranted);
+const mockedRequestPermission = vi.mocked(requestPermission);
 
 const mockedTimer = vi.mocked(api.getV2Timer);
 const mockedStart = vi.mocked(api.startV2Timer);
@@ -45,9 +55,11 @@ const mockedDiscard = vi.mocked(api.discardV2Timer);
 const mockedHeartbeat = vi.mocked(api.heartbeatV2Timer);
 const mockedSettings = vi.mocked(api.updateV2TimerSettings);
 const mockedSessions = vi.mocked(api.listV2Sessions);
-const mockedSetAllocations = vi.mocked(api.setV2SessionAllocations);
+const mockedSetExams = vi.mocked(api.setV2SessionExams);
+const mockedSetTimerAllocations = vi.mocked(api.setV2TimerAllocations);
 const mockedTotals = vi.mocked(api.getV2StudyTotals);
 const mockedSyllabus = vi.mocked(api.getV2ExamSyllabus);
+const mockedCreateManual = vi.mocked(api.createV2ManualSession);
 
 const TODAY = '2026-11-04';
 
@@ -191,6 +203,7 @@ function snapshot(
       ...settings,
     },
     allocations: [],
+    examIds: [],
     serverNowMs: Date.parse('2026-11-04T10:00:00Z'),
   };
 }
@@ -241,7 +254,7 @@ async function renderStudy(
     readOnly?: boolean;
   } = {},
 ) {
-  render(
+  const view = render(
     <TimerProvider>
       <StudySection
         exams={overrides.exams ?? EXAMS}
@@ -253,6 +266,7 @@ async function renderStudy(
   );
   await screen.findByRole('heading', { name: 'Timer and sessions' });
   await screen.findByRole('timer');
+  return view;
 }
 
 describe('V2 study timer and sessions', () => {
@@ -262,6 +276,8 @@ describe('V2 study timer and sessions', () => {
     mockedSessions.mockResolvedValue([]);
     mockedTotals.mockResolvedValue(totals());
     mockedHeartbeat.mockResolvedValue(snapshot());
+    mockedPermissionGranted.mockResolvedValue(true);
+    mockedRequestPermission.mockResolvedValue('granted');
     mockedSyllabus.mockImplementation(async (examId) => {
       const exam = EXAMS.find((candidate) => candidate.id === examId) ?? EXAMS[0];
       return syllabus(exam, exam.id * 10 + 1);
@@ -346,7 +362,7 @@ describe('V2 study timer and sessions', () => {
     expect(onTimerFocused).toHaveBeenCalledTimes(2);
   });
 
-  it('starts a focus timer with the selected examination context', async () => {
+  it('starts a focus timer with selected examinations', async () => {
     const user = userEvent.setup();
     mockedStart.mockResolvedValue(snapshot({ status: 'running' }));
     await renderStudy();
@@ -359,7 +375,7 @@ describe('V2 study timer and sessions', () => {
       ),
     ).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText('Study context'), '2');
+    await user.click(screen.getByLabelText('GATE PH — gate-physics'));
     await user.click(screen.getByRole('button', { name: 'Start timer' }));
 
     await waitFor(() =>
@@ -367,16 +383,19 @@ describe('V2 study timer and sessions', () => {
         mode: 'focus',
         sessionDate: TODAY,
         activeExamId: 2,
+        examIds: [2],
         allocations: [],
       }),
     );
   });
 
-  it('starts one shared timer with multiple exam and topic allocations', async () => {
+  it('starts one shared timer with multiple exam associations and topic detail', async () => {
     const user = userEvent.setup();
     mockedStart.mockResolvedValue(snapshot({ status: 'running' }));
     await renderStudy();
 
+    await user.click(screen.getByLabelText('CSIR-NET — csir-net-physics'));
+    await user.click(screen.getByLabelText('GATE PH — gate-physics'));
     await user.click(screen.getByRole('button', { name: 'Add exam/topic allocation' }));
     await waitFor(() => expect(screen.getByLabelText('Subject / topic')).not.toBeDisabled());
     await user.selectOptions(screen.getByLabelText('Subject / topic'), '11');
@@ -397,11 +416,142 @@ describe('V2 study timer and sessions', () => {
       expect(mockedStart).toHaveBeenCalledWith({
         mode: 'focus',
         sessionDate: TODAY,
-        activeExamId: null,
+        activeExamId: 1,
+        examIds: [1, 2],
         allocations: [
           { examId: 1, nodeId: 11, allocatedSeconds: 120 },
           { examId: 2, nodeId: 21, allocatedSeconds: 120 },
         ],
+      }),
+    );
+  });
+
+  it('shows the locked exam associations for a running timer', async () => {
+    mockedTimer.mockResolvedValue({
+      ...snapshot({ status: 'running', sessionDate: TODAY }),
+      examIds: [1, 2, 4],
+    });
+    await renderStudy();
+
+    expect(screen.getByText('CSIR-NET: full session duration')).toBeInTheDocument();
+    expect(screen.getByText('GATE PH: full session duration')).toBeInTheDocument();
+    expect(screen.getByText('JEST: full session duration')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Exam associations are locked for this running timer. Each selected exam will receive the full session duration; combined time is counted once.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('limits running timer topic allocations to persisted exam associations', async () => {
+    const user = userEvent.setup();
+    mockedTimer.mockResolvedValue({
+      ...snapshot({ status: 'running', sessionDate: TODAY }),
+      examIds: [1, 2],
+    });
+    await renderStudy();
+
+    await user.click(screen.getByRole('button', { name: 'Add exam/topic allocation' }));
+    const examSelect = screen.getByLabelText('Examination');
+    expect(within(examSelect).getByRole('option', { name: /CSIR-NET/ })).toBeInTheDocument();
+    expect(within(examSelect).getByRole('option', { name: /GATE PH/ })).toBeInTheDocument();
+    expect(within(examSelect).queryByRole('option', { name: /JEST/ })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Only the examinations selected when this timer started can receive topic allocations/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('accepts persisted running allocations after remounting under another workspace', async () => {
+    const user = userEvent.setup();
+    const running = {
+      ...snapshot({ status: 'running', sessionDate: TODAY, activeExamId: 1 }),
+      examIds: [1, 2],
+    };
+    mockedStart.mockResolvedValue(running);
+
+    const firstView = await renderStudy({ focusExamCode: 'csir-net-physics' });
+    await user.click(screen.getByLabelText('GATE PH — gate-physics'));
+    await user.click(screen.getByRole('button', { name: 'Start timer' }));
+    await waitFor(() =>
+      expect(mockedStart).toHaveBeenCalledWith({
+        mode: 'focus',
+        sessionDate: TODAY,
+        activeExamId: 1,
+        examIds: [1, 2],
+        allocations: [],
+      }),
+    );
+    firstView.unmount();
+
+    mockedTimer.mockResolvedValue(running);
+    mockedSetTimerAllocations.mockResolvedValue({
+      ...running,
+      allocations: [
+        {
+          examId: 1,
+          examCode: 'csir-net-physics',
+          examName: 'CSIR-UGC NET Physical Sciences',
+          nodeId: 11,
+          nodeTitle: 'CSIR-NET topic',
+          subjectTitle: 'CSIR-NET unit',
+          allocatedSeconds: 1_200,
+        },
+      ],
+    });
+    await renderStudy({ focusExamCode: 'jest-physics' });
+
+    await user.click(screen.getByRole('button', { name: 'Add exam/topic allocation' }));
+    const examSelect = screen.getByLabelText('Examination');
+    expect(within(examSelect).getByRole('option', { name: /CSIR-NET/ })).toBeInTheDocument();
+    expect(within(examSelect).getByRole('option', { name: /GATE PH/ })).toBeInTheDocument();
+    expect(within(examSelect).queryByRole('option', { name: /JEST/ })).not.toBeInTheDocument();
+
+    await user.selectOptions(examSelect, '1');
+    await waitFor(() => expect(screen.getByLabelText('Subject / topic')).not.toBeDisabled());
+    await user.selectOptions(screen.getByLabelText('Subject / topic'), '11');
+    const minutes = screen.getByLabelText('Minutes');
+    await user.clear(minutes);
+    await user.type(minutes, '20');
+    await user.click(screen.getByRole('button', { name: 'Save timer allocations' }));
+
+    await waitFor(() =>
+      expect(mockedSetTimerAllocations).toHaveBeenCalledWith({
+        allocations: [{ examId: 1, nodeId: 11, allocatedSeconds: 1_200 }],
+      }),
+    );
+    expect(await screen.findByText('Timer study allocations saved.')).toBeInTheDocument();
+    expect(screen.getByText('CSIR-NET: full session duration')).toBeInTheDocument();
+    expect(screen.getByText('GATE PH: full session duration')).toBeInTheDocument();
+    expect(screen.queryByText('JEST: full session duration')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText('Examination')).queryByRole('option', { name: /JEST/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('creates a manual session with multiple exam associations', async () => {
+    const user = userEvent.setup();
+    mockedCreateManual.mockResolvedValue(studySession());
+    await renderStudy();
+
+    const manualForm = screen.getByRole('button', { name: 'Save manual session' }).closest('form');
+    expect(manualForm).not.toBeNull();
+    const manual = within(manualForm as HTMLFormElement);
+    const duration = manual.getByLabelText('Duration (minutes)');
+    await user.clear(duration);
+    await user.type(duration, '120');
+    await user.click(manual.getByLabelText('CSIR-NET'));
+    await user.click(manual.getByLabelText('JEST'));
+    await user.click(manual.getByRole('button', { name: 'Save manual session' }));
+
+    await waitFor(() =>
+      expect(mockedCreateManual).toHaveBeenCalledWith({
+        sessionDate: TODAY,
+        durationSeconds: 7_200,
+        notes: '',
+        primaryExamId: 1,
+        examIds: [1, 4],
       }),
     );
   });
@@ -720,23 +870,18 @@ describe('V2 study timer and sessions', () => {
     }
   });
 
-  it('validates allocations before calling the backend', async () => {
+  it('requires at least one examination when editing associations', async () => {
     const user = userEvent.setup();
     mockedSessions.mockResolvedValue([studySession()]);
     await renderStudy();
 
-    await user.click(await screen.findByRole('button', { name: 'Allocate time' }));
-    const input = screen.getByLabelText('CSIR-NET');
-    await user.clear(input);
-    await user.type(input, '30');
-    await user.click(screen.getByRole('button', { name: 'Save allocations' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit exams' }));
+    await user.click(screen.getByRole('button', { name: 'Save exams' }));
 
     expect(
-      screen.getByText(
-        'Allocated time is 30 min, but the session is 25 min. Reduce the allocations before saving.',
-      ),
+      screen.getByText('Choose at least one examination for this session.'),
     ).toBeInTheDocument();
-    expect(mockedSetAllocations).not.toHaveBeenCalled();
+    expect(mockedSetExams).not.toHaveBeenCalled();
   });
 
   it('uses the dedicated session action grid without the shared form-actions class', async () => {
@@ -747,7 +892,7 @@ describe('V2 study timer and sessions', () => {
     ]);
     await renderStudy();
 
-    const allocate = await screen.findByRole('button', { name: 'Allocate time' });
+    const allocate = await screen.findByRole('button', { name: 'Edit exams' });
     const actions = allocate.closest('.v2-session-actions');
     expect(actions).not.toBeNull();
     expect(actions).not.toHaveClass('v2-form-actions');
@@ -767,28 +912,26 @@ describe('V2 study timer and sessions', () => {
     );
   });
 
-  it('saves a split allocation across multiple active exams', async () => {
+  it('saves multiple exam associations without duplicating the session', async () => {
     const user = userEvent.setup();
     mockedSessions.mockResolvedValue([studySession({ primaryExamId: null })]);
-    mockedSetAllocations.mockResolvedValue(studySession());
+    mockedSetExams.mockResolvedValue(studySession());
     await renderStudy();
 
-    await user.click(await screen.findByRole('button', { name: 'Allocate time' }));
-    const csir = screen.getByLabelText('CSIR-NET');
-    const gate = screen.getByLabelText('GATE PH');
-    await user.clear(csir);
-    await user.type(csir, '10');
-    await user.clear(gate);
-    await user.type(gate, '5');
-    await user.click(screen.getByRole('button', { name: 'Save allocations' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit exams' }));
+    const editForm = screen
+      .getByRole('heading', { name: 'Edit session examinations' })
+      .closest('form');
+    expect(editForm).not.toBeNull();
+    const editor = within(editForm as HTMLFormElement);
+    await user.click(editor.getByLabelText('CSIR-NET'));
+    await user.click(editor.getByLabelText('GATE PH'));
+    await user.click(editor.getByRole('button', { name: 'Save exams' }));
 
     await waitFor(() =>
-      expect(mockedSetAllocations).toHaveBeenCalledWith({
+      expect(mockedSetExams).toHaveBeenCalledWith({
         sessionId: 1,
-        allocations: [
-          { examId: 1, allocatedSeconds: 600 },
-          { examId: 2, allocatedSeconds: 300 },
-        ],
+        examIds: [1, 2],
       }),
     );
   });
@@ -822,7 +965,7 @@ describe('V2 study timer and sessions', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Start timer' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Allocate time' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit exams' })).not.toBeInTheDocument();
     expect(screen.getByText('gate-physics: 20 min (inactive)')).toBeInTheDocument();
   });
 
@@ -861,5 +1004,65 @@ describe('V2 study timer and sessions', () => {
         notificationsEnabled: false,
       }),
     );
+  });
+
+  it('enables desktop notifications after permission is available', async () => {
+    const user = userEvent.setup();
+    mockedPermissionGranted.mockResolvedValue(false);
+    mockedRequestPermission.mockResolvedValue('granted');
+    mockedSettings.mockResolvedValue(snapshot({}, { notificationsEnabled: true }));
+    await renderStudy();
+
+    await user.click(await screen.findByText('Timer lengths'));
+    await user.click(screen.getByLabelText('Desktop notifications'));
+    await user.click(screen.getByRole('button', { name: 'Save timer lengths' }));
+
+    await waitFor(() =>
+      expect(mockedSettings).toHaveBeenCalledWith({
+        focusMinutes: 25,
+        shortBreakMinutes: 5,
+        longBreakMinutes: 15,
+        notificationsEnabled: true,
+      }),
+    );
+    expect(mockedPermissionGranted).toHaveBeenCalled();
+    expect(mockedRequestPermission).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText(
+        'Timer lengths and desktop notification preference saved for the next timer.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('does not save notification settings when Windows denies permission', async () => {
+    const user = userEvent.setup();
+    mockedPermissionGranted.mockResolvedValue(false);
+    mockedRequestPermission.mockResolvedValue('denied');
+    await renderStudy();
+
+    await user.click(await screen.findByText('Timer lengths'));
+    await user.click(screen.getByLabelText('Desktop notifications'));
+    await user.click(screen.getByRole('button', { name: 'Save timer lengths' }));
+
+    expect(
+      await screen.findByText(
+        'Windows did not grant notification permission. Timer settings were not saved. You can still use the timer without notifications.',
+      ),
+    ).toBeInTheDocument();
+    expect(mockedSettings).not.toHaveBeenCalled();
+  });
+
+  it('does not request notification permission again when it is already granted', async () => {
+    const user = userEvent.setup();
+    mockedPermissionGranted.mockResolvedValue(true);
+    mockedSettings.mockResolvedValue(snapshot({}, { notificationsEnabled: true }));
+    await renderStudy();
+
+    await user.click(await screen.findByText('Timer lengths'));
+    await user.click(screen.getByLabelText('Desktop notifications'));
+    await user.click(screen.getByRole('button', { name: 'Save timer lengths' }));
+
+    await waitFor(() => expect(mockedSettings).toHaveBeenCalledTimes(1));
+    expect(mockedRequestPermission).not.toHaveBeenCalled();
   });
 });

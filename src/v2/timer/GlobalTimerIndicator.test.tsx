@@ -37,6 +37,7 @@ function snapshot(
       notificationsEnabled: false,
     },
     allocations,
+    examIds: [],
     serverNowMs: Date.parse('2026-11-04T10:00:00Z'),
   };
 }

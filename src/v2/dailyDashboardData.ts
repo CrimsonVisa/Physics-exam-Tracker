@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toCommandError } from '../lib/commandError';
+import { onRevisionsChanged } from '../lib/revisionEvents';
+import { onStudySessionsChanged } from '../lib/studyEvents';
 import {
   getV2AppSettings,
   getV2PlannerDay,
@@ -216,10 +218,14 @@ export function useDailyDashboardData(today: string, enabled: boolean): DailyDas
   const [data, setData] = useState(EMPTY_DAILY_DATA);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  const loadSequenceRef = useRef(0);
 
   const load = useCallback(
-    async (signal?: { cancelled: boolean }) => {
-      setLoading(true);
+    async (signal?: { cancelled: boolean }, showLoading = true) => {
+      const sequence = ++loadSequenceRef.current;
+      if (showLoading) {
+        setLoading(true);
+      }
       setError(null);
       try {
         const [nextSessions, nextPlannerDay, nextRevision, nextSettings, nextTotals] =
@@ -230,7 +236,7 @@ export function useDailyDashboardData(today: string, enabled: boolean): DailyDas
             getV2AppSettings(),
             getV2StudyTotals(),
           ]);
-        if (!signal?.cancelled) {
+        if (!signal?.cancelled && sequence === loadSequenceRef.current) {
           setData({
             sessions: nextSessions,
             plannerDay: nextPlannerDay,
@@ -240,11 +246,11 @@ export function useDailyDashboardData(today: string, enabled: boolean): DailyDas
           });
         }
       } catch (loadError) {
-        if (!signal?.cancelled) {
+        if (!signal?.cancelled && sequence === loadSequenceRef.current) {
           setError(toCommandError(loadError).message);
         }
       } finally {
-        if (!signal?.cancelled) {
+        if (!signal?.cancelled && sequence === loadSequenceRef.current) {
           setLoading(false);
         }
       }
@@ -263,6 +269,24 @@ export function useDailyDashboardData(today: string, enabled: boolean): DailyDas
     return () => {
       signal.cancelled = true;
     };
+  }, [enabled, load]);
+
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    return onStudySessionsChanged(() => {
+      void load({ cancelled: false }, false);
+    });
+  }, [enabled, load]);
+
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    return onRevisionsChanged(() => {
+      void load({ cancelled: false }, false);
+    });
   }, [enabled, load]);
 
   return {

@@ -16,6 +16,7 @@ import {
   TodayPlanSection,
 } from './DashboardSections';
 import { needsDailyData, useDailyDashboardData } from './dailyDashboardData';
+import { ExamCountdownSection } from './ExamCountdownSection';
 import { examDateDisplay } from './examDate';
 import type { V2View } from './navigation';
 import { StudySection } from './StudySection';
@@ -37,6 +38,7 @@ type CombinedDashboardProps = {
 const FALLBACK_SECTIONS: Array<[string, string]> = [
   ['quickstart', 'Quick start timer'],
   ['today', "Today's overview"],
+  ['countdown', 'Exam countdown'],
   ['plan', "Today's study plan"],
   ['revision', 'Revision overview'],
   ['recent', 'Recently studied'],
@@ -229,6 +231,17 @@ export function CombinedDashboard({
     }
     if (key === 'today') {
       return <TodayOverviewSection data={daily} key={key} onNavigate={onNavigate} today={today} />;
+    }
+    if (key === 'countdown') {
+      return (
+        <ExamCountdownSection
+          exams={status.exams}
+          key={key}
+          onOpenExam={onOpenExam}
+          onOpenSettings={() => onNavigate({ kind: 'settings' })}
+          today={today}
+        />
+      );
     }
     if (key === 'plan') {
       return (

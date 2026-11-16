@@ -576,37 +576,6 @@
   font-size: 0.75rem;
 }
 
-/* --------------------------------------------------------------- math */
-
-.v2-math-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.v2-math-display {
-  display: block;
-  margin: 8px 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.v2-math-inline {
-  display: inline;
-}
-
-.v2-math-fallback {
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--error-soft);
-  color: var(--error);
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-}
-
-.v2-katex-error {
-  color: var(--error);
-}
-
 /* ------------------------------------------------------------ responsive */
 
 .v2-syllabus-flashcard-link,

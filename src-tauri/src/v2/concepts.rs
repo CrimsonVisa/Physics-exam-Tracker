@@ -1268,6 +1268,7 @@ pub fn get_concept_detail(
 pub fn update_mapping(
     connection: &mut Connection,
     input: V2ConceptMappingUpdateInput,
+    today: chrono::NaiveDate,
     now: chrono::DateTime<Utc>,
 ) -> Result<V2ConceptDetail, AppError> {
     if !matches!(
@@ -1285,7 +1286,13 @@ pub fn update_mapping(
             "Choose an existing concept mapping.",
         ));
     }
-    let current_notes: Option<String> = connection
+    let transaction = connection.transaction().map_err(|error| {
+        AppError::database(
+            "The concept mapping review transaction could not start",
+            error,
+        )
+    })?;
+    let current_notes: Option<String> = transaction
         .query_row(
             "SELECT notes FROM exam_node_concepts
              WHERE exam_id = ?1 AND node_id = ?2 AND concept_id = ?3",
@@ -1309,7 +1316,7 @@ pub fn update_mapping(
     }
     let now_text = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let reviewed = input.status != "proposed";
-    connection
+    transaction
         .execute(
             "UPDATE exam_node_concepts
              SET status = ?1, notes = ?2, reviewed_at = ?3,
@@ -1333,21 +1340,28 @@ pub fn update_mapping(
         .map_err(|error| {
             AppError::database("The concept mapping review could not be saved", error)
         })?;
-    let slug: String = connection
+    if input.status == "approved" {
+        crate::v2::revision::ensure_initial_schedule(&transaction, input.concept_id, today, now)?;
+    }
+    let slug: String = transaction
         .query_row(
             "SELECT slug FROM concepts WHERE id = ?1",
             [input.concept_id],
             |row| row.get(0),
         )
         .map_err(|error| AppError::database("The mapped concept could not be read", error))?;
-    get_concept_detail(
-        connection,
+    let detail = get_concept_detail(
+        &transaction,
         V2ConceptDetailInput {
             slug,
             evidence_limit: None,
             history_limit: None,
         },
-    )
+    )?;
+    transaction
+        .commit()
+        .map_err(|error| AppError::database("The mapping review could not be committed", error))?;
+    Ok(detail)
 }
 
 pub fn exam_coverage(connection: &Connection) -> Result<Vec<V2ExamConceptCoverage>, AppError> {
@@ -2023,6 +2037,7 @@ mod tests {
                         status: "approved".to_owned(),
                         notes: Some("Reviewed and approved locally.".to_owned()),
                     },
+                    crate::date_only::parse_date_only("2026-11-04").unwrap(),
                     Utc::now(),
                 )
             })

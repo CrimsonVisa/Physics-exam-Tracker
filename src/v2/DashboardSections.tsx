@@ -402,19 +402,25 @@ export function RevisionOverviewSection({
 }) {
   const dueToday = data.revision?.dueToday ?? [];
   const overdue = data.revision?.overdue ?? [];
+  const upcoming = data.revision?.upcoming ?? [];
+  const awaitingApproval = data.revision?.awaitingApproval ?? [];
   const recentHistory = data.revision?.recentHistory ?? [];
   const dueRows = dueToday.slice(0, 3);
   const overdueRows = overdue.slice(0, 3);
+  const upcomingRows = upcoming.slice(0, 3);
   const recentRows = recentHistory.slice(0, 3);
   const dueItemCount = dueRows.length + overdueRows.length;
 
   return (
     <SectionCard
       ariaLabel="Revision overview"
-      caption={`${plural(dueToday.length, 'due today')} · ${plural(
+      caption={`${plural(dueToday.length, 'due revision')} · ${plural(
         overdue.length,
-        'overdue',
-      )} · ${plural(recentHistory.length, 'recent record')}`}
+        'overdue revision',
+      )} · ${plural(upcoming.length, 'upcoming revision')} · ${plural(
+        recentHistory.length,
+        'recent record',
+      )}`}
       error={data.error}
       eyebrow="Revisions"
       loading={data.loading}
@@ -497,6 +503,74 @@ export function RevisionOverviewSection({
               </div>
             )}
           </>
+        )}
+        <div>
+          <p className="eyebrow">Upcoming</p>
+          {upcomingRows.length === 0 ? (
+            <p className="v2-empty-panel-copy">No upcoming revisions are scheduled.</p>
+          ) : (
+            <ul className="v2-planner-list">
+              {upcomingRows.map((schedule) => (
+                <li
+                  className="v2-planner-row"
+                  data-concept-id={schedule.conceptId}
+                  key={schedule.conceptId}
+                >
+                  <div>
+                    <div className="v2-session-heading">
+                      <strong>{schedule.conceptTitle}</strong>
+                      <span className="v2-status-badge v2-status-active">
+                        {schedule.nextRevisionDate}
+                      </span>
+                    </div>
+                    <p className="v2-empty-copy">
+                      {schedule.conceptDomain} · interval {schedule.currentIntervalDays} days ·
+                      mastery {masteryLabel(schedule.masteryScore)}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {upcoming.length > upcomingRows.length && (
+            <p className="v2-empty-copy">
+              {plural(upcoming.length - upcomingRows.length, 'further upcoming revision')} in
+              revision planning.
+            </p>
+          )}
+        </div>
+        {awaitingApproval.length > 0 && (
+          <div>
+            <p className="eyebrow">Awaiting approval</p>
+            <ul className="v2-planner-list">
+              {awaitingApproval.slice(0, 3).map((schedule) => (
+                <li
+                  className="v2-planner-row"
+                  data-concept-id={schedule.conceptId}
+                  key={schedule.conceptId}
+                >
+                  <div>
+                    <div className="v2-session-heading">
+                      <strong>{schedule.conceptTitle}</strong>
+                      <span className="v2-status-badge v2-status-inactive">Awaiting approval</span>
+                    </div>
+                    <p className="v2-empty-copy">
+                      Next revision {schedule.nextRevisionDate} ·{' '}
+                      {schedule.pendingExamCodes.length > 0
+                        ? `pending mapping ${schedule.pendingExamCodes.join(', ')}`
+                        : 'no active exam mapping'}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {awaitingApproval.length > 3 && (
+              <p className="v2-empty-copy">
+                {plural(awaitingApproval.length - 3, 'further scheduled concept')} awaiting mapping
+                approval.
+              </p>
+            )}
+          </div>
         )}
         <div>
           <p className="eyebrow">Recently completed</p>

@@ -3,8 +3,8 @@ import type { V2ExamSummary } from '../api';
 import { FORMULA_LIBRARY } from './data';
 import { CustomFormulaLibrary } from './CustomFormulaLibrary';
 import { FormulaDetail } from './FormulaDetail';
+import { MathText } from '../MathText';
 import { FormulaEquation } from './FormulaEquation';
-import { ConstantsLibrary } from '../reference/ConstantsLibrary';
 import { ReferencePanel, ReferenceTabs } from '../reference/ReferenceTabs';
 import {
   entryExamCodes,
@@ -72,7 +72,7 @@ export function FormulaReferenceScreen({
   const [nodeCode, setNodeCode] = useState<string | null>(initialNodeCode);
   const [nodeTitle, setNodeTitle] = useState<string | null>(initialNodeTitle);
   const [selectedFormulaId, setSelectedFormulaId] = useState<string | null>(initialFormulaId);
-  const [activeTab, setActiveTab] = useState<'builtin' | 'custom' | 'constants'>('builtin');
+  const [activeTab, setActiveTab] = useState<'builtin' | 'custom'>('builtin');
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -186,7 +186,6 @@ export function FormulaReferenceScreen({
         options={[
           { id: 'builtin', label: 'Built-in formulas', count: FORMULA_LIBRARY.entries.length },
           { id: 'custom', label: 'My formulas' },
-          { id: 'constants', label: 'Constants' },
         ]}
       />
 
@@ -353,7 +352,9 @@ export function FormulaReferenceScreen({
                                     plainText={entry.plainText}
                                   />
                                 </span>
-                                <span className="v2-formula-card-summary">{entry.summary}</span>
+                                <span className="v2-formula-card-summary">
+                                  <MathText text={entry.summary} />
+                                </span>
                                 <span className="v2-formula-card-meta">
                                   <span className="v2-formula-badge" data-tone="exactness">
                                     {EXACTNESS_LABELS[entry.exactness]}
@@ -391,13 +392,9 @@ export function FormulaReferenceScreen({
             </section>
           </div>
         </ReferencePanel>
-      ) : activeTab === 'custom' ? (
+      ) : (
         <ReferencePanel tab="custom">
           <CustomFormulaLibrary />
-        </ReferencePanel>
-      ) : (
-        <ReferencePanel tab="constants">
-          <ConstantsLibrary />
         </ReferencePanel>
       )}
     </div>

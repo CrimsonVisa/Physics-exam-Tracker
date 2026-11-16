@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { V2CustomFormula } from '../api';
+import { MathText } from '../MathText';
+import { MathExpression } from '../math/MathExpression';
 import { FormulaEquation } from './FormulaEquation';
 
 type CustomFormulaDetailProps = {
@@ -87,7 +89,9 @@ export function CustomFormulaDetail({
 
       <section className="v2-reference-section">
         <h3>Description</h3>
-        <p>{formula.description}</p>
+        <p>
+          <MathText text={formula.description} />
+        </p>
       </section>
 
       <section className="v2-reference-section">
@@ -108,10 +112,18 @@ export function CustomFormulaDetail({
                 {formula.variables.map((variable) => (
                   <tr key={variable.id}>
                     <td>
-                      <code>{variable.symbol}</code>
+                      <MathExpression latex={variable.symbol} plainText={variable.symbol} />
                     </td>
-                    <td>{variable.meaning}</td>
-                    <td>{variable.unit || '—'}</td>
+                    <td>
+                      <MathText text={variable.meaning} />
+                    </td>
+                    <td>
+                      {variable.unit ? (
+                        <MathExpression latex={variable.unit} plainText={variable.unit} />
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -123,7 +135,9 @@ export function CustomFormulaDetail({
       {formula.notes ? (
         <section className="v2-reference-section">
           <h3>Notes</h3>
-          <p>{formula.notes}</p>
+          <p>
+            <MathText text={formula.notes} />
+          </p>
         </section>
       ) : null}
 

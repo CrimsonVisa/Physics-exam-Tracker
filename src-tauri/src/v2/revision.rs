@@ -59,6 +59,10 @@ pub struct V2RevisionSchedule {
     pub overdue_days: i64,
     pub mastery_score: Option<f64>,
     pub selection_reason: String,
+    pub eligible: bool,
+    pub approved_exam_codes: Vec<String>,
+    pub pending_exam_codes: Vec<String>,
+    pub already_scheduled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -95,6 +99,7 @@ pub struct V2RevisionDashboard {
     pub due_today: Vec<V2RevisionSchedule>,
     pub overdue: Vec<V2RevisionSchedule>,
     pub upcoming: Vec<V2RevisionSchedule>,
+    pub awaiting_approval: Vec<V2RevisionSchedule>,
     pub recent_history: Vec<V2RevisionHistoryEntry>,
     pub stats: V2RevisionStats,
     pub exam_id: Option<i64>,
@@ -369,6 +374,7 @@ pub fn dashboard(
         .take(30)
         .cloned()
         .collect();
+    let awaiting_approval = awaiting_approval_schedules(connection, input.exam_id, today)?;
     let week_start = today
         .checked_sub_days(Days::new(6))
         .unwrap_or(today)
@@ -403,6 +409,7 @@ pub fn dashboard(
         due_today,
         overdue,
         upcoming,
+        awaiting_approval,
         recent_history: history(connection, input.exam_id, 20)?,
         stats,
         exam_id: input.exam_id,
@@ -416,10 +423,6 @@ pub fn schedule_concept(
     now: DateTime<Utc>,
 ) -> Result<V2RevisionSchedule, AppError> {
     let settings = load_settings(connection)?;
-    let next = match input.next_revision_date.as_deref() {
-        Some(value) if !value.trim().is_empty() => parse_date(value, "nextRevisionDate")?,
-        _ => schedule_next_date(today, settings.initial_good_days, settings.include_weekends)?,
-    };
     let concept_ok: i64 = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM concepts WHERE id = ?1 AND is_archived = 0)",
@@ -436,29 +439,70 @@ pub fn schedule_concept(
             "Revision notes must be 2,000 characters or fewer.",
         ));
     }
-    let now_text = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let already_scheduled: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM revision_schedules WHERE concept_id = ?1)",
+            [input.concept_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::database("Revision schedule could not be checked", error))?;
+    if already_scheduled == 0 {
+        let next = match input.next_revision_date.as_deref() {
+            Some(value) if !value.trim().is_empty() => parse_date(value, "nextRevisionDate")?,
+            _ => schedule_next_date(today, settings.initial_good_days, settings.include_weekends)?,
+        };
+        let now_text = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        connection
+            .execute(
+                "INSERT INTO revision_schedules (
+                    concept_id, status, last_revision_date, next_revision_date,
+                    current_interval_days, completed_revisions, previous_outcome, notes,
+                    created_at, updated_at
+                 ) VALUES (?1, 'active', NULL, ?2, ?3, 0, NULL, ?4, ?5, ?5)",
+                params![
+                    input.concept_id,
+                    date_only::format_date_only(next),
+                    settings.initial_good_days,
+                    input.notes.trim(),
+                    now_text,
+                ],
+            )
+            .map_err(|error| AppError::database("Revision schedule could not be saved", error))?;
+    }
+    let mut schedule = load_schedule(connection, input.concept_id, today)?;
+    schedule.already_scheduled = already_scheduled == 1;
+    Ok(schedule)
+}
+
+/// Give an approved concept its first revision schedule. Existing schedules
+/// (including suspended or previously reviewed ones) are never reset.
+pub fn ensure_initial_schedule(
+    connection: &Connection,
+    concept_id: i64,
+    today: NaiveDate,
+    now: DateTime<Utc>,
+) -> Result<(), AppError> {
+    let settings = load_settings(connection)?;
+    let next = schedule_next_date(today, settings.initial_good_days, settings.include_weekends)?;
     connection
         .execute(
             "INSERT INTO revision_schedules (
                 concept_id, status, last_revision_date, next_revision_date,
                 current_interval_days, completed_revisions, previous_outcome, notes,
                 created_at, updated_at
-             ) VALUES (?1, 'active', NULL, ?2, ?3, 0, NULL, ?4, ?5, ?5)
-             ON CONFLICT(concept_id) DO UPDATE SET
-                status = 'active',
-                next_revision_date = excluded.next_revision_date,
-                notes = excluded.notes,
-                updated_at = excluded.updated_at",
+             ) VALUES (?1, 'active', NULL, ?2, ?3, 0, NULL, '', ?4, ?4)
+             ON CONFLICT(concept_id) DO NOTHING",
             params![
-                input.concept_id,
+                concept_id,
                 date_only::format_date_only(next),
                 settings.initial_good_days,
-                input.notes.trim(),
-                now_text,
+                now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             ],
         )
-        .map_err(|error| AppError::database("Revision schedule could not be saved", error))?;
-    load_schedule(connection, input.concept_id, today)
+        .map_err(|error| {
+            AppError::database("Initial revision schedule could not be saved", error)
+        })?;
+    Ok(())
 }
 
 pub fn reschedule(
@@ -760,12 +804,12 @@ pub fn generate_daily_plan(
     if let Some(exam_id) = input.exam_id {
         validate_active_exam(connection, exam_id)?;
     }
+    if let Some(plan_id) = load_active_plan(connection, plan_date, input.exam_id)? {
+        return reconcile_active_plan(connection, plan_id, plan_date, input.exam_id, now);
+    }
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The revision plan transaction could not start", error)
     })?;
-    if let Some(plan) = load_active_plan(&transaction, plan_date, input.exam_id)? {
-        return build_plan_view(&transaction, plan);
-    }
     let settings = load_settings(&transaction)?;
     let version: i64 = transaction
         .query_row(
@@ -801,27 +845,143 @@ pub fn generate_daily_plan(
         input.exam_id,
         settings.daily_revision_target,
     )?;
+    let planned_minutes = append_due_candidates(
+        &transaction,
+        plan_id,
+        input.exam_id,
+        &candidates,
+        0,
+        &now_text,
+    )?;
+    transaction
+        .execute(
+            "UPDATE revision_daily_plans SET planned_minutes = ?1 WHERE id = ?2",
+            params![planned_minutes, plan_id],
+        )
+        .map_err(|error| AppError::database("Revision plan totals could not be saved", error))?;
+    transaction
+        .commit()
+        .map_err(|error| AppError::database("Revision plan could not be committed", error))?;
+    load_plan(connection, plan_id)
+}
+
+fn reconcile_active_plan(
+    connection: &mut Connection,
+    plan_id: i64,
+    plan_date: NaiveDate,
+    exam_id: Option<i64>,
+    now: DateTime<Utc>,
+) -> Result<V2RevisionDailyPlan, AppError> {
+    let transaction = connection.transaction().map_err(|error| {
+        AppError::database("The revision plan reconciliation could not start", error)
+    })?;
+    let settings = load_settings(&transaction)?;
+    let candidates = due_candidates(
+        &transaction,
+        plan_date,
+        exam_id,
+        settings.daily_revision_target,
+    )?;
+    let members = {
+        let mut member_statement = transaction
+            .prepare(
+                "SELECT p.concept_id, i.membership_status, i.position
+                 FROM revision_daily_plan_items i
+                 JOIN revision_plan_items p ON p.id = i.plan_item_id
+                 WHERE i.daily_plan_id = ?1",
+            )
+            .map_err(|error| {
+                AppError::database("Revision plan members could not be prepared", error)
+            })?;
+        member_statement
+            .query_map([plan_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|error| AppError::database("Revision plan members could not be read", error))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| AppError::database("A revision plan member is invalid", error))?
+    };
+    let present: std::collections::HashSet<i64> = members
+        .iter()
+        .map(|(concept_id, _, _)| *concept_id)
+        .collect();
+    let used_topics = members
+        .iter()
+        .filter(|(_, status, _)| !matches!(status.as_str(), "removed" | "cancelled" | "deferred"))
+        .count() as i64;
+    let available = (settings.daily_revision_target - used_topics).max(0) as usize;
+    let missing: Vec<DueCandidate> = candidates
+        .into_iter()
+        .filter(|candidate| !present.contains(&candidate.concept_id))
+        .take(available)
+        .collect();
+    if !missing.is_empty() {
+        let next_position = members
+            .iter()
+            .map(|(_, _, position)| *position)
+            .max()
+            .map(|position| position + 1)
+            .unwrap_or(0);
+        let now_text = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let added = append_due_candidates(
+            &transaction,
+            plan_id,
+            exam_id,
+            &missing,
+            next_position,
+            &now_text,
+        )?;
+        transaction
+            .execute(
+                "UPDATE revision_daily_plans
+                 SET planned_minutes = planned_minutes + ?1, updated_at = ?2
+                 WHERE id = ?3",
+                params![added, now_text, plan_id],
+            )
+            .map_err(|error| {
+                AppError::database("Revision plan totals could not be updated", error)
+            })?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| AppError::database("Revision plan could not be reconciled", error))?;
+    load_plan(connection, plan_id)
+}
+
+fn append_due_candidates(
+    transaction: &Transaction<'_>,
+    plan_id: i64,
+    exam_id: Option<i64>,
+    candidates: &[DueCandidate],
+    start_position: i64,
+    now_text: &str,
+) -> Result<i64, AppError> {
     let mut planned_minutes = 0_i64;
-    for (position, candidate) in candidates.iter().enumerate() {
-        let existing: Option<i64> = transaction
+    for (offset, candidate) in candidates.iter().enumerate() {
+        let existing: Option<(i64, String)> = transaction
             .query_row(
-                "SELECT id FROM revision_plan_items
+                "SELECT id, status FROM revision_plan_items
                  WHERE concept_id = ?1
                    AND focus_exam_id IS ?2
-                   AND status IN ('planned','in_progress','backlog')
+                   AND status IN ('planned','in_progress','backlog','deferred')
                  ORDER BY id DESC LIMIT 1",
-                params![candidate.concept_id, input.exam_id],
-                |row| row.get(0),
+                params![candidate.concept_id, exam_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(|error| {
                 AppError::database("Revision plan item could not be checked", error)
             })?;
-        let plan_item_id = if let Some(existing) = existing {
+        let plan_item_id = if let Some((existing, _status)) = existing {
             transaction
                 .execute(
                     "UPDATE revision_plan_items
-                     SET active_daily_plan_id = ?1, updated_at = ?2
+                     SET status = CASE WHEN status = 'deferred' THEN 'planned' ELSE status END,
+                         active_daily_plan_id = ?1, updated_at = ?2
                      WHERE id = ?3",
                     params![plan_id, now_text, existing],
                 )
@@ -839,7 +999,7 @@ pub fn generate_daily_plan(
                      ) VALUES (?1, ?2, ?3, 'planned', ?4, ?5, ?6, ?7, ?8, ?8)",
                     params![
                         candidate.concept_id,
-                        input.exam_id,
+                        exam_id,
                         plan_id,
                         candidate.estimated_minutes,
                         candidate.triage_score,
@@ -860,7 +1020,7 @@ pub fn generate_daily_plan(
                 params![
                     plan_id,
                     plan_item_id,
-                    position as i64,
+                    start_position + offset as i64,
                     candidate.estimated_minutes,
                     candidate.lane,
                     candidate.triage_score,
@@ -872,16 +1032,7 @@ pub fn generate_daily_plan(
             })?;
         planned_minutes += candidate.estimated_minutes;
     }
-    transaction
-        .execute(
-            "UPDATE revision_daily_plans SET planned_minutes = ?1 WHERE id = ?2",
-            params![planned_minutes, plan_id],
-        )
-        .map_err(|error| AppError::database("Revision plan totals could not be saved", error))?;
-    transaction
-        .commit()
-        .map_err(|error| AppError::database("Revision plan could not be committed", error))?;
-    load_plan(connection, plan_id)
+    Ok(planned_minutes)
 }
 
 pub fn rebalance_daily_plan(
@@ -1199,6 +1350,7 @@ fn load_schedule(
     today: NaiveDate,
 ) -> Result<V2RevisionSchedule, AppError> {
     let today_text = date_only::format_date_only(today);
+    let (approved_exam_codes, pending_exam_codes) = schedule_exam_codes(connection, concept_id)?;
     connection
         .query_row(
             "SELECT r.concept_id, c.slug, c.title, c.domain, r.status,
@@ -1229,6 +1381,10 @@ fn load_schedule(
                     overdue_days,
                     mastery_score: row.get(11)?,
                     selection_reason: String::new(),
+                    eligible: !approved_exam_codes.is_empty(),
+                    approved_exam_codes,
+                    pending_exam_codes,
+                    already_scheduled: false,
                 })
             },
         )
@@ -1245,6 +1401,42 @@ fn load_schedule(
                 revision_reason(&schedule.next_revision_date, today, schedule.mastery_score);
             schedule
         })
+}
+
+fn schedule_exam_codes(
+    connection: &Connection,
+    concept_id: i64,
+) -> Result<(Vec<String>, Vec<String>), AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT e.code, nc.status
+             FROM exam_node_concepts nc
+             JOIN exams e ON e.id = nc.exam_id
+             JOIN exam_profiles ep ON ep.exam_id = nc.exam_id AND ep.is_active = 1
+             WHERE nc.concept_id = ?1 AND nc.status IN ('approved','proposed','reviewed')
+             ORDER BY e.display_order, e.code",
+        )
+        .map_err(|error| AppError::database("Revision eligibility could not be prepared", error))?;
+    let rows = statement
+        .query_map([concept_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| AppError::database("Revision eligibility could not be read", error))?;
+    let mut approved = Vec::new();
+    let mut pending = Vec::new();
+    for row in rows {
+        let (code, status) = row
+            .map_err(|error| AppError::database("A revision eligibility row is invalid", error))?;
+        let target = if status == "approved" {
+            &mut approved
+        } else {
+            &mut pending
+        };
+        if !target.contains(&code) {
+            target.push(code);
+        }
+    }
+    Ok((approved, pending))
 }
 
 fn schedules_for_exam(
@@ -1304,6 +1496,93 @@ fn schedules_for_exam(
             result.push(load_schedule(
                 connection,
                 row.map_err(|error| AppError::database("A revision schedule is invalid", error))?,
+                today,
+            )?);
+        }
+        result
+    };
+    schedules.sort_by(|left, right| {
+        left.next_revision_date
+            .cmp(&right.next_revision_date)
+            .then_with(|| left.concept_title.cmp(&right.concept_title))
+    });
+    Ok(schedules)
+}
+
+fn awaiting_approval_schedules(
+    connection: &Connection,
+    exam_id: Option<i64>,
+    today: NaiveDate,
+) -> Result<Vec<V2RevisionSchedule>, AppError> {
+    let mut schedules = if let Some(exam_id) = exam_id {
+        let mut statement = connection
+            .prepare(
+                "SELECT r.concept_id
+                 FROM revision_schedules r
+                 JOIN concepts c ON c.id = r.concept_id AND c.is_archived = 0
+                 WHERE r.status = 'active'
+                   AND EXISTS (
+                     SELECT 1 FROM exam_node_concepts nc
+                     JOIN exam_profiles ep ON ep.exam_id = nc.exam_id AND ep.is_active = 1
+                     WHERE nc.concept_id = r.concept_id AND nc.exam_id = ?1
+                       AND nc.status IN ('proposed','reviewed')
+                   )
+                   AND NOT EXISTS (
+                     SELECT 1 FROM exam_node_concepts nc
+                     JOIN exam_profiles ep ON ep.exam_id = nc.exam_id AND ep.is_active = 1
+                     WHERE nc.concept_id = r.concept_id AND nc.exam_id = ?1
+                       AND nc.status = 'approved'
+                   )
+                 ORDER BY r.next_revision_date, c.title",
+            )
+            .map_err(|error| {
+                AppError::database("Awaiting-approval revisions could not be prepared", error)
+            })?;
+        let rows = statement
+            .query_map([exam_id], |row| row.get::<_, i64>(0))
+            .map_err(|error| {
+                AppError::database("Awaiting-approval revisions could not be read", error)
+            })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(load_schedule(
+                connection,
+                row.map_err(|error| {
+                    AppError::database("An awaiting-approval revision is invalid", error)
+                })?,
+                today,
+            )?);
+        }
+        result
+    } else {
+        let mut statement = connection
+            .prepare(
+                "SELECT r.concept_id
+                 FROM revision_schedules r
+                 JOIN concepts c ON c.id = r.concept_id AND c.is_archived = 0
+                 WHERE r.status = 'active'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM exam_node_concepts nc
+                     JOIN exam_profiles ep ON ep.exam_id = nc.exam_id AND ep.is_active = 1
+                     WHERE nc.concept_id = r.concept_id AND nc.status = 'approved'
+                   )
+                 ORDER BY r.next_revision_date, c.title",
+            )
+            .map_err(|error| {
+                AppError::database("Awaiting-approval revisions could not be prepared", error)
+            })?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(|error| {
+                AppError::database("Awaiting-approval revisions could not be read", error)
+            })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(load_schedule(
+                connection,
+                row.map_err(|error| {
+                    AppError::database("An awaiting-approval revision is invalid", error)
+                })?,
                 today,
             )?);
         }
@@ -1569,10 +1848,6 @@ fn load_plan(connection: &Connection, plan_id: i64) -> Result<V2RevisionDailyPla
     })
 }
 
-fn build_plan_view(connection: &Connection, plan_id: i64) -> Result<V2RevisionDailyPlan, AppError> {
-    load_plan(connection, plan_id)
-}
-
 fn active_plan_item_for_concept(
     connection: &Connection,
     concept_id: i64,
@@ -1623,6 +1898,7 @@ fn parse_date(value: &str, field: &'static str) -> Result<NaiveDate, AppError> {
 mod tests {
     use super::*;
     use crate::v2::V2State;
+    use crate::v2::concepts::{self, V2ConceptMappingUpdateInput};
 
     fn state() -> (tempfile::TempDir, V2State) {
         let root = tempfile::tempdir().expect("temporary directory");
@@ -1651,7 +1927,7 @@ mod tests {
             .expect("concept")
     }
 
-    fn add_mapping(connection: &Connection, concept_id: i64, exam_id: i64) {
+    fn add_mapping(connection: &Connection, concept_id: i64, exam_id: i64) -> i64 {
         let now = "2026-11-04T10:00:00Z";
         connection
             .execute(
@@ -1701,6 +1977,7 @@ mod tests {
                 params![exam_id, node, concept_id, now, version],
             )
             .unwrap();
+        node
     }
 
     #[test]
@@ -2100,5 +2377,425 @@ mod tests {
             })
             .expect("approved dashboard");
         assert_eq!(after.stats.due_today, 1);
+    }
+
+    #[test]
+    fn approving_a_mapping_creates_and_preserves_an_initial_schedule() {
+        let (_root, state) = state();
+        let concept = concept_id(&state);
+        let node = state
+            .with_connection(|connection| {
+                let node = add_mapping(connection, concept, 1);
+                connection
+                    .execute(
+                        "UPDATE exam_node_concepts SET status = 'proposed'
+                         WHERE concept_id = ?1 AND exam_id = 1",
+                        [concept],
+                    )
+                    .map_err(|error| AppError::database("propose mapping", error))?;
+                Ok(node)
+            })
+            .expect("proposed mapping");
+        let before: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM revision_schedules WHERE concept_id = ?1",
+                        [concept],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("schedule count", error))
+            })
+            .expect("schedule count");
+        assert_eq!(before, 0);
+
+        let detail = state
+            .with_connection(|connection| {
+                concepts::update_mapping(
+                    connection,
+                    V2ConceptMappingUpdateInput {
+                        exam_id: 1,
+                        node_id: node,
+                        concept_id: concept,
+                        status: "approved".to_owned(),
+                        notes: Some("Approved locally.".to_owned()),
+                    },
+                    date_only::parse_date_only("2026-11-04").unwrap(),
+                    at(0),
+                )
+            })
+            .expect("approve mapping");
+        assert!(
+            detail
+                .mappings
+                .iter()
+                .find(|mapping| mapping.node_id == node)
+                .is_some_and(|mapping| mapping.is_approved)
+        );
+        let (next, interval, completed, updated) = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT next_revision_date, current_interval_days,
+                                completed_revisions, updated_at
+                         FROM revision_schedules WHERE concept_id = ?1",
+                        [concept],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, i64>(2)?,
+                                row.get::<_, String>(3)?,
+                            ))
+                        },
+                    )
+                    .map_err(|error| AppError::database("initial schedule", error))
+            })
+            .expect("initial schedule");
+        assert_eq!(next, "2026-11-09");
+        assert_eq!(interval, 5);
+        assert_eq!(completed, 0);
+
+        state
+            .with_connection(|connection| {
+                concepts::update_mapping(
+                    connection,
+                    V2ConceptMappingUpdateInput {
+                        exam_id: 1,
+                        node_id: node,
+                        concept_id: concept,
+                        status: "approved".to_owned(),
+                        notes: Some("Approved again.".to_owned()),
+                    },
+                    date_only::parse_date_only("2026-11-20").unwrap(),
+                    at(60),
+                )
+            })
+            .expect("repeat approval");
+        let (next_after, completed_after, updated_after) = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT next_revision_date, completed_revisions, updated_at
+                         FROM revision_schedules WHERE concept_id = ?1",
+                        [concept],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, String>(2)?,
+                            ))
+                        },
+                    )
+                    .map_err(|error| AppError::database("preserved schedule", error))
+            })
+            .expect("preserved schedule");
+        assert_eq!(next_after, next);
+        assert_eq!(completed_after, 0);
+        assert_eq!(updated_after, updated);
+    }
+
+    #[test]
+    fn proposed_schedules_are_reported_as_awaiting_approval_until_approved() {
+        let (_root, state) = state();
+        let concept = concept_id(&state);
+        let node = state
+            .with_connection(|connection| {
+                let node = add_mapping(connection, concept, 1);
+                connection
+                    .execute(
+                        "UPDATE exam_node_concepts SET status = 'proposed'
+                         WHERE concept_id = ?1 AND exam_id = 1",
+                        [concept],
+                    )
+                    .map_err(|error| AppError::database("propose mapping", error))?;
+                schedule_concept(
+                    connection,
+                    V2RevisionScheduleInput {
+                        concept_id: concept,
+                        next_revision_date: Some("2026-11-04".to_owned()),
+                        notes: String::new(),
+                    },
+                    date_only::parse_date_only("2026-11-04").unwrap(),
+                    at(0),
+                )?;
+                Ok(node)
+            })
+            .expect("proposed schedule");
+        let before = state
+            .with_connection(|connection| {
+                dashboard(
+                    connection,
+                    V2RevisionDashboardInput {
+                        exam_id: None,
+                        today: "2026-11-04".to_owned(),
+                    },
+                )
+            })
+            .expect("proposed dashboard");
+        assert_eq!(before.stats.due_today, 0);
+        assert_eq!(before.awaiting_approval.len(), 1);
+        assert_eq!(before.awaiting_approval[0].concept_id, concept);
+        assert!(!before.awaiting_approval[0].eligible);
+        assert_eq!(
+            before.awaiting_approval[0].pending_exam_codes,
+            vec!["csir-net-physics"]
+        );
+
+        state
+            .with_connection(|connection| {
+                concepts::update_mapping(
+                    connection,
+                    V2ConceptMappingUpdateInput {
+                        exam_id: 1,
+                        node_id: node,
+                        concept_id: concept,
+                        status: "approved".to_owned(),
+                        notes: None,
+                    },
+                    date_only::parse_date_only("2026-11-04").unwrap(),
+                    at(1),
+                )
+            })
+            .expect("approve proposed mapping");
+        let after = state
+            .with_connection(|connection| {
+                dashboard(
+                    connection,
+                    V2RevisionDashboardInput {
+                        exam_id: None,
+                        today: "2026-11-04".to_owned(),
+                    },
+                )
+            })
+            .expect("approved dashboard");
+        assert_eq!(after.stats.due_today, 1);
+        assert!(after.awaiting_approval.is_empty());
+        assert_eq!(after.due_today[0].next_revision_date, "2026-11-04");
+        assert!(after.due_today[0].eligible);
+        assert_eq!(
+            after.due_today[0].approved_exam_codes,
+            vec!["csir-net-physics"]
+        );
+    }
+
+    #[test]
+    fn repeated_schedule_requests_do_not_reset_progress_or_due_dates() {
+        let (_root, state) = state();
+        let concept = concept_id(&state);
+        state
+            .with_connection(|connection| {
+                add_mapping(connection, concept, 1);
+                Ok(())
+            })
+            .expect("mapping");
+        let first = state
+            .with_connection(|connection| {
+                schedule_concept(
+                    connection,
+                    V2RevisionScheduleInput {
+                        concept_id: concept,
+                        next_revision_date: Some("2026-11-10".to_owned()),
+                        notes: "First schedule".to_owned(),
+                    },
+                    date_only::parse_date_only("2026-11-04").unwrap(),
+                    at(0),
+                )
+            })
+            .expect("first schedule");
+        assert!(!first.already_scheduled);
+
+        let completed = state
+            .with_connection(|connection| {
+                complete_revision(
+                    connection,
+                    V2CompleteRevisionInput {
+                        concept_id: concept,
+                        outcome: "good".to_owned(),
+                        revision_date: "2026-11-10".to_owned(),
+                        trigger_exam_id: None,
+                        notes: String::new(),
+                        plan_item_id: None,
+                        session_id: None,
+                    },
+                    date_only::parse_date_only("2026-11-10").unwrap(),
+                    at(1),
+                )
+            })
+            .expect("complete revision");
+        let next_after_completion = completed
+            .upcoming
+            .iter()
+            .find(|schedule| schedule.concept_id == concept)
+            .expect("next upcoming")
+            .next_revision_date
+            .clone();
+
+        let repeated = state
+            .with_connection(|connection| {
+                schedule_concept(
+                    connection,
+                    V2RevisionScheduleInput {
+                        concept_id: concept,
+                        next_revision_date: Some("2026-12-01".to_owned()),
+                        notes: "Should not reset".to_owned(),
+                    },
+                    date_only::parse_date_only("2026-11-11").unwrap(),
+                    at(2),
+                )
+            })
+            .expect("repeated schedule");
+        assert!(repeated.already_scheduled);
+        assert_eq!(repeated.next_revision_date, next_after_completion);
+        assert_eq!(repeated.completed_revisions, 1);
+        let history_count: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM revision_history WHERE concept_id = ?1",
+                        [concept],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("history count", error))
+            })
+            .expect("history count");
+        assert_eq!(history_count, 1);
+    }
+
+    #[test]
+    fn generating_an_existing_plan_reconciles_newly_due_concepts_without_duplicates() {
+        let (_root, state) = state();
+        let concept = concept_id(&state);
+        state
+            .with_connection(|connection| {
+                add_mapping(connection, concept, 1);
+                Ok(())
+            })
+            .expect("mapping");
+        let empty = state
+            .with_connection(|connection| {
+                generate_daily_plan(
+                    connection,
+                    V2RevisionPlanInput {
+                        plan_date: "2026-11-04".to_owned(),
+                        exam_id: Some(1),
+                    },
+                    at(0),
+                )
+            })
+            .expect("empty plan");
+        assert_eq!(empty.version, 1);
+        assert!(empty.items.is_empty());
+
+        state
+            .with_connection(|connection| {
+                schedule_concept(
+                    connection,
+                    V2RevisionScheduleInput {
+                        concept_id: concept,
+                        next_revision_date: Some("2026-11-04".to_owned()),
+                        notes: String::new(),
+                    },
+                    date_only::parse_date_only("2026-11-04").unwrap(),
+                    at(1),
+                )?;
+                Ok(())
+            })
+            .expect("due schedule");
+
+        let reconciled = state
+            .with_connection(|connection| {
+                generate_daily_plan(
+                    connection,
+                    V2RevisionPlanInput {
+                        plan_date: "2026-11-04".to_owned(),
+                        exam_id: Some(1),
+                    },
+                    at(2),
+                )
+            })
+            .expect("reconciled plan");
+        assert_eq!(reconciled.version, 1);
+        assert_eq!(reconciled.items.len(), 1);
+        assert_eq!(reconciled.items[0].concept_id, concept);
+        assert_eq!(reconciled.planned_minutes, 30);
+
+        let repeated = state
+            .with_connection(|connection| {
+                generate_daily_plan(
+                    connection,
+                    V2RevisionPlanInput {
+                        plan_date: "2026-11-04".to_owned(),
+                        exam_id: Some(1),
+                    },
+                    at(3),
+                )
+            })
+            .expect("repeated plan");
+        assert_eq!(repeated.version, 1);
+        assert_eq!(repeated.items.len(), 1);
+        assert_eq!(repeated.planned_minutes, 30);
+    }
+
+    #[test]
+    fn schedules_and_history_survive_reopening_the_database() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let path = root.path().join("v2");
+        {
+            let state = V2State::initialize(&path);
+            let concept = concept_id(&state);
+            state
+                .with_connection(|connection| {
+                    add_mapping(connection, concept, 1);
+                    schedule_concept(
+                        connection,
+                        V2RevisionScheduleInput {
+                            concept_id: concept,
+                            next_revision_date: Some("2026-11-05".to_owned()),
+                            notes: "Persisted schedule".to_owned(),
+                        },
+                        date_only::parse_date_only("2026-11-04").unwrap(),
+                        at(0),
+                    )?;
+                    complete_revision(
+                        connection,
+                        V2CompleteRevisionInput {
+                            concept_id: concept,
+                            outcome: "good".to_owned(),
+                            revision_date: "2026-11-05".to_owned(),
+                            trigger_exam_id: None,
+                            notes: String::new(),
+                            plan_item_id: None,
+                            session_id: None,
+                        },
+                        date_only::parse_date_only("2026-11-05").unwrap(),
+                        at(1),
+                    )?;
+                    Ok(())
+                })
+                .expect("persisted revision");
+        }
+
+        let reopened = V2State::initialize(&path);
+        let dashboard = reopened
+            .with_connection(|connection| {
+                dashboard(
+                    connection,
+                    V2RevisionDashboardInput {
+                        exam_id: None,
+                        today: "2026-11-05".to_owned(),
+                    },
+                )
+            })
+            .expect("reopened dashboard");
+        let schedule = dashboard
+            .upcoming
+            .iter()
+            .find(|schedule| schedule.concept_title == "Kinematics")
+            .expect("persisted upcoming schedule");
+        assert_eq!(schedule.completed_revisions, 1);
+        assert_eq!(schedule.previous_outcome.as_deref(), Some("good"));
+        assert_eq!(dashboard.recent_history.len(), 1);
+        assert_eq!(dashboard.recent_history[0].outcome, "good");
     }
 }

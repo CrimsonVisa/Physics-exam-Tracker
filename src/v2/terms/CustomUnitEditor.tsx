@@ -8,6 +8,7 @@ import {
   type V2CustomUnitSiClassification,
 } from '../api';
 import { DialogShell } from '../DialogShell';
+import { MathPreview } from '../math/MathPreview';
 import { TERM_LIBRARY } from './data';
 import {
   CONVERSION_KIND_HINTS,
@@ -58,6 +59,20 @@ export function CustomUnitEditor({ unit, onClose, onSaved }: CustomUnitEditorPro
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const builtInUnit = form.name.trim()
+    ? (TERM_LIBRARY.entries.find(
+        (entry) =>
+          (entry.kind === 'base-unit' || entry.kind === 'derived-unit') &&
+          entry.term.trim().toLowerCase() === form.name.trim().toLowerCase(),
+      ) ?? null)
+    : null;
+  const builtInSymbol = form.symbol.trim()
+    ? (TERM_LIBRARY.entries.find(
+        (entry) =>
+          (entry.kind === 'base-unit' || entry.kind === 'derived-unit') &&
+          entry.siUnit?.trim().toLowerCase() === form.symbol.trim().toLowerCase(),
+      ) ?? null)
+    : null;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -95,30 +110,6 @@ export function CustomUnitEditor({ unit, onClose, onSaved }: CustomUnitEditorPro
     if (busy) {
       return;
     }
-    const builtInUnit = TERM_LIBRARY.entries.find(
-      (entry) =>
-        (entry.kind === 'base-unit' || entry.kind === 'derived-unit') &&
-        entry.term.trim().toLowerCase() === form.name.trim().toLowerCase(),
-    );
-    if (builtInUnit) {
-      setFieldErrors({
-        name: `The built-in unit "${builtInUnit.term}" already uses this name. Choose a different name for your custom unit.`,
-      });
-      setFormError(null);
-      return;
-    }
-    const builtInSymbol = TERM_LIBRARY.entries.find(
-      (entry) =>
-        (entry.kind === 'base-unit' || entry.kind === 'derived-unit') &&
-        entry.siUnit?.trim().toLowerCase() === form.symbol.trim().toLowerCase(),
-    );
-    if (builtInSymbol) {
-      setFieldErrors({
-        symbol: `The built-in unit "${builtInSymbol.term}" already uses this symbol. Choose a different symbol.`,
-      });
-      setFormError(null);
-      return;
-    }
     setBusy(true);
     setFieldErrors({});
     setFormError(null);
@@ -148,7 +139,7 @@ export function CustomUnitEditor({ unit, onClose, onSaved }: CustomUnitEditorPro
       onClose={onClose}
     >
       <form className="v2-reference-editor" onSubmit={submit}>
-        <header className="v2-reference-editor-header">
+        <header className="v2-reference-editor-header v2-dialog-header">
           <div>
             <p className="eyebrow">Custom reference</p>
             <h2>{unit ? 'Edit unit' : 'Add unit'}</h2>
@@ -163,196 +154,246 @@ export function CustomUnitEditor({ unit, onClose, onSaved }: CustomUnitEditorPro
           </button>
         </header>
 
-        {formError ? (
-          <p className="v2-inline-error" role="alert">
-            {formError}
+        <div className="v2-reference-editor-body v2-dialog-body">
+          {formError ? (
+            <p className="v2-inline-error" role="alert">
+              {formError}
+            </p>
+          ) : null}
+
+          <div className="v2-reference-editor-grid">
+            <label className="v2-field">
+              <span>Unit name</span>
+              <input
+                {...fieldProps('name')}
+                autoFocus
+                maxLength={200}
+                onChange={(event) => update('name', event.target.value)}
+                required
+                value={form.name}
+              />
+              {builtInUnit && !fieldErrors.name ? (
+                <span className="v2-field-hint" role="status">
+                  A built-in unit already uses this name. Your custom entry will be stored
+                  separately and labelled User-defined.
+                </span>
+              ) : null}
+              {fieldError('name')}
+            </label>
+            <label className="v2-field">
+              <span>Symbol</span>
+              <input
+                {...fieldProps('symbol')}
+                aria-label="Symbol"
+                maxLength={80}
+                onChange={(event) => update('symbol', event.target.value)}
+                required
+                value={form.symbol}
+              />
+              <span className="v2-field-hint">
+                {String.raw`LaTeX is supported: \mu_0, \Omega, \mathrm{kg\,m\,s^{-2}}. Plain symbols such as m or s also work.`}
+              </span>
+              <MathPreview compact label="Symbol preview" source={form.symbol} />
+              {builtInSymbol && !fieldErrors.symbol ? (
+                <span className="v2-field-hint" role="status">
+                  A built-in unit already uses this symbol. Your custom entry will be stored
+                  separately and labelled User-defined.
+                </span>
+              ) : null}
+              {fieldError('symbol')}
+            </label>
+            <label className="v2-field">
+              <span>Physical quantity</span>
+              <input
+                {...fieldProps('quantity')}
+                maxLength={200}
+                onChange={(event) => update('quantity', event.target.value)}
+                placeholder="e.g. Length, Energy, Magnetic flux"
+                required
+                value={form.quantity}
+              />
+              {fieldError('quantity')}
+            </label>
+            <label className="v2-field">
+              <span>Physical dimension</span>
+              <input
+                {...fieldProps('dimension')}
+                aria-label="Physical dimension"
+                maxLength={200}
+                onChange={(event) => update('dimension', event.target.value)}
+                placeholder="e.g. L, M L^2 T^-2"
+                value={form.dimension}
+              />
+              <span className="v2-field-hint">
+                {String.raw`LaTeX is supported, for example \mathsf{M}\mathsf{L}^{2}\mathsf{T}^{-2}.`}
+              </span>
+              <MathPreview compact label="Dimension preview" source={form.dimension} />
+              {fieldError('dimension')}
+            </label>
+            <label className="v2-field">
+              <span>SI classification</span>
+              <select
+                {...fieldProps('siClassification')}
+                onChange={(event) =>
+                  update('siClassification', event.target.value as V2CustomUnitSiClassification)
+                }
+                value={form.siClassification}
+              >
+                {Object.entries(SI_CLASSIFICATION_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              {fieldError('siClassification')}
+            </label>
+            <label className="v2-field">
+              <span>Conversion kind</span>
+              <select
+                {...fieldProps('conversionKind')}
+                onChange={(event) =>
+                  setConversionKind(event.target.value as V2CustomUnitConversionKind)
+                }
+                value={form.conversionKind}
+              >
+                {Object.entries(CONVERSION_KIND_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <span className="v2-field-hint">{CONVERSION_KIND_HINTS[form.conversionKind]}</span>
+              {fieldError('conversionKind')}
+            </label>
+
+            {form.conversionKind === 'scalar' ? (
+              <>
+                <label className="v2-field">
+                  <span>Conversion factor</span>
+                  <input
+                    {...fieldProps('conversionFactor')}
+                    maxLength={200}
+                    onChange={(event) => update('conversionFactor', event.target.value)}
+                    placeholder="e.g. 0.3048 or 1.602e-19"
+                    required
+                    value={form.conversionFactor}
+                  />
+                  {fieldError('conversionFactor')}
+                </label>
+                <label className="v2-field">
+                  <span>Reference unit</span>
+                  <input
+                    {...fieldProps('conversionReferenceUnit')}
+                    aria-label="Reference unit"
+                    maxLength={120}
+                    onChange={(event) => update('conversionReferenceUnit', event.target.value)}
+                    placeholder="e.g. m"
+                    required
+                    value={form.conversionReferenceUnit}
+                  />
+                  <MathPreview
+                    compact
+                    label="Reference unit preview"
+                    source={form.conversionReferenceUnit}
+                  />
+                  {fieldError('conversionReferenceUnit')}
+                </label>
+              </>
+            ) : null}
+
+            {form.conversionKind === 'contextual' ? (
+              <>
+                <label className="v2-field">
+                  <span>Reference unit</span>
+                  <input
+                    {...fieldProps('conversionReferenceUnit')}
+                    aria-label="Reference unit"
+                    maxLength={120}
+                    onChange={(event) => update('conversionReferenceUnit', event.target.value)}
+                    placeholder="Optional reference unit"
+                    value={form.conversionReferenceUnit}
+                  />
+                  <MathPreview
+                    compact
+                    label="Reference unit preview"
+                    source={form.conversionReferenceUnit}
+                  />
+                  {fieldError('conversionReferenceUnit')}
+                </label>
+                <label className="v2-field v2-reference-field-wide">
+                  <span>Conversion context</span>
+                  <textarea
+                    {...fieldProps('conversionNote')}
+                    aria-label="Conversion context"
+                    maxLength={2000}
+                    onChange={(event) => update('conversionNote', event.target.value)}
+                    placeholder="Describe the convention, material, temperature or context required."
+                    required
+                    rows={2}
+                    value={form.conversionNote}
+                  />
+                  <MathPreview
+                    label="Mathematical preview"
+                    mode="text"
+                    source={form.conversionNote}
+                  />
+                  {fieldError('conversionNote')}
+                </label>
+              </>
+            ) : null}
+
+            <label className="v2-field v2-reference-field-wide">
+              <span>Description</span>
+              <textarea
+                {...fieldProps('description')}
+                aria-label="Description"
+                maxLength={6000}
+                onChange={(event) => update('description', event.target.value)}
+                required
+                rows={3}
+                value={form.description}
+              />
+              <span className="v2-field-hint">
+                Plain text is fine. Wrap inline mathematics in $...$ or \(...\), and display
+                mathematics in $$...$$ or \[...\].
+              </span>
+              <MathPreview label="Mathematical preview" mode="text" source={form.description} />
+              {fieldError('description')}
+            </label>
+            <label className="v2-field v2-reference-field-wide">
+              <span>Source or reference</span>
+              <input
+                {...fieldProps('source')}
+                maxLength={1000}
+                onChange={(event) => update('source', event.target.value)}
+                placeholder="Optional standard, textbook or note"
+                value={form.source}
+              />
+              {fieldError('source')}
+            </label>
+            <label className="v2-field v2-reference-field-wide">
+              <span>Notes</span>
+              <textarea
+                {...fieldProps('notes')}
+                aria-label="Notes"
+                maxLength={6000}
+                onChange={(event) => update('notes', event.target.value)}
+                placeholder="Optional usage notes or caveats"
+                rows={2}
+                value={form.notes}
+              />
+              <MathPreview label="Mathematical preview" mode="text" source={form.notes} />
+              {fieldError('notes')}
+            </label>
+          </div>
+
+          <p className="v2-reference-disclaimer">
+            Conversion details are reference information only. Physics Tracker does not run an
+            automatic conversion engine or alter official SI definitions.
           </p>
-        ) : null}
-
-        <div className="v2-reference-editor-grid">
-          <label className="v2-field">
-            <span>Unit name</span>
-            <input
-              {...fieldProps('name')}
-              autoFocus
-              maxLength={200}
-              onChange={(event) => update('name', event.target.value)}
-              required
-              value={form.name}
-            />
-            {fieldError('name')}
-          </label>
-          <label className="v2-field">
-            <span>Symbol</span>
-            <input
-              {...fieldProps('symbol')}
-              maxLength={80}
-              onChange={(event) => update('symbol', event.target.value)}
-              required
-              value={form.symbol}
-            />
-            {fieldError('symbol')}
-          </label>
-          <label className="v2-field">
-            <span>Physical quantity</span>
-            <input
-              {...fieldProps('quantity')}
-              maxLength={200}
-              onChange={(event) => update('quantity', event.target.value)}
-              placeholder="e.g. Length, Energy, Magnetic flux"
-              required
-              value={form.quantity}
-            />
-            {fieldError('quantity')}
-          </label>
-          <label className="v2-field">
-            <span>Physical dimension</span>
-            <input
-              {...fieldProps('dimension')}
-              maxLength={200}
-              onChange={(event) => update('dimension', event.target.value)}
-              placeholder="e.g. L, M L^2 T^-2"
-              value={form.dimension}
-            />
-            {fieldError('dimension')}
-          </label>
-          <label className="v2-field">
-            <span>SI classification</span>
-            <select
-              {...fieldProps('siClassification')}
-              onChange={(event) =>
-                update('siClassification', event.target.value as V2CustomUnitSiClassification)
-              }
-              value={form.siClassification}
-            >
-              {Object.entries(SI_CLASSIFICATION_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            {fieldError('siClassification')}
-          </label>
-          <label className="v2-field">
-            <span>Conversion kind</span>
-            <select
-              {...fieldProps('conversionKind')}
-              onChange={(event) =>
-                setConversionKind(event.target.value as V2CustomUnitConversionKind)
-              }
-              value={form.conversionKind}
-            >
-              {Object.entries(CONVERSION_KIND_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <span className="v2-field-hint">{CONVERSION_KIND_HINTS[form.conversionKind]}</span>
-            {fieldError('conversionKind')}
-          </label>
-
-          {form.conversionKind === 'scalar' ? (
-            <>
-              <label className="v2-field">
-                <span>Conversion factor</span>
-                <input
-                  {...fieldProps('conversionFactor')}
-                  maxLength={200}
-                  onChange={(event) => update('conversionFactor', event.target.value)}
-                  placeholder="e.g. 0.3048 or 1.602e-19"
-                  required
-                  value={form.conversionFactor}
-                />
-                {fieldError('conversionFactor')}
-              </label>
-              <label className="v2-field">
-                <span>Reference unit</span>
-                <input
-                  {...fieldProps('conversionReferenceUnit')}
-                  maxLength={120}
-                  onChange={(event) => update('conversionReferenceUnit', event.target.value)}
-                  placeholder="e.g. m"
-                  required
-                  value={form.conversionReferenceUnit}
-                />
-                {fieldError('conversionReferenceUnit')}
-              </label>
-            </>
-          ) : null}
-
-          {form.conversionKind === 'contextual' ? (
-            <>
-              <label className="v2-field">
-                <span>Reference unit</span>
-                <input
-                  {...fieldProps('conversionReferenceUnit')}
-                  maxLength={120}
-                  onChange={(event) => update('conversionReferenceUnit', event.target.value)}
-                  placeholder="Optional reference unit"
-                  value={form.conversionReferenceUnit}
-                />
-                {fieldError('conversionReferenceUnit')}
-              </label>
-              <label className="v2-field v2-reference-field-wide">
-                <span>Conversion context</span>
-                <textarea
-                  {...fieldProps('conversionNote')}
-                  maxLength={2000}
-                  onChange={(event) => update('conversionNote', event.target.value)}
-                  placeholder="Describe the convention, material, temperature or context required."
-                  required
-                  rows={2}
-                  value={form.conversionNote}
-                />
-                {fieldError('conversionNote')}
-              </label>
-            </>
-          ) : null}
-
-          <label className="v2-field v2-reference-field-wide">
-            <span>Description</span>
-            <textarea
-              {...fieldProps('description')}
-              maxLength={6000}
-              onChange={(event) => update('description', event.target.value)}
-              required
-              rows={3}
-              value={form.description}
-            />
-            {fieldError('description')}
-          </label>
-          <label className="v2-field v2-reference-field-wide">
-            <span>Source or reference</span>
-            <input
-              {...fieldProps('source')}
-              maxLength={1000}
-              onChange={(event) => update('source', event.target.value)}
-              placeholder="Optional standard, textbook or note"
-              value={form.source}
-            />
-            {fieldError('source')}
-          </label>
-          <label className="v2-field v2-reference-field-wide">
-            <span>Notes</span>
-            <textarea
-              {...fieldProps('notes')}
-              maxLength={6000}
-              onChange={(event) => update('notes', event.target.value)}
-              placeholder="Optional usage notes or caveats"
-              rows={2}
-              value={form.notes}
-            />
-            {fieldError('notes')}
-          </label>
         </div>
 
-        <p className="v2-reference-disclaimer">
-          Conversion details are reference information only. Physics Tracker does not run an
-          automatic conversion engine or alter official SI definitions.
-        </p>
-
-        <footer className="v2-reference-editor-actions">
+        <footer className="v2-reference-editor-actions v2-dialog-footer">
           <button className="secondary-button" disabled={busy} onClick={onClose} type="button">
             Cancel
           </button>

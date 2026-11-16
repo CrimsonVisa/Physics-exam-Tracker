@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import type { V2ExamSummary } from '../api';
 import { FormulaEquation as MathExpression } from '../formulas/FormulaEquation';
+import { MathText } from '../MathText';
 import { EXAM_META, RELEVANCE_LABELS } from '../formulas/taxonomy';
 import type { ExamCode } from '../formulas/types';
 import { FORMULA_REF_TITLES } from './formulaRefs';
@@ -246,7 +247,9 @@ export function TermDetail({
             aria-labelledby="term-definition-heading"
           >
             <h2 id="term-definition-heading">Definition</h2>
-            <p className="v2-terms-definition">{entry.definition}</p>
+            <p className="v2-terms-definition">
+              <MathText text={entry.definition} />
+            </p>
           </section>
 
           {entry.conditions && entry.conditions.length > 0 ? (
@@ -257,7 +260,9 @@ export function TermDetail({
               <h2 id="term-conditions-heading">Conditions and conventions</h2>
               <ul className="v2-terms-list">
                 {entry.conditions.map((condition) => (
-                  <li key={condition}>{condition}</li>
+                  <li key={condition}>
+                    <MathText text={condition} />
+                  </li>
                 ))}
               </ul>
             </section>
@@ -357,7 +362,9 @@ export function TermDetail({
                         </div>
                       ))}
                       {syllabusLink.note ? (
-                        <p className="v2-empty-copy">{syllabusLink.note}</p>
+                        <p className="v2-empty-copy">
+                          <MathText text={syllabusLink.note} />
+                        </p>
                       ) : null}
                     </li>
                   );

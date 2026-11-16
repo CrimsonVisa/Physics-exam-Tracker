@@ -1687,6 +1687,9 @@ fn validate_source_reference(
                 let allocated: i64 = connection
                     .query_row(
                         "SELECT EXISTS(
+                            SELECT 1 FROM session_exam_associations
+                            WHERE session_id = ?1 AND exam_id = ?2
+                            UNION ALL
                             SELECT 1 FROM session_exam_allocations
                             WHERE session_id = ?1 AND exam_id = ?2
                          )",

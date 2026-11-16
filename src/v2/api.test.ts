@@ -35,6 +35,7 @@ import {
   deleteV2StickyNote,
   searchV2Concepts,
   setV2SessionAllocations,
+  setV2SessionExams,
   startV2Timer,
   updateV2ConceptMastery,
   updateV2TimerSettings,
@@ -145,6 +146,11 @@ describe('V2 API layer', () => {
           { examId: 2, allocatedSeconds: 300 },
         ],
       },
+    });
+
+    await setV2SessionExams({ sessionId: 7, examIds: [1, 2, 4] });
+    expect(invokeMock).toHaveBeenLastCalledWith('v2_set_session_exams', {
+      input: { sessionId: 7, examIds: [1, 2, 4] },
     });
 
     await getV2StudyTotals();

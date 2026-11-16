@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { toCommandError } from '../lib/commandError';
+import { MathText } from './MathText';
+import { MathPreview } from './math/MathPreview';
 import {
   applyV2PyqImport,
   archiveV2MockTest,
@@ -1043,10 +1045,16 @@ function QuestionForm({
       <label className="v2-field">
         <span>Question statement</span>
         <textarea
+          aria-label="Question statement"
           onChange={(event) => setStatement(event.target.value)}
           rows={4}
           value={statement}
         />
+        <span className="v2-field-hint">
+          Use $...$ or \(...\) for inline mathematics and $$...$$ or \[...\] for display
+          mathematics. Plain text remains unchanged.
+        </span>
+        <MathPreview label="Mathematical preview" mode="text" source={statement} />
       </label>
       <label className="v2-field">
         <span>Answer choices (one per line; optional A) prefix)</span>
@@ -1211,26 +1219,32 @@ function QuestionForm({
         <label className="v2-field">
           <span>Official explanation</span>
           <textarea
+            aria-label="Official explanation"
             onChange={(event) => setOfficialExplanation(event.target.value)}
             rows={3}
             value={officialExplanation}
           />
+          <MathPreview label="Mathematical preview" mode="text" source={officialExplanation} />
         </label>
         <label className="v2-field">
           <span>Third-party solution</span>
           <textarea
+            aria-label="Third-party solution"
             onChange={(event) => setThirdPartySolution(event.target.value)}
             rows={3}
             value={thirdPartySolution}
           />
+          <MathPreview label="Mathematical preview" mode="text" source={thirdPartySolution} />
         </label>
         <label className="v2-field">
           <span>User note</span>
           <textarea
+            aria-label="User note"
             onChange={(event) => setUserNote(event.target.value)}
             rows={3}
             value={userNote}
           />
+          <MathPreview label="Mathematical preview" mode="text" source={userNote} />
         </label>
       </div>
       <div className="v2-form-actions">
@@ -1313,7 +1327,11 @@ function QuestionDetailPanel({
         </span>
       </div>
       <p className="v2-practice-statement">
-        {detail.question.statement || 'Statement held in local source reference.'}
+        {detail.question.statement ? (
+          <MathText text={detail.question.statement} />
+        ) : (
+          'Statement held in local source reference.'
+        )}
       </p>
       <dl className="v2-fact-list">
         <div>
@@ -1334,7 +1352,7 @@ function QuestionDetailPanel({
         <div>
           <dt>Correct answer</dt>
           <dd>
-            {detail.correctAnswer || 'Not recorded'}
+            {detail.correctAnswer ? <MathText text={detail.correctAnswer} /> : 'Not recorded'}
             {detail.question.correctRange ? ` · range ${detail.question.correctRange}` : ''}
             {detail.question.numericTolerance > 0
               ? ` · tolerance ${detail.question.numericTolerance}`
@@ -1384,19 +1402,25 @@ function QuestionDetailPanel({
       {detail.question.officialExplanation && (
         <div>
           <h3>Official explanation</h3>
-          <p>{detail.question.officialExplanation}</p>
+          <p>
+            <MathText text={detail.question.officialExplanation} />
+          </p>
         </div>
       )}
       {detail.question.thirdPartySolution && (
         <div>
           <h3>Third-party solution</h3>
-          <p>{detail.question.thirdPartySolution}</p>
+          <p>
+            <MathText text={detail.question.thirdPartySolution} />
+          </p>
         </div>
       )}
       {detail.question.userNote && (
         <div>
           <h3>User note</h3>
-          <p>{detail.question.userNote}</p>
+          <p>
+            <MathText text={detail.question.userNote} />
+          </p>
         </div>
       )}
       <div className="v2-form-actions">
@@ -1480,7 +1504,11 @@ function QuestionDetailPanel({
                 {attempt.marksObtained} marks · {minutesLabel(attempt.timeSpentSeconds)} · key{' '}
                 {attempt.answerKeyVersion || 'unversioned'}
               </span>
-              {attempt.selectedAnswer && <span>Answer: {attempt.selectedAnswer}</span>}
+              {attempt.selectedAnswer && (
+                <span>
+                  Answer: <MathText text={attempt.selectedAnswer} />
+                </span>
+              )}
             </li>
           ))}
         </ul>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { V2ExamSummary } from '../api';
 import { FormulaEquation as MathExpression } from '../formulas/FormulaEquation';
+import { MathText } from '../MathText';
 import { EXAM_CODES, EXAM_META } from '../formulas/taxonomy';
 import type { ExamCode } from '../formulas/types';
 import { TERM_LIBRARY } from './data';
@@ -412,7 +413,9 @@ export function TermReferenceScreen({
                                     />
                                   </span>
                                 ) : null}
-                                <span className="v2-terms-card-definition">{entry.definition}</span>
+                                <span className="v2-terms-card-definition">
+                                  <MathText text={entry.definition} />
+                                </span>
                                 <span className="v2-terms-card-meta">
                                   <span className="v2-terms-badge" data-tone="kind">
                                     {TERM_KIND_LABELS[entry.kind]}

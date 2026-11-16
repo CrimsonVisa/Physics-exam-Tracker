@@ -5,6 +5,8 @@ import {
   type V2BuiltinConstant,
   type V2BuiltinConstantCatalog,
 } from '../api';
+import { MathText } from '../MathText';
+import { MathExpression } from '../math/MathExpression';
 import { BuiltinConstantDetail } from './BuiltinConstantDetail';
 
 function matches(constant: V2BuiltinConstant, query: string): boolean {
@@ -174,10 +176,18 @@ export function BuiltinConstantsLibrary() {
                   </span>
                 </span>
                 <span className="v2-reference-card-value">
-                  {constant.symbol} = {constant.valueText}
-                  {constant.unit ? ` ${constant.unit}` : ''}
+                  <MathExpression latex={constant.symbol} plainText={constant.symbol} /> ={' '}
+                  {constant.valueText}
+                  {constant.unit ? (
+                    <>
+                      {' '}
+                      <MathExpression latex={constant.unit} plainText={constant.unit} />
+                    </>
+                  ) : null}
                 </span>
-                <span className="v2-reference-card-description">{constant.description}</span>
+                <span className="v2-reference-card-description">
+                  <MathText text={constant.description} />
+                </span>
                 <span className="v2-reference-card-meta">
                   <span className="v2-reference-badge" data-tone="category">
                     {constant.category}

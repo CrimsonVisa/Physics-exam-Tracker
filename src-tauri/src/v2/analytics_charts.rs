@@ -206,8 +206,8 @@ fn study_by_exam(
     let mut statement = connection
         .prepare(
             "SELECT a.exam_id, e.code, e.short_name,
-                    SUM(a.allocated_seconds), COUNT(DISTINCT a.session_id)
-             FROM session_exam_allocations a
+                    SUM(a.credit_seconds), COUNT(DISTINCT a.session_id)
+             FROM session_exam_associations a
              JOIN study_sessions s ON s.id = a.session_id
              JOIN exams e ON e.id = a.exam_id
              WHERE s.session_date BETWEEN ?1 AND ?2
@@ -288,8 +288,8 @@ fn daily_study(
     to: &str,
 ) -> Result<Vec<V2ChartPoint>, AppError> {
     let sql = if exam_id.is_some() {
-        "SELECT s.session_date, SUM(a.allocated_seconds), COUNT(DISTINCT s.id)
-         FROM session_exam_allocations a
+        "SELECT s.session_date, SUM(a.credit_seconds), COUNT(DISTINCT s.id)
+         FROM session_exam_associations a
          JOIN study_sessions s ON s.id = a.session_id
          WHERE a.exam_id = ?3 AND s.session_date BETWEEN ?1 AND ?2
          GROUP BY s.session_date ORDER BY s.session_date"
@@ -659,12 +659,11 @@ pub fn get_analytics_charts(
     let study_by_subject = study_by_subject(connection, input.exam_id, &from_text, &to_text)?;
     let daily_study = daily_study(connection, input.exam_id, &from_text, &to_text)?;
     let weekly_consistency = weekly_consistency(from, to, &daily_study);
-    let allocated_seconds = study_by_exam
-        .iter()
-        .map(|entry| entry.allocated_seconds)
-        .sum();
     let total_seconds = if input.exam_id.is_some() {
-        allocated_seconds
+        study_by_exam
+            .iter()
+            .map(|entry| entry.allocated_seconds)
+            .sum::<i64>()
     } else {
         connection
             .query_row(
@@ -674,6 +673,24 @@ pub fn get_analytics_charts(
                 |row| row.get(0),
             )
             .map_err(|error| AppError::database("Total study time could not be read", error))?
+    };
+    let allocated_seconds = if input.exam_id.is_some() {
+        total_seconds
+    } else {
+        connection
+            .query_row(
+                "SELECT COALESCE(SUM(MIN(s.duration_seconds, credits.credited_seconds)), 0)
+                 FROM study_sessions s
+                 JOIN (
+                     SELECT session_id, SUM(credit_seconds) AS credited_seconds
+                     FROM session_exam_associations
+                     GROUP BY session_id
+                 ) credits ON credits.session_id = s.id
+                 WHERE s.session_date BETWEEN ?1 AND ?2",
+                params![from_text, to_text],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::database("Allocated study time could not be read", error))?
     };
     let (question_outcomes, outcomes_by_exam) =
         question_outcomes(connection, input.exam_id, &from_text, &to_text)?;
@@ -771,7 +788,7 @@ mod tests {
                 let session_id = connection.last_insert_rowid();
                 connection
                     .execute(
-                        "INSERT INTO session_exam_allocations(session_id,exam_id,allocated_seconds,created_at,updated_at)
+                        "INSERT INTO session_exam_associations(session_id,exam_id,credit_seconds,created_at,updated_at)
                          VALUES(?1,1,1200,?2,?2)",
                         params![session_id, now.to_rfc3339()],
                     )
@@ -789,6 +806,55 @@ mod tests {
         assert_eq!(charts.weekly_consistency.len(), 1);
         assert_eq!(charts.weekly_consistency[0].active_days, 1);
         assert_eq!(charts.weekly_consistency[0].eligible_days, 1);
+    }
+
+    #[test]
+    fn two_hour_shared_session_charts_do_not_multiply_combined_time() {
+        let (_root, state) = state();
+        state
+            .with_connection(|connection| {
+                crate::v2::study::create_manual_session(
+                    connection,
+                    crate::v2::study::V2CreateManualSessionInput {
+                        session_date: "2026-11-10".to_owned(),
+                        duration_seconds: 7_200,
+                        notes: String::new(),
+                        primary_exam_id: None,
+                        exam_ids: vec![1, 2, 4],
+                    },
+                    at(0),
+                )
+                .map(|_| ())
+            })
+            .expect("shared session");
+        let combined = state
+            .with_connection(|connection| {
+                get_analytics_charts(connection, input(None, "2026-11-10", "2026-11-10"))
+            })
+            .expect("combined charts");
+        assert_eq!(combined.total_seconds, 7_200);
+        assert_eq!(combined.allocated_seconds, 7_200);
+        assert_eq!(combined.unallocated_seconds, 0);
+        assert_eq!(combined.study_by_exam.len(), 3);
+        assert!(
+            combined
+                .study_by_exam
+                .iter()
+                .all(|exam| exam.allocated_seconds == 7_200)
+        );
+        assert_eq!(combined.daily_study.len(), 1);
+        assert_eq!(combined.daily_study[0].seconds, 7_200);
+        assert_eq!(combined.weekly_consistency[0].study_seconds, 7_200);
+
+        let exam = state
+            .with_connection(|connection| {
+                get_analytics_charts(connection, input(Some(1), "2026-11-10", "2026-11-10"))
+            })
+            .expect("exam charts");
+        assert_eq!(exam.total_seconds, 7_200);
+        assert_eq!(exam.allocated_seconds, 7_200);
+        assert_eq!(exam.daily_study[0].seconds, 7_200);
+        assert_eq!(exam.study_by_exam[0].allocated_seconds, 7_200);
     }
 
     #[test]

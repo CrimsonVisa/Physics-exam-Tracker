@@ -13,6 +13,7 @@ vi.mock('../api', () => ({
 import * as api from '../api';
 
 const mockedList = vi.mocked(api.listV2CustomUnits);
+const mockedSave = vi.mocked(api.saveV2CustomUnit);
 const mockedDelete = vi.mocked(api.deleteV2CustomUnit);
 
 function unit(overrides: Partial<V2CustomUnit> = {}): V2CustomUnit {
@@ -49,6 +50,57 @@ describe('CustomUnitLibrary', () => {
 
     expect(await screen.findByText('No custom units yet')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add your first unit' })).toBeInTheDocument();
+  });
+
+  it('creates a unit with conversion metadata and confirms the save', async () => {
+    const user = userEvent.setup();
+    const saved = unit({
+      id: 9,
+      name: 'Pace',
+      symbol: 'pace',
+      conversionFactor: '0.762',
+      description: 'A walking pace unit.',
+    });
+    mockedSave.mockResolvedValue(saved);
+    render(<CustomUnitLibrary />);
+
+    await user.click(await screen.findByRole('button', { name: 'Add your first unit' }));
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Unit name'), 'Pace');
+    await user.type(within(dialog).getByLabelText(/^Symbol/), 'pace');
+    await user.type(within(dialog).getByLabelText('Physical quantity'), 'Length');
+    await user.type(within(dialog).getByLabelText('Description'), 'A walking pace unit.');
+    await user.selectOptions(within(dialog).getByLabelText(/Conversion kind/), 'scalar');
+    await user.type(within(dialog).getByLabelText(/Conversion factor/), '0.762');
+    await user.type(within(dialog).getByLabelText('Reference unit'), 'm');
+    await user.click(within(dialog).getByRole('button', { name: 'Add unit' }));
+
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: null,
+          name: 'Pace',
+          symbol: 'pace',
+          quantity: 'Length',
+          siClassification: 'non_si',
+          conversionKind: 'scalar',
+          conversionFactor: '0.762',
+          conversionReferenceUnit: 'm',
+          description: 'A walking pace unit.',
+        }),
+      ),
+    );
+    expect(await screen.findByText('Unit "Pace" saved.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Pace' })).toBeInTheDocument();
+  });
+
+  it('reloads a persisted unit from storage on a fresh mount', async () => {
+    mockedList.mockResolvedValue([unit({ id: 10, name: 'Persisted unit', symbol: 'pu' })]);
+    render(<CustomUnitLibrary />);
+
+    expect(
+      await screen.findByRole('button', { name: 'Open custom unit Persisted unit' }),
+    ).toBeInTheDocument();
   });
 
   it('filters by search, physical quantity and SI classification', async () => {
@@ -98,6 +150,43 @@ describe('CustomUnitLibrary', () => {
     expect(screen.getByText('No custom units match these filters')).toBeInTheDocument();
   });
 
+  it('retrieves a custom unit whose name and symbol match the built-in catalogue', async () => {
+    const user = userEvent.setup();
+    mockedList.mockResolvedValue([unit({ id: 16, name: 'Metre', symbol: 'm' })]);
+    render(<CustomUnitLibrary />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open custom unit Metre' }));
+
+    const detail = document.querySelector('.v2-reference-detail') as HTMLElement;
+    expect(within(detail).getByRole('heading', { level: 2, name: 'Metre' })).toBeInTheDocument();
+    expect(within(detail).getByText('User-defined')).toBeInTheDocument();
+    expect(within(detail).getAllByText('m').length).toBeGreaterThan(0);
+  });
+
+  it('edits the selected custom unit without changing its record id', async () => {
+    const user = userEvent.setup();
+    mockedList.mockResolvedValue([unit()]);
+    mockedSave.mockResolvedValue(unit({ name: 'Edited foot', conversionFactor: '0.3049' }));
+    render(<CustomUnitLibrary />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open custom unit Foot' }));
+    await user.click(screen.getByRole('button', { name: 'Edit unit' }));
+    const dialog = screen.getByRole('dialog');
+    await user.clear(within(dialog).getByLabelText('Unit name'));
+    await user.type(within(dialog).getByLabelText('Unit name'), 'Edited foot');
+    await user.clear(within(dialog).getByLabelText(/Conversion factor/));
+    await user.type(within(dialog).getByLabelText(/Conversion factor/), '0.3049');
+    await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'Edited foot', conversionFactor: '0.3049' }),
+      ),
+    );
+    expect(await screen.findByText('Unit "Edited foot" saved.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Edited foot' })).toBeInTheDocument();
+  });
+
   it('opens a detail view with conversion information', async () => {
     const user = userEvent.setup();
     mockedList.mockResolvedValue([unit()]);
@@ -111,7 +200,10 @@ describe('CustomUnitLibrary', () => {
       within(detail as HTMLElement).getByRole('heading', { level: 2, name: 'Foot' }),
     ).toBeInTheDocument();
     expect(within(detail as HTMLElement).getByText('0.3048')).toBeInTheDocument();
-    expect(within(detail as HTMLElement).getByText('1 ft = 0.3048 m')).toBeInTheDocument();
+    const conversion = (detail as HTMLElement).querySelector('[data-unit-conversion="scalar"]');
+    expect(conversion).not.toBeNull();
+    expect(conversion).toHaveTextContent('0.3048');
+    expect(conversion?.querySelector('.katex')).not.toBeNull();
     expect(
       within(detail as HTMLElement).getByText(/no automatic unit conversion is performed/i),
     ).toBeInTheDocument();

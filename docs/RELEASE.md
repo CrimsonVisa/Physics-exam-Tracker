@@ -3,13 +3,13 @@
 ## Versioning
 
 Physics Tracker uses semantic versioning for the application release line. The current application
-version is `2.0.0`.
+version is `2.1.0`.
 
-- Application version: `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`
-- Git tag: stable `vX.Y.Z`; for this release, `v2.0.0`
-- Installer: `Physics Tracker_2.0.0_x64-setup.exe`
+- Application version: `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`
+- Git tag: stable `vX.Y.Z`; for this release, `v2.1.0`
+- Installer: `Physics Tracker_2.1.0_x64-setup.exe`
 
-Update all three version declarations together for a release. The release workflow fails before
+Update all version declarations together for a release. The release workflow fails before
 building if the tag version does not exactly match `package.json`, `src-tauri/Cargo.toml`, and
 `src-tauri/tauri.conf.json`. Do not add a version suffix to the display product name; the product is
 always **Physics Tracker**.
@@ -45,7 +45,7 @@ npm.cmd run tauri:build
 Verify the build output:
 
 ```powershell
-$installer = 'src-tauri\target\release\bundle\nsis\Physics Tracker_2.0.0_x64-setup.exe'
+$installer = 'src-tauri\target\release\bundle\nsis\Physics Tracker_2.1.0_x64-setup.exe'
 
 Get-Item $installer | Select-Object FullName,Length
 (Get-Item $installer).VersionInfo |
@@ -82,7 +82,7 @@ All third-party Actions used by the CI and release workflows are pinned to full 
 them pinned to immutable commits rather than major-version tags.
 
 After the draft is created, review it, replace the generated release notes with
-`docs/releases/RELEASE_NOTES_2.0.0.md`, verify the attached installer and checksum, and publish the
+`docs/releases/RELEASE_NOTES_2.1.0.md`, verify the attached installer and checksum, and publish the
 draft manually.
 
 ## MPL-2.0 source availability
@@ -112,9 +112,9 @@ The current configuration has **no code signing** and **no auto-updater**.
 After the release commit is approved and verified:
 
 ```powershell
-git tag -a v2.0.0 -m "Physics Tracker 2.0.0"
+git tag -a v2.1.0 -m "Physics Tracker 2.1.0"
 git push origin main
-git push origin v2.0.0
+git push origin v2.1.0
 ```
 
 The tag should point to the release commit, not a dirty working tree. Do not push experimental or
@@ -127,7 +127,7 @@ release. Alternatively, dispatch the workflow manually from `main` with an exist
 `vX.Y.Z` tag.
 
 Review the draft, replace the generated release notes with
-`docs/releases/RELEASE_NOTES_2.0.0.md`, verify the attached installer and checksum, and publish the
+`docs/releases/RELEASE_NOTES_2.1.0.md`, verify the attached installer and checksum, and publish the
 draft manually. Do not upload databases, backups, syllabus PDFs, build directories, or source
 archives generated from unrelated branches.
 
@@ -152,7 +152,7 @@ archives generated from unrelated branches.
 - [ ] No secrets, databases, backups, PDFs, or generated artifacts included
 - [ ] Tag created and pushed as a stable `vX.Y.Z` tag
 - [ ] Tag version matches `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`
-- [ ] Draft release notes replaced with `docs/releases/RELEASE_NOTES_2.0.0.md`
+- [ ] Draft release notes replaced with `docs/releases/RELEASE_NOTES_2.1.0.md`
 - [ ] Draft release manually published after verification
 - [ ] Release artifacts attached
 - [ ] Post-release smoke test performed on a disposable Windows user profile

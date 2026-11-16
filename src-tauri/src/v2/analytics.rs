@@ -122,8 +122,8 @@ pub fn get_analytics(
     {
         let (total, count) = connection
             .query_row(
-                "SELECT COALESCE(SUM(a.allocated_seconds), 0), COUNT(DISTINCT a.session_id)
-                     FROM session_exam_allocations a
+                "SELECT COALESCE(SUM(a.credit_seconds), 0), COUNT(DISTINCT a.session_id)
+                     FROM session_exam_associations a
                      JOIN study_sessions s ON s.id = a.session_id
                      WHERE a.exam_id = ?1 AND s.session_date BETWEEN ?2 AND ?3",
                 params![exam_id, from_text, to_text],
@@ -132,8 +132,8 @@ pub fn get_analytics(
             .map_err(|error| AppError::database("Exam study totals could not be read", error))?;
         let daily = daily_points(
             connection,
-            "SELECT s.session_date, SUM(a.allocated_seconds), COUNT(DISTINCT s.id)
-                 FROM session_exam_allocations a
+            "SELECT s.session_date, SUM(a.credit_seconds), COUNT(DISTINCT s.id)
+                 FROM session_exam_associations a
                  JOIN study_sessions s ON s.id = a.session_id
                  WHERE a.exam_id = ?1 AND s.session_date BETWEEN ?2 AND ?3
                  GROUP BY s.session_date ORDER BY s.session_date",
@@ -142,8 +142,8 @@ pub fn get_analytics(
         let weekly = weekly_points(
             connection,
             "SELECT strftime('%Y-W%W', s.session_date),
-                        SUM(a.allocated_seconds), COUNT(DISTINCT s.id)
-                 FROM session_exam_allocations a
+                        SUM(a.credit_seconds), COUNT(DISTINCT s.id)
+                 FROM session_exam_associations a
                  JOIN study_sessions s ON s.id = a.session_id
                  WHERE a.exam_id = ?1 AND s.session_date BETWEEN ?2 AND ?3
                  GROUP BY strftime('%Y-W%W', s.session_date)
@@ -162,9 +162,13 @@ pub fn get_analytics(
             .map_err(|error| AppError::database("Study totals could not be read", error))?;
         let allocated: i64 = connection
             .query_row(
-                "SELECT COALESCE(SUM(a.allocated_seconds), 0)
-                     FROM session_exam_allocations a
-                     JOIN study_sessions s ON s.id = a.session_id
+                "SELECT COALESCE(SUM(MIN(s.duration_seconds, credits.credited_seconds)), 0)
+                     FROM study_sessions s
+                     JOIN (
+                         SELECT session_id, SUM(credit_seconds) AS credited_seconds
+                         FROM session_exam_associations
+                         GROUP BY session_id
+                     ) credits ON credits.session_id = s.id
                      WHERE s.session_date BETWEEN ?1 AND ?2",
                 params![from_text, to_text],
                 |row| row.get(0),
@@ -510,6 +514,69 @@ mod tests {
     use crate::v2::V2State;
 
     #[test]
+    fn two_hour_shared_session_counts_once_overall_and_fully_for_each_exam() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let state = V2State::initialize(&root.path().join("v2"));
+        state
+            .with_connection(|connection| {
+                crate::v2::study::create_manual_session(
+                    connection,
+                    crate::v2::study::V2CreateManualSessionInput {
+                        session_date: "2026-11-04".to_owned(),
+                        duration_seconds: 7_200,
+                        notes: "Shared Classical Mechanics session".to_owned(),
+                        primary_exam_id: None,
+                        exam_ids: vec![1, 2, 4],
+                    },
+                    chrono::Utc::now(),
+                )
+                .map(|_| ())
+            })
+            .expect("shared session");
+
+        let combined = state
+            .with_connection(|connection| {
+                get_analytics(
+                    connection,
+                    V2AnalyticsInput {
+                        exam_id: None,
+                        today: "2026-11-04".to_owned(),
+                        window_days: 30,
+                    },
+                )
+            })
+            .expect("combined analytics");
+        assert_eq!(combined.total_seconds, 7_200);
+        assert_eq!(combined.session_count, 1);
+        assert_eq!(combined.allocated_seconds, 7_200);
+        assert_eq!(combined.unallocated_seconds, 0);
+        assert_eq!(combined.daily.len(), 1);
+        assert_eq!(combined.daily[0].seconds, 7_200);
+        assert_eq!(combined.weekly.len(), 1);
+        assert_eq!(combined.weekly[0].seconds, 7_200);
+
+        for exam_id in [1, 2, 4] {
+            let exam = state
+                .with_connection(|connection| {
+                    get_analytics(
+                        connection,
+                        V2AnalyticsInput {
+                            exam_id: Some(exam_id),
+                            today: "2026-11-04".to_owned(),
+                            window_days: 30,
+                        },
+                    )
+                })
+                .expect("exam analytics");
+            assert_eq!(exam.total_seconds, 7_200, "exam {exam_id}");
+            assert_eq!(exam.session_count, 1, "exam {exam_id}");
+            assert_eq!(exam.allocated_seconds, 7_200, "exam {exam_id}");
+            assert_eq!(exam.daily[0].seconds, 7_200, "exam {exam_id}");
+            assert_eq!(exam.weekly[0].seconds, 7_200, "exam {exam_id}");
+        }
+    }
+
+    #[test]
     fn combined_and_exam_analytics_use_recorded_values_once() {
         let root = tempfile::tempdir().expect("temporary directory");
         let state = V2State::initialize(&root.path().join("v2"));
@@ -528,8 +595,8 @@ mod tests {
                 let session_id = connection.last_insert_rowid();
                 connection
                     .execute(
-                        "INSERT INTO session_exam_allocations (
-                            session_id, exam_id, allocated_seconds, created_at, updated_at
+                        "INSERT INTO session_exam_associations (
+                            session_id, exam_id, credit_seconds, created_at, updated_at
                          ) VALUES (?1, 1, 1800, '2026-11-04T10:00:00Z', '2026-11-04T10:00:00Z')",
                         [session_id],
                     )
@@ -611,8 +678,8 @@ mod tests {
                 for (exam_id, seconds) in [(1, 60), (2, 30), (3, 30)] {
                     connection
                         .execute(
-                            "INSERT INTO session_exam_allocations (
-                                session_id, exam_id, allocated_seconds, created_at, updated_at
+                            "INSERT INTO session_exam_associations (
+                                session_id, exam_id, credit_seconds, created_at, updated_at
                              ) VALUES (?1, ?2, ?3, '2026-11-04T10:00:00Z',
                                        '2026-11-04T10:00:00Z')",
                             params![session_one, exam_id, seconds],
@@ -649,8 +716,8 @@ mod tests {
                 let session_two = connection.last_insert_rowid();
                 connection
                     .execute(
-                        "INSERT INTO session_exam_allocations (
-                            session_id, exam_id, allocated_seconds, created_at, updated_at
+                        "INSERT INTO session_exam_associations (
+                            session_id, exam_id, credit_seconds, created_at, updated_at
                          ) VALUES (?1, 1, 60, '2026-11-04T10:00:00Z',
                                    '2026-11-04T10:00:00Z')",
                         [session_two],

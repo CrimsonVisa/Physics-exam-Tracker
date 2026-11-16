@@ -1,5 +1,7 @@
 import type { RefObject } from 'react';
 import type { V2ExamSummary } from '../api';
+import { MathText } from '../MathText';
+import { MathExpression } from '../math/MathExpression';
 import { FormulaEquation } from './FormulaEquation';
 import { entryExamCodes } from './search';
 import {
@@ -93,7 +95,9 @@ export function FormulaDetail({
             aria-labelledby="formula-meaning-heading"
           >
             <h2 id="formula-meaning-heading">Physical meaning</h2>
-            <p className="v2-formula-summary">{entry.summary}</p>
+            <p className="v2-formula-summary">
+              <MathText text={entry.summary} />
+            </p>
           </section>
 
           <section
@@ -112,9 +116,20 @@ export function FormulaDetail({
                     />
                   </dt>
                   <dd>
-                    <span>{symbol.meaning}</span>
-                    {symbol.unit ? <span>Unit: {symbol.unit}</span> : null}
-                    {symbol.dimensions ? <span>Dimensions: {symbol.dimensions}</span> : null}
+                    <span>
+                      <MathText text={symbol.meaning} />
+                    </span>
+                    {symbol.unit ? (
+                      <span>
+                        Unit: <MathExpression latex={symbol.unit} plainText={symbol.unit} />
+                      </span>
+                    ) : null}
+                    {symbol.dimensions ? (
+                      <span>
+                        Dimensions:{' '}
+                        <MathExpression latex={symbol.dimensions} plainText={symbol.dimensions} />
+                      </span>
+                    ) : null}
                   </dd>
                 </div>
               ))}
@@ -128,7 +143,9 @@ export function FormulaDetail({
             <h2 id="formula-conditions-heading">Conditions and assumptions</h2>
             <ul className="v2-formula-list">
               {entry.conditions.map((condition) => (
-                <li key={condition}>{condition}</li>
+                <li key={condition}>
+                  <MathText text={condition} />
+                </li>
               ))}
             </ul>
           </section>
@@ -141,7 +158,9 @@ export function FormulaDetail({
               <h2 id="formula-special-heading">Special cases and limits</h2>
               <ul className="v2-formula-list">
                 {entry.specialCases.map((specialCase) => (
-                  <li key={specialCase}>{specialCase}</li>
+                  <li key={specialCase}>
+                    <MathText text={specialCase} />
+                  </li>
                 ))}
               </ul>
             </section>
@@ -155,7 +174,9 @@ export function FormulaDetail({
               <h2 id="formula-conventions-heading">Conventions</h2>
               <ul className="v2-formula-list">
                 {entry.conventions.map((convention) => (
-                  <li key={convention}>{convention}</li>
+                  <li key={convention}>
+                    <MathText text={convention} />
+                  </li>
                 ))}
               </ul>
             </section>

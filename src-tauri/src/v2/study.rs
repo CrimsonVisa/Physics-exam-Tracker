@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use uuid::Uuid;
 
-use crate::{date_only, error::AppError};
+use crate::{date_only, error::AppError, v2::V2State};
 
 pub const HEARTBEAT_INTERVAL: StdDuration = StdDuration::from_secs(5);
 pub const STALE_AFTER_MS: i64 = 20_000;
@@ -159,6 +159,10 @@ pub struct V2StartTimerInput {
     pub session_date: String,
     #[serde(default)]
     pub active_exam_id: Option<i64>,
+    /// Full-credit exam associations selected for this focus session. Multiple
+    /// exams are allowed; each receives the complete session duration.
+    #[serde(default)]
+    pub exam_ids: Vec<i64>,
     #[serde(default)]
     pub allocations: Vec<V2TopicAllocationInput>,
     /// Optional planned focus duration in minutes. When omitted, the timer
@@ -222,6 +226,9 @@ pub struct V2TimerSnapshot {
     pub state: V2TimerState,
     pub settings: V2TimerSettings,
     pub allocations: Vec<V2TopicAllocation>,
+    /// Full-credit exam associations that will be persisted when this focus
+    /// session completes. Empty for idle and break timers.
+    pub exam_ids: Vec<i64>,
     pub server_now_ms: i64,
 }
 
@@ -270,6 +277,13 @@ pub struct V2SetSessionAllocationsInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct V2SetSessionExamsInput {
+    pub session_id: i64,
+    pub exam_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct V2CreateManualSessionInput {
     pub session_date: String,
     pub duration_seconds: i64,
@@ -277,6 +291,9 @@ pub struct V2CreateManualSessionInput {
     pub notes: String,
     #[serde(default)]
     pub primary_exam_id: Option<i64>,
+    /// Full-credit exam associations for the manual session.
+    #[serde(default)]
+    pub exam_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -345,8 +362,32 @@ struct TimerRow {
     last_completed_session_id: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
-struct TimerCompletion;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimerCompletion {
+    session_id: Option<i64>,
+    duration_seconds: i64,
+    mode: TimerMode,
+}
+
+/// The committed result of a timer operation plus any session completed while
+/// reconciling it. Callers notify after the transaction commits so a native
+/// notification failure can never roll back the study session.
+pub struct TimerActionOutcome {
+    pub snapshot: V2TimerSnapshot,
+    pub completion: Option<TimerCompletion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V2StudyCompletionNotice {
+    pub session_id: i64,
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Default)]
+pub struct CompletionNotificationState {
+    last_notified_session_id: std::sync::Mutex<Option<i64>>,
+}
 
 /// Repair the singleton timer rows without changing configured values. This
 /// keeps databases created before the timer seed existed usable.
@@ -384,16 +425,27 @@ pub fn ensure_defaults(connection: &mut Connection) -> Result<(), AppError> {
 }
 
 pub fn prepare(connection: &mut Connection) -> Result<(), AppError> {
-    ensure_topic_allocation_tables(connection)?;
+    ensure_study_allocation_tables(connection)?;
     ensure_defaults(connection)?;
     recover_after_restart(connection, Utc::now())
 }
 
-/// Additive topic-level allocations. These tables are created idempotently so
-/// existing schema-1 databases and existing backups remain usable without a
-/// destructive schema migration.
-fn ensure_topic_allocation_tables(connection: &Connection) -> Result<(), AppError> {
-    connection
+/// Additive study allocation tables. These are created idempotently so existing
+/// databases and backups remain usable without a destructive schema migration.
+///
+/// `session_exam_associations` is the canonical full-credit exam association
+/// table. Each row credits `credit_seconds` to one exam, and a session can have
+/// several rows. New sessions credit the full session duration to every selected
+/// exam, while rows migrated from the historical split-allocation table keep
+/// their original credited seconds so existing totals do not change.
+fn ensure_study_allocation_tables(connection: &mut Connection) -> Result<(), AppError> {
+    let transaction = connection.transaction().map_err(|error| {
+        AppError::database(
+            "The additive study-allocation transaction could not start",
+            error,
+        )
+    })?;
+    transaction
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS timer_topic_allocations (
                 exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE RESTRICT,
@@ -419,14 +471,175 @@ fn ensure_topic_allocation_tables(connection: &Connection) -> Result<(), AppErro
             ) STRICT;
 
              CREATE INDEX IF NOT EXISTS idx_session_topic_allocations_exam
-                ON session_topic_allocations(exam_id, node_id);",
+                ON session_topic_allocations(exam_id, node_id);
+
+             CREATE TABLE IF NOT EXISTS session_exam_associations (
+                session_id INTEGER NOT NULL REFERENCES study_sessions(id) ON DELETE CASCADE,
+                exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE RESTRICT,
+                credit_seconds INTEGER NOT NULL CHECK (credit_seconds > 0),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, exam_id)
+            ) STRICT;
+
+             CREATE INDEX IF NOT EXISTS idx_session_exam_associations_exam
+                ON session_exam_associations(exam_id, session_id);
+
+             CREATE TABLE IF NOT EXISTS timer_exam_associations (
+                exam_id INTEGER PRIMARY KEY REFERENCES exams(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL
+            ) STRICT;
+
+             CREATE TABLE IF NOT EXISTS study_allocation_migration_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                legacy_allocations_backfilled INTEGER NOT NULL
+                    CHECK (legacy_allocations_backfilled IN (0, 1)),
+                created_at TEXT NOT NULL
+            ) STRICT;
+
+             CREATE TABLE IF NOT EXISTS timer_association_migration_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                legacy_timer_seeded INTEGER NOT NULL
+                    CHECK (legacy_timer_seeded IN (0, 1)),
+                created_at TEXT NOT NULL
+            ) STRICT;",
         )
         .map_err(|error| {
             AppError::database(
-                "The additive topic-allocation tables could not be prepared",
+                "The additive study-allocation tables could not be prepared",
                 error,
             )
-        })
+        })?;
+    let backfilled: Option<i64> = transaction
+        .query_row(
+            "SELECT legacy_allocations_backfilled
+             FROM study_allocation_migration_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(
+                "The study-allocation migration state could not be read",
+                error,
+            )
+        })?;
+    if backfilled.is_none() {
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO session_exam_associations (
+                    session_id, exam_id, credit_seconds, created_at, updated_at
+                 )
+                 SELECT session_id, exam_id, allocated_seconds, created_at, updated_at
+                 FROM session_exam_allocations;",
+                [],
+            )
+            .map_err(|error| {
+                AppError::database("Historical exam associations could not be migrated", error)
+            })?;
+        transaction
+            .execute(
+                "INSERT INTO study_allocation_migration_state (
+                    id, legacy_allocations_backfilled, created_at
+                 ) VALUES (1, 1, ?1)",
+                [format_utc(Utc::now())],
+            )
+            .map_err(|error| {
+                AppError::database(
+                    "The study-allocation migration state could not be saved",
+                    error,
+                )
+            })?;
+    }
+
+    // A timer that was already running when this version first started has no
+    // persisted selection row. Seed it once from the legacy active exam and any
+    // topic rows so the snapshot shown to the user matches the credit that will
+    // be written at completion. A marker prevents a later startup from
+    // resurrecting an association the user deliberately removed.
+    let timer_seeded: Option<i64> = transaction
+        .query_row(
+            "SELECT legacy_timer_seeded
+             FROM timer_association_migration_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(
+                "The timer association migration state could not be read",
+                error,
+            )
+        })?;
+    if timer_seeded.is_none() {
+        let timer_status: Option<String> = transaction
+            .query_row("SELECT status FROM timer_state WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|error| {
+                AppError::database("The active timer status could not be read", error)
+            })?;
+        if timer_status
+            .as_deref()
+            .is_some_and(|status| status != "idle")
+        {
+            let timer_associations: i64 = transaction
+                .query_row("SELECT COUNT(*) FROM timer_exam_associations", [], |row| {
+                    row.get(0)
+                })
+                .map_err(|error| {
+                    AppError::database("The timer exam associations could not be checked", error)
+                })?;
+            if timer_associations == 0 {
+                let now_text = format_utc(Utc::now());
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO timer_exam_associations (exam_id, created_at)
+                         SELECT active_exam_id, ?1 FROM timer_state
+                         WHERE id = 1 AND active_exam_id IS NOT NULL",
+                        [&now_text],
+                    )
+                    .map_err(|error| {
+                        AppError::database(
+                            "The legacy timer examination could not be restored",
+                            error,
+                        )
+                    })?;
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO timer_exam_associations (exam_id, created_at)
+                         SELECT exam_id, ?1 FROM timer_topic_allocations",
+                        [&now_text],
+                    )
+                    .map_err(|error| {
+                        AppError::database(
+                            "The legacy timer topic examinations could not be restored",
+                            error,
+                        )
+                    })?;
+            }
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO timer_association_migration_state (
+                        id, legacy_timer_seeded, created_at
+                     ) VALUES (1, 1, ?1)",
+                    [format_utc(Utc::now())],
+                )
+                .map_err(|error| {
+                    AppError::database(
+                        "The timer association migration state could not be saved",
+                        error,
+                    )
+                })?;
+        }
+    }
+    transaction.commit().map_err(|error| {
+        AppError::database(
+            "The additive study-allocation tables could not be committed",
+            error,
+        )
+    })
 }
 
 pub fn load_settings(connection: &Connection) -> Result<V2TimerSettings, AppError> {
@@ -487,32 +700,53 @@ pub fn update_settings(
     Ok(snapshot)
 }
 
+#[cfg(test)]
 pub fn get_timer(
     connection: &mut Connection,
     now: DateTime<Utc>,
 ) -> Result<V2TimerSnapshot, AppError> {
+    get_timer_with_completion(connection, now).map(|outcome| outcome.snapshot)
+}
+
+pub fn get_timer_with_completion(
+    connection: &mut Connection,
+    now: DateTime<Utc>,
+) -> Result<TimerActionOutcome, AppError> {
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The V2 timer snapshot transaction could not start", error)
     })?;
-    let _ = reconcile_locked(&transaction, now)?;
+    let completion = reconcile_locked(&transaction, now)?;
     let snapshot = build_snapshot(&transaction, now)?;
     transaction
         .commit()
         .map_err(|error| AppError::database("The V2 timer snapshot could not commit", error))?;
-    Ok(snapshot)
+    Ok(TimerActionOutcome {
+        snapshot,
+        completion,
+    })
 }
 
-pub fn set_timer_allocations(
+pub fn set_timer_allocations_with_completion(
     connection: &mut Connection,
     input: V2SetTimerAllocationsInput,
     now: DateTime<Utc>,
-) -> Result<V2TimerSnapshot, AppError> {
+) -> Result<TimerActionOutcome, AppError> {
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The timer allocation transaction could not start", error)
     })?;
-    let _ = reconcile_locked(&transaction, now)?;
+    let completion = reconcile_locked(&transaction, now)?;
     let row = load_timer(&transaction)?;
     if row.status == TimerStatus::Idle {
+        if completion.is_some() {
+            let snapshot = build_snapshot(&transaction, now)?;
+            transaction.commit().map_err(|error| {
+                AppError::database("The timer allocation completion could not commit", error)
+            })?;
+            return Ok(TimerActionOutcome {
+                snapshot,
+                completion,
+            });
+        }
         return Err(AppError::timer_not_running());
     }
     if row.mode != TimerMode::Focus {
@@ -522,12 +756,32 @@ pub fn set_timer_allocations(
         ));
     }
     validate_topic_allocations(&transaction, &input.allocations, row.duration_ms / 1_000)?;
+    validate_timer_allocation_associations(&transaction, &input.allocations)?;
     replace_timer_topic_allocations(&transaction, &input.allocations, now)?;
     let snapshot = build_snapshot(&transaction, now)?;
     transaction
         .commit()
         .map_err(|error| AppError::database("The timer allocations could not commit", error))?;
-    Ok(snapshot)
+    Ok(TimerActionOutcome {
+        snapshot,
+        completion,
+    })
+}
+
+fn validate_timer_allocation_associations(
+    transaction: &Transaction<'_>,
+    allocations: &[V2TopicAllocationInput],
+) -> Result<(), AppError> {
+    let persisted: HashSet<i64> = load_timer_exam_ids(transaction)?.into_iter().collect();
+    for allocation in allocations {
+        if !persisted.contains(&allocation.exam_id) {
+            return Err(AppError::forbidden(
+                "allocations",
+                "Exam associations are locked for this running timer. Only examinations selected when the timer started can receive topic allocations.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_topic_allocations(
@@ -645,11 +899,163 @@ fn replace_timer_topic_allocations(
     Ok(())
 }
 
+/// Build the exam association set from the explicit multi-exam selection, the
+/// legacy topic allocation rows, and the legacy single-exam context. Explicit
+/// selections keep allocation exam rows associated as well so topic detail is
+/// never credited to an exam that the session is not associated with.
+fn normalize_exam_ids(
+    explicit: &[i64],
+    allocations: &[V2TopicAllocationInput],
+    active_exam_id: Option<i64>,
+) -> Result<Vec<i64>, AppError> {
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for exam_id in explicit {
+        if *exam_id <= 0 {
+            return Err(AppError::validation(
+                "examIds",
+                "Choose valid examinations for the study session.",
+            ));
+        }
+        if !seen.insert(*exam_id) {
+            return Err(AppError::validation(
+                "examIds",
+                "Each examination can be selected only once.",
+            ));
+        }
+        selected.push(*exam_id);
+    }
+    if explicit.is_empty() && allocations.is_empty() {
+        if let Some(exam_id) = active_exam_id
+            && seen.insert(exam_id)
+        {
+            selected.push(exam_id);
+        }
+        return Ok(selected);
+    }
+    for allocation in allocations {
+        if !explicit.is_empty() && !seen.contains(&allocation.exam_id) {
+            return Err(AppError::validation(
+                "allocations",
+                "Topic allocations must use examinations selected for the timer.",
+            ));
+        }
+        if seen.insert(allocation.exam_id) {
+            selected.push(allocation.exam_id);
+        }
+    }
+    Ok(selected)
+}
+
+fn validate_exam_selection(
+    transaction: &Transaction<'_>,
+    exam_ids: &[i64],
+) -> Result<(), AppError> {
+    for exam_id in exam_ids {
+        match exam_active_state(transaction, *exam_id)? {
+            None => {
+                return Err(AppError::validation(
+                    "examIds",
+                    "The selected examination does not exist.",
+                ));
+            }
+            Some(false) => {
+                return Err(AppError::forbidden(
+                    "examIds",
+                    "Inactive examinations cannot receive new study time.",
+                ));
+            }
+            Some(true) => {}
+        }
+    }
+    Ok(())
+}
+
+fn replace_timer_exam_associations(
+    transaction: &Transaction<'_>,
+    exam_ids: &[i64],
+    now: DateTime<Utc>,
+) -> Result<(), AppError> {
+    transaction
+        .execute("DELETE FROM timer_exam_associations", [])
+        .map_err(|error| {
+            AppError::database(
+                "Previous timer exam associations could not be cleared",
+                error,
+            )
+        })?;
+    let now_text = format_utc(now);
+    for exam_id in exam_ids {
+        transaction
+            .execute(
+                "INSERT INTO timer_exam_associations (exam_id, created_at)
+                 VALUES (?1, ?2)",
+                params![exam_id, now_text],
+            )
+            .map_err(|error| {
+                AppError::database("A timer exam association could not be saved", error)
+            })?;
+    }
+    Ok(())
+}
+
+fn load_timer_exam_ids(connection: &Connection) -> Result<Vec<i64>, AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT a.exam_id
+             FROM timer_exam_associations a
+             JOIN exams e ON e.id = a.exam_id
+             JOIN exam_profiles p ON p.exam_id = e.id AND p.is_active = 1
+             ORDER BY e.display_order, e.id",
+        )
+        .map_err(|error| {
+            AppError::database("The timer exam associations could not be prepared", error)
+        })?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, i64>(0))
+        .map_err(|error| {
+            AppError::database("The timer exam associations could not be read", error)
+        })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| AppError::database("A timer exam association is invalid", error))
+}
+
+fn insert_session_exam_associations(
+    transaction: &Transaction<'_>,
+    session_id: i64,
+    exam_ids: &[i64],
+    credit_seconds: i64,
+    now_text: &str,
+) -> Result<(), AppError> {
+    for exam_id in exam_ids {
+        transaction
+            .execute(
+                "INSERT INTO session_exam_associations (
+                    session_id, exam_id, credit_seconds, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![session_id, exam_id, credit_seconds, now_text],
+            )
+            .map_err(|error| {
+                AppError::database("A session exam association could not be saved", error)
+            })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub fn start_timer(
     connection: &mut Connection,
     now: DateTime<Utc>,
     input: V2StartTimerInput,
 ) -> Result<V2TimerSnapshot, AppError> {
+    start_timer_with_completion(connection, now, input).map(|outcome| outcome.snapshot)
+}
+
+pub fn start_timer_with_completion(
+    connection: &mut Connection,
+    now: DateTime<Utc>,
+    input: V2StartTimerInput,
+) -> Result<TimerActionOutcome, AppError> {
     let mode = TimerMode::parse(&input.mode)?;
     let session_date = date_only::parse_date_only(&input.session_date).ok_or_else(|| {
         AppError::validation(
@@ -657,7 +1063,10 @@ pub fn start_timer(
             "Enter a real calendar date in YYYY-MM-DD format.",
         )
     })?;
-    if mode != TimerMode::Focus && (input.active_exam_id.is_some() || !input.allocations.is_empty())
+    if mode != TimerMode::Focus
+        && (input.active_exam_id.is_some()
+            || !input.exam_ids.is_empty()
+            || !input.allocations.is_empty())
     {
         return Err(AppError::validation(
             "activeExamId",
@@ -668,16 +1077,15 @@ pub fn start_timer(
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The V2 timer start transaction could not start", error)
     })?;
-    let _ = reconcile_locked(&transaction, now)?;
+    let completion = reconcile_locked(&transaction, now)?;
     let row = load_timer(&transaction)?;
     if row.status != TimerStatus::Idle {
         return Err(AppError::timer_active());
     }
-    let primary_exam_id = input
-        .allocations
-        .first()
-        .map(|allocation| allocation.exam_id)
-        .or(input.active_exam_id);
+    let selected_exam_ids =
+        normalize_exam_ids(&input.exam_ids, &input.allocations, input.active_exam_id)?;
+    validate_exam_selection(&transaction, &selected_exam_ids)?;
+    let primary_exam_id = selected_exam_ids.first().copied().or(input.active_exam_id);
     if let Some(exam_id) = input.active_exam_id {
         ensure_active_exam(&transaction, exam_id)?;
     }
@@ -703,6 +1111,7 @@ pub fn start_timer(
     };
     validate_topic_allocations(&transaction, &input.allocations, duration_ms / 1_000)?;
     replace_timer_topic_allocations(&transaction, &input.allocations, now)?;
+    replace_timer_exam_associations(&transaction, &selected_exam_ids, now)?;
     let now_text = format_utc(now);
     let instance_id = Uuid::new_v4().simple().to_string();
 
@@ -746,13 +1155,24 @@ pub fn start_timer(
     transaction
         .commit()
         .map_err(|error| AppError::database("The V2 timer start could not commit", error))?;
-    Ok(snapshot)
+    Ok(TimerActionOutcome {
+        snapshot,
+        completion,
+    })
 }
 
+#[cfg(test)]
 pub fn pause_timer(
     connection: &mut Connection,
     now: DateTime<Utc>,
 ) -> Result<V2TimerSnapshot, AppError> {
+    pause_timer_with_completion(connection, now).map(|outcome| outcome.snapshot)
+}
+
+pub fn pause_timer_with_completion(
+    connection: &mut Connection,
+    now: DateTime<Utc>,
+) -> Result<TimerActionOutcome, AppError> {
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The V2 timer pause transaction could not start", error)
     })?;
@@ -770,20 +1190,41 @@ pub fn pause_timer(
     transaction
         .commit()
         .map_err(|error| AppError::database("The V2 timer pause could not commit", error))?;
-    Ok(snapshot)
+    Ok(TimerActionOutcome {
+        snapshot,
+        completion,
+    })
 }
 
+#[cfg(test)]
 pub fn resume_timer(
     connection: &mut Connection,
     now: DateTime<Utc>,
 ) -> Result<V2TimerSnapshot, AppError> {
+    resume_timer_with_completion(connection, now).map(|outcome| outcome.snapshot)
+}
+
+pub fn resume_timer_with_completion(
+    connection: &mut Connection,
+    now: DateTime<Utc>,
+) -> Result<TimerActionOutcome, AppError> {
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The V2 timer resume transaction could not start", error)
     })?;
-    let _ = reconcile_locked(&transaction, now)?;
+    let completion = reconcile_locked(&transaction, now)?;
     let row = load_timer(&transaction)?;
 
     if row.status == TimerStatus::Idle {
+        if completion.is_some() {
+            let snapshot = build_snapshot(&transaction, now)?;
+            transaction.commit().map_err(|error| {
+                AppError::database("The V2 timer completion could not commit", error)
+            })?;
+            return Ok(TimerActionOutcome {
+                snapshot,
+                completion,
+            });
+        }
         return Err(AppError::timer_not_running());
     }
     if row.status != TimerStatus::Paused {
@@ -818,24 +1259,35 @@ pub fn resume_timer(
     transaction
         .commit()
         .map_err(|error| AppError::database("The V2 timer resume could not commit", error))?;
-    Ok(snapshot)
+    Ok(TimerActionOutcome {
+        snapshot,
+        completion,
+    })
 }
 
+#[cfg(test)]
 pub fn finish_timer(
     connection: &mut Connection,
     now: DateTime<Utc>,
 ) -> Result<V2TimerSnapshot, AppError> {
+    finish_timer_with_completion(connection, now).map(|outcome| outcome.snapshot)
+}
+
+pub fn finish_timer_with_completion(
+    connection: &mut Connection,
+    now: DateTime<Utc>,
+) -> Result<TimerActionOutcome, AppError> {
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The V2 timer finish transaction could not start", error)
     })?;
-    let completion = reconcile_locked(&transaction, now)?;
+    let mut completion = reconcile_locked(&transaction, now)?;
     let row = load_timer(&transaction)?;
 
     match row.status {
         TimerStatus::Idle if completion.is_some() => {}
         TimerStatus::Idle => return Err(AppError::timer_not_running()),
         TimerStatus::Running | TimerStatus::Paused => {
-            complete_locked(&transaction, &row, now, now)?;
+            completion = Some(complete_locked(&transaction, &row, now, now)?);
         }
     }
 
@@ -843,7 +1295,10 @@ pub fn finish_timer(
     transaction
         .commit()
         .map_err(|error| AppError::database("The V2 timer finish could not commit", error))?;
-    Ok(snapshot)
+    Ok(TimerActionOutcome {
+        snapshot,
+        completion,
+    })
 }
 
 /// Discarding never reconciles or saves a session, even if the configured
@@ -904,6 +1359,14 @@ pub fn discard_timer(
                 error,
             )
         })?;
+    transaction
+        .execute("DELETE FROM timer_exam_associations", [])
+        .map_err(|error| {
+            AppError::database(
+                "The discarded timer exam associations could not be cleared",
+                error,
+            )
+        })?;
 
     let snapshot = build_snapshot(&transaction, now)?;
     transaction
@@ -912,10 +1375,18 @@ pub fn discard_timer(
     Ok(snapshot)
 }
 
+#[cfg(test)]
 pub fn heartbeat_timer(
     connection: &mut Connection,
     now: DateTime<Utc>,
 ) -> Result<V2TimerSnapshot, AppError> {
+    heartbeat_timer_with_completion(connection, now).map(|outcome| outcome.snapshot)
+}
+
+pub fn heartbeat_timer_with_completion(
+    connection: &mut Connection,
+    now: DateTime<Utc>,
+) -> Result<TimerActionOutcome, AppError> {
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The V2 timer heartbeat transaction could not start", error)
     })?;
@@ -941,7 +1412,10 @@ pub fn heartbeat_timer(
     transaction
         .commit()
         .map_err(|error| AppError::database("The V2 timer heartbeat could not commit", error))?;
-    Ok(snapshot)
+    Ok(TimerActionOutcome {
+        snapshot,
+        completion,
+    })
 }
 
 /// A running timer is paused at its last persisted heartbeat after a restart.
@@ -1041,8 +1515,8 @@ pub fn list_sessions(connection: &Connection) -> Result<Vec<V2StudySession>, App
     let mut allocation_statement = connection
         .prepare(
             "SELECT a.session_id, a.exam_id, e.code, e.name, p.is_active,
-                    a.allocated_seconds
-             FROM session_exam_allocations a
+                    a.credit_seconds
+             FROM session_exam_associations a
              JOIN exams e ON e.id = a.exam_id
              JOIN exam_profiles p ON p.exam_id = e.id
              ORDER BY e.display_order",
@@ -1077,11 +1551,14 @@ pub fn list_sessions(connection: &Connection) -> Result<Vec<V2StudySession>, App
     for session in &mut sessions {
         session.allocations = allocations.remove(&session.id).unwrap_or_default();
         session.topic_allocations = load_session_topic_allocations(connection, session.id)?;
-        session.allocated_seconds = session
+        let credited = session
             .allocations
             .iter()
             .map(|allocation| allocation.allocated_seconds)
-            .sum();
+            .sum::<i64>();
+        // Exam credit may intentionally overlap. Actual covered time is capped
+        // at the session duration so overall/unallocated totals stay honest.
+        session.allocated_seconds = credited.min(session.duration_seconds);
         session.unallocated_seconds = (session.duration_seconds - session.allocated_seconds).max(0);
     }
 
@@ -1267,6 +1744,37 @@ pub fn set_session_allocations(
             })?;
     }
 
+    // Keep the canonical association table in step with the historical
+    // split-allocation command for callers that still use it.
+    transaction
+        .execute(
+            "DELETE FROM session_exam_associations WHERE session_id = ?1",
+            [input.session_id],
+        )
+        .map_err(|error| {
+            AppError::database(
+                "Previous session exam associations could not be replaced",
+                error,
+            )
+        })?;
+    for allocation in &input.allocations {
+        transaction
+            .execute(
+                "INSERT INTO session_exam_associations (
+                    session_id, exam_id, credit_seconds, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![
+                    input.session_id,
+                    allocation.exam_id,
+                    allocation.allocated_seconds,
+                    now_text,
+                ],
+            )
+            .map_err(|error| {
+                AppError::database("The session exam association could not be saved", error)
+            })?;
+    }
+
     transaction
         .commit()
         .map_err(|error| AppError::database("The session allocations could not commit", error))?;
@@ -1275,6 +1783,154 @@ pub fn set_session_allocations(
         .into_iter()
         .find(|session| session.id == input.session_id)
         .ok_or_else(AppError::session_not_found)
+}
+
+pub fn set_session_exams(
+    connection: &mut Connection,
+    input: V2SetSessionExamsInput,
+    now: DateTime<Utc>,
+) -> Result<V2StudySession, AppError> {
+    validate_session_id(input.session_id)?;
+    let transaction = connection.transaction().map_err(|error| {
+        AppError::database("The session exam transaction could not start", error)
+    })?;
+    let (duration_seconds, current_primary) = transaction
+        .query_row(
+            "SELECT duration_seconds, primary_exam_id FROM study_sessions WHERE id = ?1",
+            [input.session_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+        )
+        .optional()
+        .map_err(|error| AppError::database("The study session could not be checked", error))?
+        .ok_or_else(AppError::session_not_found)?;
+
+    let mut existing = HashMap::new();
+    {
+        let mut statement = transaction
+            .prepare(
+                "SELECT exam_id, credit_seconds
+                 FROM session_exam_associations WHERE session_id = ?1",
+            )
+            .map_err(|error| {
+                AppError::database(
+                    "Existing session exam associations could not be prepared",
+                    error,
+                )
+            })?;
+        let rows = statement
+            .query_map([input.session_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| {
+                AppError::database(
+                    "Existing session exam associations could not be read",
+                    error,
+                )
+            })?;
+        for row in rows {
+            let (exam_id, credit_seconds) = row.map_err(|error| {
+                AppError::database("An existing session exam association is invalid", error)
+            })?;
+            existing.insert(exam_id, credit_seconds);
+        }
+    }
+
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for exam_id in &input.exam_ids {
+        if *exam_id <= 0 {
+            return Err(AppError::validation(
+                "examIds",
+                "Choose valid examinations for the study session.",
+            ));
+        }
+        if !seen.insert(*exam_id) {
+            return Err(AppError::validation(
+                "examIds",
+                "Each examination can be selected only once.",
+            ));
+        }
+        match exam_active_state(&transaction, *exam_id)? {
+            None => {
+                return Err(AppError::validation(
+                    "examIds",
+                    "The selected examination does not exist.",
+                ));
+            }
+            Some(false) if !existing.contains_key(exam_id) => {
+                return Err(AppError::forbidden(
+                    "examIds",
+                    "Inactive examinations cannot receive new study time.",
+                ));
+            }
+            Some(_) => {}
+        }
+        selected.push(*exam_id);
+    }
+
+    transaction
+        .execute(
+            "DELETE FROM session_exam_associations WHERE session_id = ?1",
+            [input.session_id],
+        )
+        .map_err(|error| {
+            AppError::database(
+                "Previous session exam associations could not be replaced",
+                error,
+            )
+        })?;
+    let now_text = format_utc(now);
+    for exam_id in &selected {
+        let credit_seconds = existing.get(exam_id).copied().unwrap_or(duration_seconds);
+        transaction
+            .execute(
+                "INSERT INTO session_exam_associations (
+                    session_id, exam_id, credit_seconds, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![input.session_id, exam_id, credit_seconds, now_text],
+            )
+            .map_err(|error| {
+                AppError::database("The session exam association could not be saved", error)
+            })?;
+    }
+    // Topic detail belongs to an exam association. When an association is
+    // removed, its topic rows must go with it so history and topic analytics do
+    // not keep reporting credit for an exam the session is no longer linked to.
+    for exam_id in existing.keys().filter(|exam_id| !seen.contains(*exam_id)) {
+        transaction
+            .execute(
+                "DELETE FROM session_topic_allocations
+                 WHERE session_id = ?1 AND exam_id = ?2",
+                params![input.session_id, exam_id],
+            )
+            .map_err(|error| {
+                AppError::database(
+                    "Removed session topic allocations could not be reconciled",
+                    error,
+                )
+            })?;
+    }
+    let next_primary = current_primary
+        .filter(|exam_id| selected.contains(exam_id))
+        .or_else(|| selected.first().copied());
+    if next_primary != current_primary {
+        transaction
+            .execute(
+                "UPDATE study_sessions SET primary_exam_id = ?1 WHERE id = ?2",
+                params![next_primary, input.session_id],
+            )
+            .map_err(|error| {
+                AppError::database(
+                    "The session primary examination could not be updated",
+                    error,
+                )
+            })?;
+    }
+    transaction.commit().map_err(|error| {
+        AppError::database("The session exam associations could not commit", error)
+    })?;
+
+    load_session_by_id(connection, input.session_id)
 }
 
 pub fn create_manual_session(
@@ -1299,9 +1955,9 @@ pub fn create_manual_session(
     let transaction = connection.transaction().map_err(|error| {
         AppError::database("The manual session transaction could not start", error)
     })?;
-    if let Some(exam_id) = input.primary_exam_id {
-        ensure_active_exam(&transaction, exam_id)?;
-    }
+    let selected_exam_ids = normalize_exam_ids(&input.exam_ids, &[], input.primary_exam_id)?;
+    validate_exam_selection(&transaction, &selected_exam_ids)?;
+    let primary_exam_id = selected_exam_ids.first().copied().or(input.primary_exam_id);
     let now_text = format_utc(now);
     transaction
         .execute(
@@ -1313,7 +1969,7 @@ pub fn create_manual_session(
                 date_only::format_date_only(session_date),
                 input.duration_seconds,
                 input.notes.trim(),
-                input.primary_exam_id,
+                primary_exam_id,
                 now_text,
             ],
         )
@@ -1321,18 +1977,13 @@ pub fn create_manual_session(
             AppError::database("The manual study session could not be saved", error)
         })?;
     let session_id = transaction.last_insert_rowid();
-    if let Some(exam_id) = input.primary_exam_id {
-        transaction
-            .execute(
-                "INSERT INTO session_exam_allocations (
-                    session_id, exam_id, allocated_seconds, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?4)",
-                params![session_id, exam_id, input.duration_seconds, now_text],
-            )
-            .map_err(|error| {
-                AppError::database("The manual session allocation could not be saved", error)
-            })?;
-    }
+    insert_session_exam_associations(
+        &transaction,
+        session_id,
+        &selected_exam_ids,
+        input.duration_seconds,
+        &now_text,
+    )?;
     transaction
         .commit()
         .map_err(|error| AppError::database("The manual session could not be committed", error))?;
@@ -1428,6 +2079,22 @@ pub fn update_study_session(
             ),
         ));
     }
+    let incompatible_credit: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM session_exam_associations
+             WHERE session_id = ?1 AND credit_seconds > ?2 AND credit_seconds <> ?3",
+            params![input.session_id, input.duration_seconds, old_duration],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            AppError::database("Session exam associations could not be checked", error)
+        })?;
+    if incompatible_credit > 0 {
+        return Err(AppError::validation(
+            "durationSeconds",
+            "The session duration cannot be shorter than an examination's credited study time.",
+        ));
+    }
 
     transaction
         .execute(
@@ -1448,6 +2115,24 @@ pub fn update_study_session(
             ],
         )
         .map_err(|error| AppError::database("The study session could not be updated", error))?;
+    transaction
+        .execute(
+            "UPDATE session_exam_associations
+             SET credit_seconds = ?1, updated_at = ?2
+             WHERE session_id = ?3 AND credit_seconds = ?4",
+            params![
+                input.duration_seconds,
+                format_utc(now),
+                input.session_id,
+                old_duration,
+            ],
+        )
+        .map_err(|error| {
+            AppError::database(
+                "Session exam association credits could not be updated",
+                error,
+            )
+        })?;
     transaction.commit().map_err(|error| {
         AppError::database("The study session update could not be committed", error)
     })?;
@@ -1485,8 +2170,13 @@ pub fn study_totals(connection: &Connection) -> Result<V2StudyTotals, AppError> 
 
     let allocated_seconds = connection
         .query_row(
-            "SELECT COALESCE(SUM(allocated_seconds), 0)
-             FROM session_exam_allocations",
+            "SELECT COALESCE(SUM(MIN(s.duration_seconds, credits.credited_seconds)), 0)
+             FROM study_sessions s
+             JOIN (
+                 SELECT session_id, SUM(credit_seconds) AS credited_seconds
+                 FROM session_exam_associations
+                 GROUP BY session_id
+             ) credits ON credits.session_id = s.id",
             [],
             |row| row.get::<_, i64>(0),
         )
@@ -1495,11 +2185,11 @@ pub fn study_totals(connection: &Connection) -> Result<V2StudyTotals, AppError> 
     let mut statement = connection
         .prepare(
             "SELECT e.id, e.code, e.name, p.is_active,
-                    COALESCE(SUM(a.allocated_seconds), 0),
+                    COALESCE(SUM(a.credit_seconds), 0),
                     COUNT(DISTINCT a.session_id)
              FROM exams e
              JOIN exam_profiles p ON p.exam_id = e.id
-             LEFT JOIN session_exam_allocations a ON a.exam_id = e.id
+             LEFT JOIN session_exam_associations a ON a.exam_id = e.id
              GROUP BY e.id, e.code, e.name, p.is_active, e.display_order
              ORDER BY e.display_order",
         )
@@ -1676,20 +2366,24 @@ fn complete_locked(
 
     let session_id = if row.mode == TimerMode::Focus {
         let session_date = row.session_date.ok_or_else(AppError::timer_unavailable)?;
+        let mut exam_ids = Vec::new();
+        let mut selected_exams = HashSet::new();
+        for exam_id in load_timer_exam_ids(transaction)? {
+            if exam_active_state(transaction, exam_id)?.unwrap_or(false)
+                && selected_exams.insert(exam_id)
+            {
+                exam_ids.push(exam_id);
+            }
+        }
         let planned = load_timer_topic_allocations(transaction)?
             .into_iter()
-            .filter(|allocation| {
-                exam_active_state(transaction, allocation.exam_id)
-                    .ok()
-                    .flatten()
-                    == Some(true)
-            })
+            .filter(|allocation| selected_exams.contains(&allocation.exam_id))
             .collect::<Vec<_>>();
-        let topic_allocations = scale_topic_allocations(planned, duration_seconds);
-        let primary_exam_id = topic_allocations
-            .first()
-            .map(|allocation| allocation.exam_id)
-            .or(row.active_exam_id);
+        let topic_allocations = scale_topic_allocations(planned, duration_seconds)
+            .into_iter()
+            .filter(|allocation| selected_exams.contains(&allocation.exam_id))
+            .collect::<Vec<_>>();
+        let primary_exam_id = exam_ids.first().copied();
         transaction
             .execute(
                 "INSERT INTO study_sessions (
@@ -1710,56 +2404,30 @@ fn complete_locked(
             })?;
         let session_id = transaction.last_insert_rowid();
 
-        if topic_allocations.is_empty() {
-            if let Some(exam_id) = row.active_exam_id
-                && exam_active_state(transaction, exam_id)?.unwrap_or(false)
-            {
-                transaction
-                    .execute(
-                        "INSERT INTO session_exam_allocations (
-                            session_id, exam_id, allocated_seconds, created_at, updated_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?4)",
-                        params![session_id, exam_id, duration_seconds, now_text],
-                    )
-                    .map_err(|error| {
-                        AppError::database("The timer session allocation could not be saved", error)
-                    })?;
-            }
-        } else {
-            let mut exam_totals: HashMap<i64, i64> = HashMap::new();
-            for allocation in &topic_allocations {
-                *exam_totals.entry(allocation.exam_id).or_default() += allocation.allocated_seconds;
-            }
-            for (exam_id, allocated_seconds) in exam_totals {
-                transaction
-                    .execute(
-                        "INSERT INTO session_exam_allocations (
-                            session_id, exam_id, allocated_seconds, created_at, updated_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?4)",
-                        params![session_id, exam_id, allocated_seconds, now_text],
-                    )
-                    .map_err(|error| {
-                        AppError::database("The timer exam allocation could not be saved", error)
-                    })?;
-            }
-            for allocation in &topic_allocations {
-                transaction
-                    .execute(
-                        "INSERT INTO session_topic_allocations (
-                            session_id, exam_id, node_id, allocated_seconds, created_at, updated_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                        params![
-                            session_id,
-                            allocation.exam_id,
-                            allocation.node_id,
-                            allocation.allocated_seconds,
-                            now_text,
-                        ],
-                    )
-                    .map_err(|error| {
-                        AppError::database("The timer topic allocation could not be saved", error)
-                    })?;
-            }
+        insert_session_exam_associations(
+            transaction,
+            session_id,
+            &exam_ids,
+            duration_seconds,
+            &now_text,
+        )?;
+        for allocation in &topic_allocations {
+            transaction
+                .execute(
+                    "INSERT INTO session_topic_allocations (
+                        session_id, exam_id, node_id, allocated_seconds, created_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                    params![
+                        session_id,
+                        allocation.exam_id,
+                        allocation.node_id,
+                        allocation.allocated_seconds,
+                        now_text,
+                    ],
+                )
+                .map_err(|error| {
+                    AppError::database("The timer topic allocation could not be saved", error)
+                })?;
         }
 
         Some(session_id)
@@ -1801,8 +2469,20 @@ fn complete_locked(
                 error,
             )
         })?;
+    transaction
+        .execute("DELETE FROM timer_exam_associations", [])
+        .map_err(|error| {
+            AppError::database(
+                "The completed timer exam associations could not be cleared",
+                error,
+            )
+        })?;
 
-    Ok(TimerCompletion)
+    Ok(TimerCompletion {
+        session_id,
+        duration_seconds,
+        mode: row.mode,
+    })
 }
 
 fn pause_locked(
@@ -1869,6 +2549,13 @@ fn build_snapshot(
         .min(duration_ms),
     };
 
+    let exam_ids = load_timer_exam_ids(connection)?;
+    let active_exams: HashSet<i64> = exam_ids.iter().copied().collect();
+    let allocations = load_timer_topic_allocations(connection)?
+        .into_iter()
+        .filter(|allocation| active_exams.contains(&allocation.exam_id))
+        .collect();
+
     Ok(V2TimerSnapshot {
         state: V2TimerState {
             status: row.status,
@@ -1889,7 +2576,8 @@ fn build_snapshot(
             last_completed_session_id: row.last_completed_session_id,
         },
         settings,
-        allocations: load_timer_topic_allocations(connection)?,
+        allocations,
+        exam_ids,
         server_now_ms: now.timestamp_millis(),
     })
 }
@@ -2138,19 +2826,238 @@ fn format_utc(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+impl CompletionNotificationState {
+    fn should_notify(&self, session_id: i64) -> bool {
+        let mut guard = self
+            .last_notified_session_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *guard == Some(session_id) {
+            return false;
+        }
+        *guard = Some(session_id);
+        true
+    }
+
+    fn mark_notified(&self, session_id: i64) {
+        let mut guard = self
+            .last_notified_session_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = Some(session_id);
+    }
+}
+
+fn completion_subject(connection: &Connection, session_id: i64) -> Result<String, AppError> {
+    let mut topic_statement = connection
+        .prepare(
+            "SELECT n.title
+             FROM session_topic_allocations a
+             JOIN exam_syllabus_nodes n ON n.exam_id = a.exam_id AND n.id = a.node_id
+             WHERE a.session_id = ?1
+             ORDER BY a.allocated_seconds DESC, n.display_order, n.id",
+        )
+        .map_err(|error| {
+            AppError::database("Session notification topics could not be prepared", error)
+        })?;
+    let topics = topic_statement
+        .query_map([session_id], |row| row.get::<_, String>(0))
+        .map_err(|error| {
+            AppError::database("Session notification topics could not be read", error)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| AppError::database("A session notification topic is invalid", error))?;
+    if let Some(first) = topics.first() {
+        if topics.len() == 1 {
+            return Ok(first.clone());
+        }
+        let remaining = topics.len() - 1;
+        return Ok(format!(
+            "{first} and {remaining} more topic{}",
+            if remaining == 1 { "" } else { "s" }
+        ));
+    }
+
+    let exam_label: Option<String> = connection
+        .query_row(
+            "SELECT COALESCE(NULLIF(e.short_name, ''), e.name)
+             FROM session_exam_associations a
+             JOIN exams e ON e.id = a.exam_id
+             WHERE a.session_id = ?1
+             ORDER BY a.credit_seconds DESC, e.display_order
+             LIMIT 1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database("Session notification examination could not be read", error)
+        })?;
+    if let Some(exam_label) = exam_label {
+        return Ok(exam_label);
+    }
+
+    let primary_exam: Option<String> = connection
+        .query_row(
+            "SELECT COALESCE(NULLIF(e.short_name, ''), e.name)
+             FROM study_sessions s
+             JOIN exams e ON e.id = s.primary_exam_id
+             WHERE s.id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(
+                "Session notification primary examination could not be read",
+                error,
+            )
+        })?;
+    Ok(primary_exam.unwrap_or_else(|| "study".to_owned()))
+}
+
+fn format_completion_duration(duration_seconds: i64) -> String {
+    let seconds = duration_seconds.max(0);
+    if seconds < 60 {
+        return "less than a minute".to_owned();
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes} minute{}", if minutes == 1 { "" } else { "s" });
+    }
+    let hours = minutes / 60;
+    let remaining_minutes = minutes % 60;
+    if remaining_minutes == 0 {
+        format!("{hours} hour{}", if hours == 1 { "" } else { "s" })
+    } else {
+        format!(
+            "{hours} hour{} {remaining_minutes} minute{}",
+            if hours == 1 { "" } else { "s" },
+            if remaining_minutes == 1 { "" } else { "s" }
+        )
+    }
+}
+
+fn completion_notice(
+    connection: &Connection,
+    completion: TimerCompletion,
+) -> Result<Option<V2StudyCompletionNotice>, AppError> {
+    if completion.mode != TimerMode::Focus {
+        return Ok(None);
+    }
+    let Some(session_id) = completion.session_id else {
+        return Ok(None);
+    };
+    let subject = completion_subject(connection, session_id)?;
+    Ok(Some(V2StudyCompletionNotice {
+        session_id,
+        title: "Study session completed".to_owned(),
+        body: format!(
+            "You completed {} of {subject}.",
+            format_completion_duration(completion.duration_seconds)
+        ),
+    }))
+}
+
+fn deliver_completion_notice<F>(notice: &V2StudyCompletionNotice, show: F) -> bool
+where
+    F: FnOnce(&V2StudyCompletionNotice) -> Result<(), String>,
+{
+    match show(notice) {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "Study session notification for session {} could not be shown: {error}",
+                notice.session_id
+            );
+            false
+        }
+    }
+}
+
+fn show_native_notification(
+    app: &tauri::AppHandle,
+    notice: &V2StudyCompletionNotice,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    app.notification()
+        .builder()
+        .title(&notice.title)
+        .body(&notice.body)
+        .show()
+        .map_err(|error| error.to_string())
+}
+
+/// Notify once for a completed focus session. The notice is built from the
+/// committed session, and delivery failures are logged without touching the
+/// persisted timer or session.
+pub fn notify_timer_completion(
+    app: &tauri::AppHandle,
+    state: &V2State,
+    completion: Option<TimerCompletion>,
+) {
+    let Some(completion) = completion else {
+        return;
+    };
+    if completion.mode != TimerMode::Focus {
+        return;
+    }
+    let Some(session_id) = completion.session_id else {
+        return;
+    };
+    let settings = match state.with_connection(|connection| load_settings(connection)) {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("Study timer notification settings could not be read: {error:?}");
+            return;
+        }
+    };
+    if !settings.notifications_enabled {
+        return;
+    }
+    if !app
+        .state::<CompletionNotificationState>()
+        .should_notify(session_id)
+    {
+        return;
+    }
+    let notice = match state.with_connection(|connection| completion_notice(connection, completion))
+    {
+        Ok(Some(notice)) => notice,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("Study timer notification details could not be read: {error:?}");
+            return;
+        }
+    };
+    let _ = deliver_completion_notice(&notice, |notice| show_native_notification(app, notice));
+}
+
 /// Keep a running timer checkpointed even if the webview is minimized or a
 /// component unmounts. The database timestamps remain the source of truth.
 pub fn start_heartbeat(app: tauri::AppHandle) {
+    {
+        let state = app.state::<V2State>();
+        if let Ok(Some(session_id)) = state.with_connection(|connection| {
+            get_timer_with_completion(connection, Utc::now())
+                .map(|outcome| outcome.snapshot.state.last_completed_session_id)
+        }) {
+            app.state::<CompletionNotificationState>()
+                .mark_notified(session_id);
+        }
+    }
     let thread = std::thread::Builder::new()
         .name("v2-study-timer-heartbeat".to_owned())
         .spawn(move || {
             loop {
                 std::thread::sleep(HEARTBEAT_INTERVAL);
-                let state = app.state::<crate::v2::V2State>();
-                if let Err(error) = state.with_connection(|connection| {
-                    heartbeat_timer(connection, Utc::now()).map(|_| ())
+                let state = app.state::<V2State>();
+                match state.with_connection(|connection| {
+                    heartbeat_timer_with_completion(connection, Utc::now())
                 }) {
-                    eprintln!("V2 study timer heartbeat failed: {error:?}");
+                    Ok(outcome) => notify_timer_completion(&app, state.inner(), outcome.completion),
+                    Err(error) => eprintln!("V2 study timer heartbeat failed: {error:?}"),
                 }
             }
         });
@@ -2183,6 +3090,7 @@ mod tests {
             mode: mode.to_owned(),
             session_date: "2026-11-04".to_owned(),
             active_exam_id,
+            exam_ids: Vec::new(),
             allocations: Vec::new(),
             duration_minutes: None,
         }
@@ -2243,6 +3151,7 @@ mod tests {
                     mode: "focus".to_owned(),
                     session_date: "2026-11-04".to_owned(),
                     active_exam_id: None,
+                    exam_ids: Vec::new(),
                     allocations: allocations
                         .into_iter()
                         .map(
@@ -2407,6 +3316,21 @@ mod tests {
             .expect("session list");
         assert_eq!(sessions[0].duration_seconds, 25 * 60);
         assert_eq!(sessions[0].allocated_seconds, 25 * 60);
+        assert_eq!(sessions[0].session_date, "2026-11-04");
+
+        let totals = state
+            .with_connection(|connection| study_totals(connection))
+            .expect("study totals");
+        assert_eq!(totals.session_count, 1);
+        assert_eq!(totals.total_seconds, 25 * 60);
+        assert_eq!(totals.allocated_seconds, 25 * 60);
+        let gate = totals
+            .exams
+            .iter()
+            .find(|exam| exam.exam_code == "gate-physics")
+            .expect("GATE exam total");
+        assert_eq!(gate.allocated_seconds, 25 * 60);
+        assert_eq!(gate.session_count, 1);
     }
 
     #[test]
@@ -2589,6 +3513,7 @@ mod tests {
                     mode: mode.to_owned(),
                     session_date: "2026-11-04".to_owned(),
                     active_exam_id: None,
+                    exam_ids: Vec::new(),
                     allocations: allocations
                         .into_iter()
                         .map(
@@ -2722,6 +3647,13 @@ mod tests {
             120
         );
         assert_eq!(session.allocations.len(), 3);
+        assert!(
+            session
+                .allocations
+                .iter()
+                .all(|allocation| allocation.allocated_seconds == 120),
+            "every associated exam receives the full session duration"
+        );
 
         let totals = state
             .with_connection(|connection| study_totals(connection))
@@ -2735,7 +3667,8 @@ mod tests {
                 .iter()
                 .map(|exam| exam.allocated_seconds)
                 .sum::<i64>(),
-            120
+            360,
+            "exam-specific totals intentionally overlap"
         );
         assert_eq!(totals.topics.len(), 3);
         assert_eq!(
@@ -2760,6 +3693,1042 @@ mod tests {
             mastery_evidence, 0,
             "studying must not create mastery evidence"
         );
+    }
+
+    #[test]
+    fn two_hour_session_with_three_exams_credits_each_exam_without_duplicating_time() {
+        let (_root, state) = state();
+        let created = state
+            .with_connection(|connection| {
+                create_manual_session(
+                    connection,
+                    V2CreateManualSessionInput {
+                        session_date: "2026-11-04".to_owned(),
+                        duration_seconds: 7_200,
+                        notes: "Classical Mechanics — Angular Momentum".to_owned(),
+                        primary_exam_id: None,
+                        exam_ids: vec![1, 2, 4],
+                    },
+                    at(0),
+                )
+            })
+            .expect("multi-exam manual session");
+        assert_eq!(created.duration_seconds, 7_200);
+        assert_eq!(created.allocations.len(), 3);
+        assert!(created.unallocated_seconds == 0);
+        assert!(
+            created
+                .allocations
+                .iter()
+                .all(|allocation| allocation.allocated_seconds == 7_200),
+            "each associated exam receives the full two hours"
+        );
+
+        let (session_rows, association_rows, association_credit, distinct_sessions, total_duration) =
+            state
+                .with_connection(|connection| {
+                    let session_rows = connection
+                        .query_row("SELECT COUNT(*) FROM study_sessions", [], |row| {
+                            row.get::<_, i64>(0)
+                        })
+                        .map_err(|error| AppError::database("session rows", error))?;
+                    let association_rows = connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM session_exam_associations",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .map_err(|error| AppError::database("association rows", error))?;
+                    let association_credit = connection
+                        .query_row(
+                            "SELECT SUM(credit_seconds) FROM session_exam_associations",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .map_err(|error| AppError::database("association credit", error))?;
+                    let distinct_sessions = connection
+                        .query_row(
+                            "SELECT COUNT(DISTINCT session_id) FROM session_exam_associations",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .map_err(|error| AppError::database("distinct sessions", error))?;
+                    let total_duration = connection
+                        .query_row(
+                            "SELECT SUM(duration_seconds) FROM study_sessions",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .map_err(|error| AppError::database("total duration", error))?;
+                    Ok((
+                        session_rows,
+                        association_rows,
+                        association_credit,
+                        distinct_sessions,
+                        total_duration,
+                    ))
+                })
+                .expect("database accounting invariant");
+        assert_eq!(session_rows, 1, "one actual session row");
+        assert_eq!(association_rows, 3, "three exam associations");
+        assert_eq!(association_credit, 21_600, "three full two-hour credits");
+        assert_eq!(distinct_sessions, 1, "associations share one session id");
+        assert_eq!(total_duration, 7_200, "overall actual time is two hours");
+
+        let totals = state
+            .with_connection(|connection| study_totals(connection))
+            .expect("study totals");
+        assert_eq!(totals.total_seconds, 7_200);
+        assert_eq!(totals.session_count, 1);
+        assert_eq!(totals.allocated_seconds, 7_200);
+        assert_eq!(totals.unallocated_seconds, 0);
+        for exam_id in [1, 2, 4] {
+            let exam = totals
+                .exams
+                .iter()
+                .find(|exam| exam.exam_id == exam_id)
+                .expect("exam total");
+            assert_eq!(
+                exam.allocated_seconds, 7_200,
+                "exam {exam_id} receives the full two hours"
+            );
+            assert_eq!(exam.session_count, 1);
+        }
+    }
+
+    #[test]
+    fn removing_exam_association_reconciles_topic_rows_without_changing_overall_time() {
+        let (_root, state) = state();
+        let csir = official_topic(&state, 1, 0);
+        let gate = official_topic(&state, 2, 0);
+        let jest = official_topic(&state, 4, 0);
+        let created = state
+            .with_connection(|connection| {
+                create_manual_session(
+                    connection,
+                    V2CreateManualSessionInput {
+                        session_date: "2026-11-04".to_owned(),
+                        duration_seconds: 7_200,
+                        notes: String::new(),
+                        primary_exam_id: None,
+                        exam_ids: vec![1, 2, 4],
+                    },
+                    at(0),
+                )
+            })
+            .expect("three-exam session");
+        state
+            .with_connection(|connection| {
+                for (exam_id, node_id) in [(1, csir), (2, gate), (4, jest)] {
+                    connection
+                        .execute(
+                            "INSERT INTO session_topic_allocations (
+                                session_id, exam_id, node_id, allocated_seconds,
+                                created_at, updated_at
+                             ) VALUES (?1, ?2, ?3, 2400, ?4, ?4)",
+                            params![created.id, exam_id, node_id, "2026-11-04T10:00:00.000Z"],
+                        )
+                        .map_err(|error| AppError::database("topic fixture", error))?;
+                }
+                Ok::<(), AppError>(())
+            })
+            .expect("topic fixture");
+
+        let edited = state
+            .with_connection(|connection| {
+                set_session_exams(
+                    connection,
+                    V2SetSessionExamsInput {
+                        session_id: created.id,
+                        exam_ids: vec![1, 4],
+                    },
+                    at(1),
+                )
+            })
+            .expect("remove GATE association");
+        assert_eq!(edited.id, created.id);
+        assert_eq!(edited.duration_seconds, 7_200);
+        assert_eq!(edited.allocations.len(), 2);
+        assert_eq!(edited.topic_allocations.len(), 2);
+        assert!(
+            edited
+                .topic_allocations
+                .iter()
+                .all(|allocation| allocation.exam_id != 2)
+        );
+        assert!(
+            edited
+                .allocations
+                .iter()
+                .all(|allocation| allocation.allocated_seconds == 7_200)
+        );
+
+        let totals = state
+            .with_connection(|connection| study_totals(connection))
+            .expect("study totals");
+        assert_eq!(totals.total_seconds, 7_200);
+        assert_eq!(totals.allocated_seconds, 7_200);
+        assert_eq!(totals.session_count, 1);
+        assert!(
+            totals.topics.iter().all(|topic| topic.exam_id != 2),
+            "removed exam topic rows must not remain in dashboard totals"
+        );
+
+        let analytics = state
+            .with_connection(|connection| {
+                crate::v2::analytics::get_analytics(
+                    connection,
+                    crate::v2::analytics::V2AnalyticsInput {
+                        exam_id: None,
+                        today: "2026-11-04".to_owned(),
+                        window_days: 30,
+                    },
+                )
+            })
+            .expect("analytics");
+        assert_eq!(analytics.total_seconds, 7_200);
+        assert_eq!(analytics.session_count, 1);
+        assert!(
+            analytics.topics.iter().all(|topic| topic.exam_id != 2),
+            "removed exam topic rows must not remain in analytics"
+        );
+    }
+
+    #[test]
+    fn retained_historical_credit_is_preserved_and_new_exams_get_full_credit() {
+        let (_root, state) = state();
+        let created = state
+            .with_connection(|connection| {
+                create_manual_session(
+                    connection,
+                    V2CreateManualSessionInput {
+                        session_date: "2026-11-04".to_owned(),
+                        duration_seconds: 3_600,
+                        notes: String::new(),
+                        primary_exam_id: None,
+                        exam_ids: vec![1],
+                    },
+                    at(0),
+                )
+            })
+            .expect("historical session");
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "INSERT INTO session_exam_associations (
+                            session_id, exam_id, credit_seconds, created_at, updated_at
+                         ) VALUES (?1, 2, 1200, ?2, ?2)",
+                        params![created.id, "2026-11-04T10:00:00.000Z"],
+                    )
+                    .map_err(|error| AppError::database("historical credit fixture", error))?;
+                connection
+                    .execute(
+                        "UPDATE exam_profiles SET is_active = 0 WHERE exam_id = 2",
+                        [],
+                    )
+                    .map_err(|error| AppError::database("deactivate exam", error))?;
+                Ok::<(), AppError>(())
+            })
+            .expect("historical inactive fixture");
+
+        let retained = state
+            .with_connection(|connection| {
+                set_session_exams(
+                    connection,
+                    V2SetSessionExamsInput {
+                        session_id: created.id,
+                        exam_ids: vec![1, 2],
+                    },
+                    at(1),
+                )
+            })
+            .expect("retain historical associations");
+        let credit = |session: &V2StudySession, exam_id: i64| {
+            session
+                .allocations
+                .iter()
+                .find(|allocation| allocation.exam_id == exam_id)
+                .map(|allocation| allocation.allocated_seconds)
+        };
+        assert_eq!(credit(&retained, 1), Some(3_600));
+        assert_eq!(credit(&retained, 2), Some(1_200));
+        assert_eq!(retained.duration_seconds, 3_600);
+        assert_eq!(retained.allocated_seconds, 3_600);
+
+        let expanded = state
+            .with_connection(|connection| {
+                set_session_exams(
+                    connection,
+                    V2SetSessionExamsInput {
+                        session_id: created.id,
+                        exam_ids: vec![1, 2, 4],
+                    },
+                    at(2),
+                )
+            })
+            .expect("add active exam");
+        assert_eq!(credit(&expanded, 1), Some(3_600));
+        assert_eq!(credit(&expanded, 2), Some(1_200));
+        assert_eq!(credit(&expanded, 4), Some(3_600));
+        assert_eq!(expanded.allocated_seconds, 3_600);
+
+        let repeated = state
+            .with_connection(|connection| {
+                set_session_exams(
+                    connection,
+                    V2SetSessionExamsInput {
+                        session_id: created.id,
+                        exam_ids: vec![1, 2, 4],
+                    },
+                    at(3),
+                )
+            })
+            .expect("repeat edit");
+        assert_eq!(credit(&repeated, 2), Some(1_200));
+        let totals = state
+            .with_connection(|connection| study_totals(connection))
+            .expect("study totals");
+        assert_eq!(totals.total_seconds, 3_600);
+        assert_eq!(totals.session_count, 1);
+        assert_eq!(
+            totals
+                .exams
+                .iter()
+                .find(|exam| exam.exam_id == 2)
+                .expect("inactive exam total")
+                .allocated_seconds,
+            1_200,
+            "retained historical credit must not be upgraded"
+        );
+    }
+
+    #[test]
+    fn running_timer_rejects_topic_allocations_for_unselected_exams() {
+        let (_root, state) = state();
+        let csir = official_topic(&state, 1, 0);
+        let gate = official_topic(&state, 2, 0);
+        let jest = official_topic(&state, 4, 0);
+        state
+            .with_connection(|connection| {
+                update_settings(
+                    connection,
+                    V2TimerSettingsInput {
+                        focus_minutes: 1,
+                        short_break_minutes: 5,
+                        long_break_minutes: 15,
+                        notifications_enabled: false,
+                    },
+                    at(0),
+                )
+            })
+            .expect("one minute timer");
+        let started = state
+            .with_connection(|connection| {
+                start_timer(
+                    connection,
+                    at(0),
+                    V2StartTimerInput {
+                        mode: "focus".to_owned(),
+                        session_date: "2026-11-04".to_owned(),
+                        active_exam_id: None,
+                        exam_ids: vec![1, 2],
+                        allocations: Vec::new(),
+                        duration_minutes: None,
+                    },
+                )
+            })
+            .expect("two-exam timer");
+        assert_eq!(started.exam_ids, vec![1, 2]);
+
+        let rejected = state
+            .with_connection(|connection| {
+                set_timer_allocations_with_completion(
+                    connection,
+                    V2SetTimerAllocationsInput {
+                        allocations: vec![V2TopicAllocationInput {
+                            exam_id: 4,
+                            node_id: jest,
+                            allocated_seconds: 30,
+                        }],
+                    },
+                    at(10),
+                )
+            })
+            .err()
+            .expect("unselected exam allocation must be rejected");
+        assert_eq!(rejected.code, "forbidden");
+        assert_eq!(rejected.field, Some("allocations"));
+
+        let accepted = state
+            .with_connection(|connection| {
+                set_timer_allocations_with_completion(
+                    connection,
+                    V2SetTimerAllocationsInput {
+                        allocations: vec![
+                            V2TopicAllocationInput {
+                                exam_id: 1,
+                                node_id: csir,
+                                allocated_seconds: 30,
+                            },
+                            V2TopicAllocationInput {
+                                exam_id: 2,
+                                node_id: gate,
+                                allocated_seconds: 30,
+                            },
+                        ],
+                    },
+                    at(11),
+                )
+            })
+            .expect("selected exam allocations");
+        assert_eq!(accepted.snapshot.exam_ids, vec![1, 2]);
+        assert_eq!(accepted.snapshot.allocations.len(), 2);
+
+        state
+            .with_connection(|connection| heartbeat_timer(connection, at(15)))
+            .expect("heartbeat");
+        state
+            .with_connection(|connection| recover_after_restart(connection, at(30)))
+            .expect("restart recovery");
+        let paused = state
+            .with_connection(|connection| get_timer(connection, at(30)))
+            .expect("paused timer");
+        assert_eq!(paused.state.status, TimerStatus::Paused);
+        assert_eq!(paused.exam_ids, vec![1, 2]);
+
+        let rejected_after_restart = state
+            .with_connection(|connection| {
+                set_timer_allocations_with_completion(
+                    connection,
+                    V2SetTimerAllocationsInput {
+                        allocations: vec![V2TopicAllocationInput {
+                            exam_id: 4,
+                            node_id: jest,
+                            allocated_seconds: 30,
+                        }],
+                    },
+                    at(31),
+                )
+            })
+            .err()
+            .expect("restart must not unlock associations");
+        assert_eq!(rejected_after_restart.code, "forbidden");
+
+        state
+            .with_connection(|connection| resume_timer(connection, at(40)))
+            .expect("resume");
+        let finished = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(45)))
+            .expect("manual completion");
+        let session_id = finished
+            .completion
+            .expect("completion")
+            .session_id
+            .expect("session id");
+        let sessions = state
+            .with_connection(|connection| list_sessions(connection))
+            .expect("sessions");
+        assert_eq!(sessions.len(), 1);
+        let session = sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .expect("completed session");
+        assert_eq!(session.allocations.len(), 2);
+        assert!(
+            session
+                .allocations
+                .iter()
+                .all(|allocation| allocation.exam_id == 1 || allocation.exam_id == 2)
+        );
+        assert!(
+            session
+                .allocations
+                .iter()
+                .all(|allocation| allocation.allocated_seconds == session.duration_seconds)
+        );
+        let totals = state
+            .with_connection(|connection| study_totals(connection))
+            .expect("totals");
+        assert_eq!(totals.session_count, 1);
+        assert_eq!(totals.total_seconds, session.duration_seconds);
+        assert_eq!(
+            totals
+                .exams
+                .iter()
+                .find(|exam| exam.exam_id == 4)
+                .expect("JEST total")
+                .allocated_seconds,
+            0,
+            "JEST must receive no credit"
+        );
+    }
+
+    #[test]
+    fn natural_completion_keeps_only_persisted_timer_associations() {
+        let (_root, state) = state();
+        let jest = official_topic(&state, 4, 0);
+        state
+            .with_connection(|connection| {
+                update_settings(
+                    connection,
+                    V2TimerSettingsInput {
+                        focus_minutes: 1,
+                        short_break_minutes: 5,
+                        long_break_minutes: 15,
+                        notifications_enabled: false,
+                    },
+                    at(0),
+                )
+            })
+            .expect("one minute timer");
+        state
+            .with_connection(|connection| {
+                start_timer(
+                    connection,
+                    at(0),
+                    V2StartTimerInput {
+                        mode: "focus".to_owned(),
+                        session_date: "2026-11-04".to_owned(),
+                        active_exam_id: None,
+                        exam_ids: vec![1, 2],
+                        allocations: Vec::new(),
+                        duration_minutes: None,
+                    },
+                )
+            })
+            .expect("two-exam timer");
+        let rejected = state
+            .with_connection(|connection| {
+                set_timer_allocations_with_completion(
+                    connection,
+                    V2SetTimerAllocationsInput {
+                        allocations: vec![V2TopicAllocationInput {
+                            exam_id: 4,
+                            node_id: jest,
+                            allocated_seconds: 30,
+                        }],
+                    },
+                    at(10),
+                )
+            })
+            .err()
+            .expect("JEST is not selected");
+        assert_eq!(rejected.code, "forbidden");
+        checkpoint(&state, 0, 50);
+        let completed = state
+            .with_connection(|connection| heartbeat_timer_with_completion(connection, at(60)))
+            .expect("natural completion");
+        assert!(completed.completion.is_some());
+        let sessions = state
+            .with_connection(|connection| list_sessions(connection))
+            .expect("sessions");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].allocations.len(), 2);
+        assert!(
+            sessions[0]
+                .allocations
+                .iter()
+                .all(|allocation| allocation.exam_id == 1 || allocation.exam_id == 2)
+        );
+        assert_eq!(sessions[0].duration_seconds, 60);
+    }
+
+    #[test]
+    fn legacy_running_timer_selection_is_restored_for_display_and_credit() {
+        let (_root, state) = state();
+        start(&state, at(0), Some(1));
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute("DELETE FROM timer_exam_associations", [])
+                    .map_err(|error| AppError::database("clear legacy timer", error))?;
+                ensure_study_allocation_tables(connection)
+            })
+            .expect("restore legacy timer selection");
+        let snapshot = state
+            .with_connection(|connection| get_timer(connection, at(1)))
+            .expect("restored snapshot");
+        assert_eq!(snapshot.exam_ids, vec![1]);
+        let finished = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(5)))
+            .expect("finish");
+        let session_id = finished
+            .completion
+            .expect("completion")
+            .session_id
+            .expect("session id");
+        let sessions = state
+            .with_connection(|connection| list_sessions(connection))
+            .expect("sessions");
+        let session = sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .expect("session");
+        assert_eq!(session.allocations.len(), 1);
+        assert_eq!(session.allocations[0].exam_id, 1);
+        assert_eq!(
+            session.allocations[0].allocated_seconds,
+            session.duration_seconds
+        );
+    }
+
+    #[test]
+    fn legacy_running_timer_topic_backfill_is_idempotent_and_credits_only_seeded_exams() {
+        let (_root, state) = state();
+        let csir = official_topic(&state, 1, 0);
+        let gate = official_topic(&state, 2, 0);
+        start_with_allocations(&state, at(0), vec![(1, csir, 30), (2, gate, 30)])
+            .expect("legacy topic timer");
+
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "UPDATE timer_state SET active_exam_id = NULL WHERE id = 1",
+                        [],
+                    )
+                    .map_err(|error| AppError::database("clear active exam", error))?;
+                connection
+                    .execute("DELETE FROM timer_exam_associations", [])
+                    .map_err(|error| AppError::database("clear timer associations", error))?;
+                ensure_study_allocation_tables(connection)
+            })
+            .expect("first legacy topic backfill");
+
+        let first = state
+            .with_connection(|connection| get_timer(connection, at(1)))
+            .expect("first restored snapshot");
+        assert_eq!(first.exam_ids, vec![1, 2]);
+        assert_eq!(first.allocations.len(), 2);
+        assert!(
+            first
+                .allocations
+                .iter()
+                .all(|allocation| allocation.exam_id != 4)
+        );
+
+        state
+            .with_connection(ensure_study_allocation_tables)
+            .expect("repeated initialization");
+        let second = state
+            .with_connection(|connection| get_timer(connection, at(2)))
+            .expect("second restored snapshot");
+        assert_eq!(second.exam_ids, vec![1, 2]);
+        assert_eq!(second.allocations.len(), 2);
+        let raw_associations: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row("SELECT COUNT(*) FROM timer_exam_associations", [], |row| {
+                        row.get(0)
+                    })
+                    .map_err(|error| AppError::database("timer association count", error))
+            })
+            .expect("timer association count");
+        assert_eq!(
+            raw_associations, 2,
+            "repeated initialization must not duplicate"
+        );
+
+        let finished = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(5)))
+            .expect("finish legacy topic timer");
+        let session_id = finished
+            .completion
+            .expect("completion")
+            .session_id
+            .expect("session id");
+        let sessions = state
+            .with_connection(|connection| list_sessions(connection))
+            .expect("sessions");
+        assert_eq!(sessions.len(), 1);
+        let session = sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .expect("completed session");
+        assert_eq!(session.allocations.len(), 2);
+        assert!(
+            session
+                .allocations
+                .iter()
+                .all(|allocation| allocation.allocated_seconds == session.duration_seconds)
+        );
+        assert!(
+            session
+                .allocations
+                .iter()
+                .all(|allocation| allocation.exam_id != 4)
+        );
+    }
+
+    #[test]
+    fn legacy_timer_backfill_does_not_resurrect_a_removed_association() {
+        let (_root, state) = state();
+        start(&state, at(0), Some(1));
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute("DELETE FROM timer_exam_associations", [])
+                    .map_err(|error| AppError::database("clear timer associations", error))?;
+                ensure_study_allocation_tables(connection)
+            })
+            .expect("legacy active-exam backfill");
+        let restored = state
+            .with_connection(|connection| get_timer(connection, at(1)))
+            .expect("restored snapshot");
+        assert_eq!(restored.exam_ids, vec![1]);
+
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute("DELETE FROM timer_exam_associations", [])
+                    .map_err(|error| AppError::database("remove restored association", error))?;
+                ensure_study_allocation_tables(connection)
+            })
+            .expect("initialization after deliberate removal");
+        let after_removal = state
+            .with_connection(|connection| get_timer(connection, at(2)))
+            .expect("snapshot after removal");
+        assert!(
+            after_removal.exam_ids.is_empty(),
+            "a deliberately removed association must not be resurrected"
+        );
+        let raw_associations: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row("SELECT COUNT(*) FROM timer_exam_associations", [], |row| {
+                        row.get(0)
+                    })
+                    .map_err(|error| AppError::database("timer association count", error))
+            })
+            .expect("timer association count");
+        assert_eq!(raw_associations, 0);
+
+        let finished = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(5)))
+            .expect("finish after removal");
+        let session_id = finished
+            .completion
+            .expect("completion")
+            .session_id
+            .expect("session id");
+        let sessions = state
+            .with_connection(|connection| list_sessions(connection))
+            .expect("sessions");
+        let session = sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .expect("completed session");
+        assert!(
+            session.allocations.is_empty(),
+            "completion must credit only the remaining persisted set"
+        );
+        let totals = state
+            .with_connection(|connection| study_totals(connection))
+            .expect("totals");
+        assert_eq!(totals.total_seconds, session.duration_seconds);
+        assert_eq!(totals.allocated_seconds, 0);
+    }
+
+    #[test]
+    fn deactivated_exam_is_filtered_from_running_snapshot_and_completion() {
+        let (_root, state) = state();
+        let csir = official_topic(&state, 1, 0);
+        let gate = official_topic(&state, 2, 0);
+        let started = state
+            .with_connection(|connection| {
+                start_timer(
+                    connection,
+                    at(0),
+                    V2StartTimerInput {
+                        mode: "focus".to_owned(),
+                        session_date: "2026-11-04".to_owned(),
+                        active_exam_id: None,
+                        exam_ids: vec![1, 2],
+                        allocations: vec![
+                            V2TopicAllocationInput {
+                                exam_id: 1,
+                                node_id: csir,
+                                allocated_seconds: 30,
+                            },
+                            V2TopicAllocationInput {
+                                exam_id: 2,
+                                node_id: gate,
+                                allocated_seconds: 30,
+                            },
+                        ],
+                        duration_minutes: None,
+                    },
+                )
+            })
+            .expect("two-exam timer");
+        assert_eq!(started.exam_ids, vec![1, 2]);
+
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "UPDATE exam_profiles SET is_active = 0 WHERE exam_id = 2",
+                        [],
+                    )
+                    .map_err(|error| AppError::database("deactivate exam", error))
+            })
+            .expect("deactivate exam");
+
+        let snapshot = state
+            .with_connection(|connection| get_timer(connection, at(5)))
+            .expect("running snapshot");
+        assert_eq!(snapshot.exam_ids, vec![1]);
+        assert_eq!(snapshot.allocations.len(), 1);
+        assert!(
+            snapshot
+                .allocations
+                .iter()
+                .all(|allocation| allocation.exam_id == 1)
+        );
+
+        let (persisted_associations, persisted_topics): (i64, i64) = state
+            .with_connection(|connection| {
+                let associations = connection
+                    .query_row("SELECT COUNT(*) FROM timer_exam_associations", [], |row| {
+                        row.get(0)
+                    })
+                    .map_err(|error| AppError::database("timer association count", error))?;
+                let topics = connection
+                    .query_row("SELECT COUNT(*) FROM timer_topic_allocations", [], |row| {
+                        row.get(0)
+                    })
+                    .map_err(|error| AppError::database("timer topic count", error))?;
+                Ok::<_, AppError>((associations, topics))
+            })
+            .expect("persisted timer detail");
+        assert_eq!(
+            persisted_associations, 2,
+            "inactive persisted associations remain internally"
+        );
+        assert_eq!(
+            persisted_topics, 2,
+            "snapshot filtering must not mutate timer topic rows"
+        );
+
+        let finished = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(10)))
+            .expect("finish after deactivation");
+        let session_id = finished
+            .completion
+            .expect("completion")
+            .session_id
+            .expect("session id");
+        let sessions = state
+            .with_connection(|connection| list_sessions(connection))
+            .expect("sessions");
+        let session = sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .expect("completed session");
+        assert_eq!(session.allocations.len(), 1);
+        assert_eq!(session.allocations[0].exam_id, 1);
+        assert_eq!(
+            session.allocations[0].allocated_seconds,
+            session.duration_seconds
+        );
+        assert!(
+            session
+                .topic_allocations
+                .iter()
+                .all(|allocation| allocation.exam_id == 1)
+        );
+        let totals = state
+            .with_connection(|connection| study_totals(connection))
+            .expect("totals");
+        assert_eq!(totals.total_seconds, session.duration_seconds);
+        assert_eq!(
+            totals
+                .exams
+                .iter()
+                .find(|exam| exam.exam_id == 2)
+                .expect("deactivated exam total")
+                .allocated_seconds,
+            0
+        );
+    }
+
+    #[test]
+    fn multi_exam_associations_survive_resume_restart_editing_and_deletion() {
+        let (_root, state) = state();
+        let csir = official_topic(&state, 1, 0);
+        state
+            .with_connection(|connection| {
+                update_settings(
+                    connection,
+                    V2TimerSettingsInput {
+                        focus_minutes: 1,
+                        short_break_minutes: 5,
+                        long_break_minutes: 15,
+                        notifications_enabled: false,
+                    },
+                    at(0),
+                )
+            })
+            .expect("one minute timer");
+        let started = state
+            .with_connection(|connection| {
+                start_timer(
+                    connection,
+                    at(1),
+                    V2StartTimerInput {
+                        mode: "focus".to_owned(),
+                        session_date: "2026-11-04".to_owned(),
+                        active_exam_id: None,
+                        exam_ids: vec![1, 2, 4],
+                        allocations: vec![V2TopicAllocationInput {
+                            exam_id: 1,
+                            node_id: csir,
+                            allocated_seconds: 60,
+                        }],
+                        duration_minutes: None,
+                    },
+                )
+            })
+            .expect("multi-exam timer");
+        assert_eq!(started.exam_ids, vec![1, 2, 4]);
+
+        state
+            .with_connection(|connection| heartbeat_timer(connection, at(11)))
+            .expect("heartbeat");
+        state
+            .with_connection(|connection| recover_after_restart(connection, at(30)))
+            .expect("restart recovery");
+        let paused = state
+            .with_connection(|connection| get_timer(connection, at(30)))
+            .expect("paused snapshot");
+        assert_eq!(paused.state.status, TimerStatus::Paused);
+        assert_eq!(paused.exam_ids, vec![1, 2, 4]);
+
+        state
+            .with_connection(|connection| resume_timer(connection, at(40)))
+            .expect("resume");
+        let finished = state
+            .with_connection(|connection| finish_timer(connection, at(45)))
+            .expect("finish");
+        let session_id = finished
+            .state
+            .last_completed_session_id
+            .expect("completed session");
+        let session = state
+            .with_connection(|connection| load_session_by_id(connection, session_id))
+            .expect("session");
+        assert_eq!(session.allocations.len(), 3);
+        assert!(
+            session
+                .allocations
+                .iter()
+                .all(|allocation| allocation.allocated_seconds == session.duration_seconds)
+        );
+
+        let edited = state
+            .with_connection(|connection| {
+                set_session_exams(
+                    connection,
+                    V2SetSessionExamsInput {
+                        session_id,
+                        exam_ids: vec![2, 3],
+                    },
+                    at(46),
+                )
+            })
+            .expect("edited associations");
+        assert_eq!(edited.id, session_id);
+        assert_eq!(edited.allocations.len(), 2);
+        assert!(
+            edited
+                .allocations
+                .iter()
+                .any(|allocation| allocation.exam_id == 2)
+        );
+        assert!(
+            edited
+                .allocations
+                .iter()
+                .any(|allocation| allocation.exam_id == 3)
+        );
+        assert_eq!(
+            state
+                .with_connection(|connection| list_sessions(connection))
+                .expect("sessions")
+                .len(),
+            1,
+            "association edits never duplicate the session"
+        );
+
+        state
+            .with_connection(|connection| delete_study_session(connection, session_id))
+            .expect("delete");
+        let remaining: i64 = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM session_exam_associations",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("remaining associations", error))
+            })
+            .expect("association cleanup");
+        assert_eq!(remaining, 0, "deleting a session removes its associations");
+    }
+
+    #[test]
+    fn duplicate_exam_selections_are_rejected_before_a_session_exists() {
+        let (_root, state) = state();
+        let error = state
+            .with_connection(|connection| {
+                start_timer(
+                    connection,
+                    at(0),
+                    V2StartTimerInput {
+                        mode: "focus".to_owned(),
+                        session_date: "2026-11-04".to_owned(),
+                        active_exam_id: None,
+                        exam_ids: vec![1, 1],
+                        allocations: Vec::new(),
+                        duration_minutes: None,
+                    },
+                )
+            })
+            .expect_err("duplicate exam selection");
+        assert_eq!(error.code, "validation_error");
+        assert_eq!(error.field, Some("examIds"));
+        assert_eq!(session_count(&state), 0);
+    }
+
+    #[test]
+    fn timer_start_rejects_topic_allocation_for_unselected_exam() {
+        let (_root, state) = state();
+        let jest = official_topic(&state, 4, 0);
+        let error = state
+            .with_connection(|connection| {
+                start_timer(
+                    connection,
+                    at(0),
+                    V2StartTimerInput {
+                        mode: "focus".to_owned(),
+                        session_date: "2026-11-04".to_owned(),
+                        active_exam_id: None,
+                        exam_ids: vec![1, 2],
+                        allocations: vec![V2TopicAllocationInput {
+                            exam_id: 4,
+                            node_id: jest,
+                            allocated_seconds: 30,
+                        }],
+                        duration_minutes: None,
+                    },
+                )
+            })
+            .expect_err("unselected topic allocation must be rejected");
+        assert_eq!(error.code, "validation_error");
+        assert_eq!(error.field, Some("allocations"));
+        assert_eq!(session_count(&state), 0);
     }
 
     #[test]
@@ -2870,6 +4839,7 @@ mod tests {
                         duration_seconds: 600,
                         notes: "Legacy manual session".to_owned(),
                         primary_exam_id: None,
+                        exam_ids: Vec::new(),
                     },
                     at(100),
                 )
@@ -2901,11 +4871,23 @@ mod tests {
 
         // Simulate a schema-1 database created before the additive tables
         // existed. The base schema, checksum, and user version are untouched.
+        // Sessions are rewritten into the historical split-allocation shape so
+        // the additive migration has real legacy rows to backfill.
         source
             .with_connection(|connection| {
                 connection
                     .execute_batch(
-                        "DROP TABLE session_topic_allocations;
+                        "INSERT OR IGNORE INTO session_exam_allocations (
+                            session_id, exam_id, allocated_seconds, created_at, updated_at
+                         )
+                         SELECT id, primary_exam_id, duration_seconds, created_at, updated_at
+                         FROM study_sessions
+                         WHERE primary_exam_id IS NOT NULL;
+                         DELETE FROM session_exam_associations;
+                         DROP TABLE session_exam_associations;
+                         DROP TABLE timer_exam_associations;
+                         DROP TABLE study_allocation_migration_state;
+                         DROP TABLE session_topic_allocations;
                          DROP TABLE timer_topic_allocations;",
                     )
                     .map_err(|error| {
@@ -3035,6 +5017,72 @@ mod tests {
         assert_eq!(integrity, "ok");
         assert_eq!(foreign_keys, 0);
         assert_eq!(before_totals.session_count, 2);
+    }
+
+    #[test]
+    fn legacy_backfill_runs_once_and_never_resurrects_removed_associations() {
+        let (_root, state) = state();
+        let created = state
+            .with_connection(|connection| {
+                create_manual_session(
+                    connection,
+                    V2CreateManualSessionInput {
+                        session_date: "2026-11-04".to_owned(),
+                        duration_seconds: 600,
+                        notes: String::new(),
+                        primary_exam_id: Some(1),
+                        exam_ids: Vec::new(),
+                    },
+                    at(0),
+                )
+            })
+            .expect("manual session");
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "INSERT INTO session_exam_allocations (
+                            session_id, exam_id, allocated_seconds, created_at, updated_at
+                         ) VALUES (?1, 1, 600, '2026-11-04T10:00:00Z',
+                                   '2026-11-04T10:00:00Z')",
+                        [created.id],
+                    )
+                    .map_err(|error| AppError::database("legacy allocation", error))?;
+                connection
+                    .execute_batch(
+                        "DELETE FROM session_exam_associations;
+                         DELETE FROM study_allocation_migration_state;",
+                    )
+                    .map_err(|error| AppError::database("legacy migration state", error))?;
+                prepare(connection)
+            })
+            .expect("legacy backfill");
+        let migrated = state
+            .with_connection(|connection| load_session_by_id(connection, created.id))
+            .expect("migrated session");
+        assert_eq!(migrated.allocations.len(), 1);
+        assert_eq!(migrated.allocations[0].exam_id, 1);
+        assert_eq!(migrated.allocations[0].allocated_seconds, 600);
+
+        state
+            .with_connection(|connection| {
+                set_session_exams(
+                    connection,
+                    V2SetSessionExamsInput {
+                        session_id: created.id,
+                        exam_ids: vec![2],
+                    },
+                    at(1),
+                )
+            })
+            .expect("replace associations");
+        state.with_connection(prepare).expect("idempotent prepare");
+        let after_restart = state
+            .with_connection(|connection| load_session_by_id(connection, created.id))
+            .expect("session after restart");
+        assert_eq!(after_restart.allocations.len(), 1);
+        assert_eq!(after_restart.allocations[0].exam_id, 2);
+        assert_eq!(after_restart.allocations[0].allocated_seconds, 600);
     }
 
     #[test]
@@ -3230,6 +5278,7 @@ mod tests {
                         duration_seconds: 1_200,
                         notes: "Manual session".to_owned(),
                         primary_exam_id: Some(1),
+                        exam_ids: Vec::new(),
                     },
                     at(0),
                 )
@@ -3258,7 +5307,7 @@ mod tests {
         assert_eq!(updated.session_date, "2026-11-05");
         assert_eq!(updated.duration_seconds, 1_500);
 
-        let invalid = state
+        let shrunk = state
             .with_connection(|connection| {
                 update_study_session(
                     connection,
@@ -3272,8 +5321,10 @@ mod tests {
                     at(2),
                 )
             })
-            .expect_err("duration below allocation");
-        assert_eq!(invalid.field, Some("durationSeconds"));
+            .expect("explicit duration edits resize full-credit associations");
+        assert_eq!(shrunk.duration_seconds, 500);
+        assert_eq!(shrunk.allocated_seconds, 500);
+        assert_eq!(shrunk.allocations[0].allocated_seconds, 500);
 
         state
             .with_connection(|connection| delete_study_session(connection, created.id))
@@ -3330,5 +5381,159 @@ mod tests {
             })
             .expect_err("timer duration is immutable");
         assert_eq!(invalid.code, "validation_error");
+    }
+
+    #[test]
+    fn completion_notice_uses_topic_duration_and_deduplicates() {
+        let (_root, state) = state();
+        let topic = official_topic(&state, 1, 0);
+        let topic_title: String = state
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT title FROM exam_syllabus_nodes WHERE id = ?1",
+                        [topic],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| AppError::database("topic title", error))
+            })
+            .expect("topic title");
+        start_with_allocations(&state, at(0), vec![(1, topic, 60)]).expect("start");
+        checkpoint(&state, 0, 1_490);
+        let outcome = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(1_500)))
+            .expect("manual completion");
+        let completion = outcome.completion.expect("completion");
+        assert_eq!(completion.mode, TimerMode::Focus);
+        assert_eq!(completion.duration_seconds, 1_500);
+        let notice = state
+            .with_connection(|connection| completion_notice(connection, completion))
+            .expect("notice")
+            .expect("focus notice");
+        assert_eq!(notice.title, "Study session completed");
+        assert_eq!(
+            notice.body,
+            format!("You completed 25 minutes of {topic_title}.")
+        );
+
+        let session_id = completion.session_id.expect("session id");
+        let guard = CompletionNotificationState::default();
+        assert!(guard.should_notify(session_id));
+        assert!(!guard.should_notify(session_id));
+        assert!(guard.should_notify(session_id + 1));
+
+        assert!(!deliver_completion_notice(&notice, |_| Err(
+            "Windows notifications are disabled".to_owned()
+        )));
+        assert_eq!(session_count(&state), 1);
+    }
+
+    #[test]
+    fn heartbeat_and_resume_completion_paths_capture_each_session_once() {
+        let (_root, state) = state();
+        start_with_planned_duration(&state, at(0), "focus", Some(1), Vec::new())
+            .expect("first start");
+        checkpoint(&state, 0, 55);
+        let heartbeat = state
+            .with_connection(|connection| heartbeat_timer_with_completion(connection, at(60)))
+            .expect("heartbeat completion");
+        let first_completion = heartbeat.completion.expect("heartbeat completion");
+        assert_eq!(first_completion.duration_seconds, 60);
+        assert_eq!(session_count(&state), 1);
+
+        let duplicate = state
+            .with_connection(|connection| heartbeat_timer_with_completion(connection, at(70)))
+            .expect("duplicate heartbeat");
+        assert!(duplicate.completion.is_none());
+
+        start_with_planned_duration(&state, at(80), "focus", Some(1), Vec::new())
+            .expect("second start");
+        checkpoint(&state, 80, 135);
+        let resumed = state
+            .with_connection(|connection| get_timer_with_completion(connection, at(140)))
+            .expect("resume completion");
+        let second_completion = resumed.completion.expect("resume completion");
+        assert_eq!(second_completion.duration_seconds, 60);
+        assert_ne!(first_completion.session_id, second_completion.session_id);
+        assert_eq!(session_count(&state), 2);
+    }
+
+    #[test]
+    fn manual_early_completion_without_metadata_uses_study_fallback() {
+        let (_root, state) = state();
+        start(&state, at(0), None);
+        checkpoint(&state, 0, 25);
+        let outcome = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(30)))
+            .expect("manual completion");
+        let completion = outcome.completion.expect("completion");
+        assert_eq!(completion.duration_seconds, 30);
+        let notice = state
+            .with_connection(|connection| completion_notice(connection, completion))
+            .expect("notice")
+            .expect("focus notice");
+        assert_eq!(notice.body, "You completed less than a minute of study.");
+        assert_eq!(session_count(&state), 1);
+    }
+
+    #[test]
+    fn break_completion_and_previously_completed_sessions_do_not_notify() {
+        let (_root, state) = state();
+        let break_start = state
+            .with_connection(|connection| {
+                start_timer_with_completion(connection, at(0), start_input("shortBreak", None))
+            })
+            .expect("break start");
+        assert!(break_start.completion.is_none());
+        checkpoint(&state, 0, 290);
+        let break_outcome = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(300)))
+            .expect("break finish");
+        assert_eq!(
+            break_outcome.completion.expect("break completion").mode,
+            TimerMode::ShortBreak
+        );
+        assert!(
+            state
+                .with_connection(|connection| completion_notice(
+                    connection,
+                    break_outcome.completion.expect("break completion")
+                ))
+                .expect("break notice")
+                .is_none()
+        );
+        assert_eq!(session_count(&state), 0);
+
+        start(&state, at(310), None);
+        checkpoint(&state, 310, 325);
+        let focus_outcome = state
+            .with_connection(|connection| finish_timer_with_completion(connection, at(330)))
+            .expect("focus finish");
+        let session_id = focus_outcome
+            .completion
+            .expect("focus completion")
+            .session_id
+            .expect("session id");
+        let restored = state
+            .with_connection(|connection| get_timer_with_completion(connection, at(350)))
+            .expect("restored timer");
+        assert!(restored.completion.is_none());
+        assert_eq!(
+            restored.snapshot.state.last_completed_session_id,
+            Some(session_id)
+        );
+        let guard = CompletionNotificationState::default();
+        guard.mark_notified(session_id);
+        assert!(!guard.should_notify(session_id));
+    }
+
+    #[test]
+    fn completion_duration_formatting_is_readable() {
+        assert_eq!(format_completion_duration(0), "less than a minute");
+        assert_eq!(format_completion_duration(59), "less than a minute");
+        assert_eq!(format_completion_duration(60), "1 minute");
+        assert_eq!(format_completion_duration(1_500), "25 minutes");
+        assert_eq!(format_completion_duration(3_600), "1 hour");
+        assert_eq!(format_completion_duration(5_400), "1 hour 30 minutes");
     }
 }

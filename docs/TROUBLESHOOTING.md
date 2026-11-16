@@ -1,11 +1,11 @@
 # Troubleshooting
 
 This guide covers common installation, startup, backup, restore, and resource-file problems in
-Physics Tracker 2.0.0.
+Physics Tracker 2.1.0.
 
 Before changing anything, confirm:
 
-- you are using the per-user installer `Physics.Tracker_2.0.0_x64-setup.exe`;
+- you are using the per-user installer `Physics.Tracker_2.1.0_x64-setup.exe`;
 - you are on Windows 10 or Windows 11, 64-bit;
 - Microsoft Edge WebView2 is installed;
 - you know where your data is stored:
@@ -21,18 +21,18 @@ Do not delete or replace the database manually. Use the in-app backup and restor
 
 ## The installer is blocked or SmartScreen warns
 
-The v2.0.0 installer is unsigned, so Windows SmartScreen may warn about an unknown publisher.
+The v2.1.0 installer is unsigned, so Windows SmartScreen may warn about an unknown publisher.
 
 1. Verify the SHA-256 of the downloaded GitHub release asset:
 
    ```powershell
-   Get-FileHash ".\Physics.Tracker_2.0.0_x64-setup.exe" -Algorithm SHA256
+   Get-FileHash ".\Physics.Tracker_2.1.0_x64-setup.exe" -Algorithm SHA256
    ```
 
 2. Compare it with the canonical checksum for the GitHub release asset:
 
    ```text
-   A14816F743002C6BCF09CAC8F2203B9617B1609AC486E673AE741141D3FC4814
+   15E0117D3C1161E5241ADC0FE43AF7638E34D8A6316BDCA3696605B83376429A
    ```
 
 3. Only continue if the checksum matches. If Windows or security software still blocks the file,
@@ -132,4 +132,4 @@ For security vulnerabilities, follow [SECURITY.md](../SECURITY.md) instead of op
 - [README](../README.md)
 - [Privacy and data handling](PRIVACY.md)
 - [Feature guide](FEATURES.md)
-- [v2.0.0 release notes](releases/RELEASE_NOTES_2.0.0.md)
+- [v2.1.0 release notes](releases/RELEASE_NOTES_2.1.0.md)

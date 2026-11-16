@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toCommandError } from '../../lib/commandError';
 import { deleteV2CustomConstant, listV2CustomConstants, type V2CustomConstant } from '../api';
+import { MathText } from '../MathText';
+import { MathExpression } from '../math/MathExpression';
 import { CONSTANT_CATEGORIES } from './catalog';
 import { ConstantDetail } from './ConstantDetail';
 import { ConstantEditor } from './ConstantEditor';
@@ -35,6 +37,7 @@ function CustomConstantsLibrary() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<V2CustomConstant | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,11 +80,15 @@ function CustomConstantsLibrary() {
   function openCreate() {
     setEditing(null);
     setEditorOpen(true);
+    setNotice(null);
+    setActionError(null);
   }
 
   function openEdit(constant: V2CustomConstant) {
     setEditing(constant);
     setEditorOpen(true);
+    setNotice(null);
+    setActionError(null);
   }
 
   async function remove(constant: V2CustomConstant) {
@@ -97,9 +104,28 @@ function CustomConstantsLibrary() {
         setSelectedId(null);
       }
       setActionError(null);
+      setNotice(`Constant "${constant.name}" deleted.`);
     } catch (error) {
+      setNotice(null);
       setActionError(toCommandError(error).message);
     }
+  }
+
+  function handleSaved(saved: V2CustomConstant) {
+    setConstants((current) => {
+      if (!current) {
+        return [saved];
+      }
+      return current.some((entry) => entry.id === saved.id)
+        ? current.map((entry) => (entry.id === saved.id ? saved : entry))
+        : [...current, saved].sort((left, right) => left.name.localeCompare(right.name));
+    });
+    setSelectedId(saved.id);
+    setEditorOpen(false);
+    setQuery('');
+    setCategory('all');
+    setActionError(null);
+    setNotice(`Constant "${saved.name}" saved.`);
   }
 
   if (selected) {
@@ -108,6 +134,11 @@ function CustomConstantsLibrary() {
         {actionError ? (
           <p className="v2-inline-error" role="alert">
             {actionError}
+          </p>
+        ) : null}
+        {notice ? (
+          <p className="v2-study-notice" role="status">
+            {notice}
           </p>
         ) : null}
         <ConstantDetail
@@ -120,13 +151,7 @@ function CustomConstantsLibrary() {
           <ConstantEditor
             constant={editing}
             onClose={() => setEditorOpen(false)}
-            onSaved={(saved) => {
-              setConstants((current) =>
-                current ? current.map((entry) => (entry.id === saved.id ? saved : entry)) : [saved],
-              );
-              setSelectedId(saved.id);
-              setEditorOpen(false);
-            }}
+            onSaved={handleSaved}
           />
         ) : null}
       </div>
@@ -202,6 +227,11 @@ function CustomConstantsLibrary() {
           {actionError}
         </p>
       ) : null}
+      {notice ? (
+        <p className="v2-study-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
 
       {constants !== null && constants.length === 0 ? (
         <div className="v2-empty-panel v2-reference-empty">
@@ -246,10 +276,18 @@ function CustomConstantsLibrary() {
                   </span>
                 </span>
                 <span className="v2-reference-card-value">
-                  {constant.symbol} = {constant.valueText}
-                  {constant.unit ? ` ${constant.unit}` : ''}
+                  <MathExpression latex={constant.symbol} plainText={constant.symbol} /> ={' '}
+                  {constant.valueText}
+                  {constant.unit ? (
+                    <>
+                      {' '}
+                      <MathExpression latex={constant.unit} plainText={constant.unit} />
+                    </>
+                  ) : null}
                 </span>
-                <span className="v2-reference-card-description">{constant.description}</span>
+                <span className="v2-reference-card-description">
+                  <MathText text={constant.description} />
+                </span>
                 <span className="v2-reference-card-meta">
                   <span className="v2-reference-badge" data-tone="category">
                     {constant.category}
@@ -275,19 +313,7 @@ function CustomConstantsLibrary() {
         <ConstantEditor
           constant={editing}
           onClose={() => setEditorOpen(false)}
-          onSaved={(saved) => {
-            setConstants((current) => {
-              if (!current) {
-                return [saved];
-              }
-              const exists = current.some((entry) => entry.id === saved.id);
-              return exists
-                ? current.map((entry) => (entry.id === saved.id ? saved : entry))
-                : [...current, saved].sort((left, right) => left.name.localeCompare(right.name));
-            });
-            setSelectedId(saved.id);
-            setEditorOpen(false);
-          }}
+          onSaved={handleSaved}
         />
       ) : null}
     </div>

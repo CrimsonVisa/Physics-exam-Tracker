@@ -98,21 +98,32 @@ describe('custom reference tabs', () => {
     expect(screen.getByText('47 formulas')).toBeInTheDocument();
     expect(mockedFormulas).not.toHaveBeenCalled();
     expect(mockedConstants).not.toHaveBeenCalled();
+    expect(screen.queryByRole('tab', { name: 'Constants' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: 'My formulas' }));
 
     expect(mockedFormulas).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('No custom formulas yet')).toBeInTheDocument();
 
+    await user.click(screen.getByRole('tab', { name: /Built-in formulas/ }));
+
+    expect(screen.getByText('47 formulas')).toBeInTheDocument();
+  });
+
+  it('exposes constants only from Terms & Units', async () => {
+    const user = userEvent.setup();
+    const formulas = render(<FormulaReferenceScreen exams={EXAMS} />);
+
+    expect(screen.queryByRole('tab', { name: 'Constants' })).not.toBeInTheDocument();
+    expect(mockedConstants).not.toHaveBeenCalled();
+    formulas.unmount();
+
+    render(<TermReferenceScreen exams={EXAMS} />);
     await user.click(screen.getByRole('tab', { name: 'Constants' }));
     await user.click(await screen.findByRole('tab', { name: 'My Constants' }));
 
     expect(mockedConstants).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('No custom constants yet')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: /Built-in formulas/ }));
-
-    expect(screen.getByText('47 formulas')).toBeInTheDocument();
   });
 
   it('loads unit and constant libraries only when their tab is opened', async () => {

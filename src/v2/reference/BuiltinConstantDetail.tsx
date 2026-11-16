@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { V2BuiltinConstant, V2BuiltinConstantCatalog } from '../api';
+import { MathText } from '../MathText';
+import { MathExpression } from '../math/MathExpression';
 
 type BuiltinConstantDetailProps = {
   catalog: V2BuiltinConstantCatalog;
@@ -45,15 +47,23 @@ export function BuiltinConstantDetail({ catalog, constant, onBack }: BuiltinCons
       </header>
 
       <div className="v2-reference-value-panel">
-        <span className="v2-reference-value-symbol">{constant.symbol}</span>
+        <span className="v2-reference-value-symbol">
+          <MathExpression latex={constant.symbol} plainText={constant.symbol} />
+        </span>
         <span className="v2-reference-value">{constant.valueText}</span>
-        {constant.unit ? <span className="v2-reference-value-unit">{constant.unit}</span> : null}
+        {constant.unit ? (
+          <span className="v2-reference-value-unit">
+            <MathExpression latex={constant.unit} plainText={constant.unit} />
+          </span>
+        ) : null}
       </div>
 
       <dl className="v2-reference-definition">
         <div>
           <dt>Symbol</dt>
-          <dd>{constant.symbol}</dd>
+          <dd>
+            <MathExpression latex={constant.symbol} plainText={constant.symbol} />
+          </dd>
         </div>
         <div>
           <dt>Value</dt>
@@ -61,7 +71,13 @@ export function BuiltinConstantDetail({ catalog, constant, onBack }: BuiltinCons
         </div>
         <div>
           <dt>Unit</dt>
-          <dd>{constant.unit || 'Dimensionless'}</dd>
+          <dd>
+            {constant.unit ? (
+              <MathExpression latex={constant.unit} plainText={constant.unit} />
+            ) : (
+              'Dimensionless'
+            )}
+          </dd>
         </div>
         <div>
           <dt>Uncertainty</dt>
@@ -97,13 +113,17 @@ export function BuiltinConstantDetail({ catalog, constant, onBack }: BuiltinCons
 
       <section className="v2-reference-section">
         <h3>Description</h3>
-        <p>{constant.description}</p>
+        <p>
+          <MathText text={constant.description} />
+        </p>
       </section>
 
       {constant.notes ? (
         <section className="v2-reference-section">
           <h3>Notes</h3>
-          <p>{constant.notes}</p>
+          <p>
+            <MathText text={constant.notes} />
+          </p>
         </section>
       ) : null}
 

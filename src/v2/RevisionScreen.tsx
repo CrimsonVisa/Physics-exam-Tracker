@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toCommandError } from '../lib/commandError';
+import { emitRevisionsChanged } from '../lib/revisionEvents';
 import {
   completeV2Revision,
   deferV2Revision,
@@ -28,6 +29,22 @@ const OUTCOMES = [
   ['good', 'Good'],
   ['easy', 'Easy'],
 ] as const;
+
+function scheduledNotice(schedule: V2RevisionSchedule): string {
+  const prefix = schedule.alreadyScheduled
+    ? 'This concept was already in the revision schedule.'
+    : 'Concept added to the revision schedule.';
+  if (schedule.status !== 'active') {
+    return `${prefix} Next revision ${schedule.nextRevisionDate}. The schedule is ${schedule.status}, so it will not appear in revision queues until it is active again.`;
+  }
+  if (!schedule.eligible) {
+    if (schedule.pendingExamCodes.length > 0) {
+      return `${prefix} Next revision ${schedule.nextRevisionDate}. It is awaiting approval of its ${schedule.pendingExamCodes.join(', ')} syllabus mapping, so it will not appear in revision queues until that mapping is approved in Concepts.`;
+    }
+    return `${prefix} Next revision ${schedule.nextRevisionDate}. It has no active exam mapping, so it will not appear in revision queues until it is mapped to a syllabus topic in Concepts.`;
+  }
+  return `${prefix} Next revision ${schedule.nextRevisionDate}. It is eligible for revision queues because its mapping is approved.`;
+}
 
 export function RevisionScreen({ exams, today }: RevisionScreenProps) {
   const [examCode, setExamCode] = useState('');
@@ -76,14 +93,14 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
     })();
   }, []);
 
-  async function run(action: () => Promise<void>, message: string) {
+  async function run(action: () => Promise<string | void>, message: string) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await action();
+      const actionMessage = await action();
       await load(examId);
-      setNotice(message);
+      setNotice(actionMessage ?? message);
     } catch (actionError) {
       setError(toCommandError(actionError).message);
     } finally {
@@ -97,8 +114,10 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
       return;
     }
     void run(async () => {
-      await scheduleV2RevisionConcept({ conceptId: Number(conceptId) });
+      const schedule = await scheduleV2RevisionConcept({ conceptId: Number(conceptId) });
       setConceptId('');
+      emitRevisionsChanged();
+      return scheduledNotice(schedule);
     }, 'Concept added to the revision schedule.');
   }
 
@@ -110,6 +129,7 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
         revisionDate: today,
         triggerExamId: examId,
       });
+      emitRevisionsChanged();
     }, 'Revision completed and mastery evidence recorded.');
   }
 
@@ -125,7 +145,30 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
         newRevisionDate: date,
         reason: 'time',
       });
+      emitRevisionsChanged();
     }, 'Revision deferred.');
+  }
+
+  function moveToToday(schedule: V2RevisionSchedule) {
+    void run(async () => {
+      await rescheduleV2Revision({
+        conceptId: schedule.conceptId,
+        nextRevisionDate: today,
+      });
+      emitRevisionsChanged();
+      try {
+        const updated = await generateV2RevisionDailyPlan({ planDate: today, examId });
+        setPlan(updated);
+        emitRevisionsChanged();
+        return updated.items.some((item) => item.conceptId === schedule.conceptId)
+          ? 'Revision moved to today and added to the daily plan.'
+          : 'Revision moved to today. The daily plan is full, so use Rebalance to make room for it.';
+      } catch (planError) {
+        return `Revision moved to today, but the daily plan could not be refreshed: ${
+          toCommandError(planError).message
+        }`;
+      }
+    }, 'Revision scheduled for today.');
   }
 
   function renderSchedule(schedule: V2RevisionSchedule) {
@@ -198,19 +241,64 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
             <button
               className="secondary-button"
               disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  await rescheduleV2Revision({
-                    conceptId: schedule.conceptId,
-                    nextRevisionDate: today,
-                  });
-                }, 'Revision scheduled for today.')
-              }
+              onClick={() => moveToToday(schedule)}
               type="button"
             >
               Due today
             </button>
           </div>
+        </div>
+      </li>
+    );
+  }
+
+  function renderUpcoming(schedule: V2RevisionSchedule) {
+    return (
+      <li className="v2-planner-row" key={schedule.conceptId}>
+        <div>
+          <div className="v2-session-heading">
+            <strong>{schedule.conceptTitle}</strong>
+            <span className="v2-status-badge v2-status-active">{schedule.nextRevisionDate}</span>
+          </div>
+          <p className="v2-empty-copy">
+            {schedule.conceptDomain} · due {schedule.nextRevisionDate} · interval{' '}
+            {schedule.currentIntervalDays} days · mastery{' '}
+            {schedule.masteryScore === null ? 'No evidence' : schedule.masteryScore.toFixed(1)}
+          </p>
+          <p className="v2-empty-copy">
+            Approved mapping: {schedule.approvedExamCodes.join(', ') || 'none'}
+          </p>
+        </div>
+        <div className="v2-form-actions">
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={() => moveToToday(schedule)}
+            type="button"
+          >
+            Move to today
+          </button>
+        </div>
+      </li>
+    );
+  }
+
+  function renderAwaitingApproval(schedule: V2RevisionSchedule) {
+    return (
+      <li className="v2-planner-row" key={schedule.conceptId}>
+        <div>
+          <div className="v2-session-heading">
+            <strong>{schedule.conceptTitle}</strong>
+            <span className="v2-status-badge v2-status-inactive">Awaiting approval</span>
+          </div>
+          <p className="v2-empty-copy">
+            {schedule.conceptDomain} · provisional next revision {schedule.nextRevisionDate}
+          </p>
+          <p className="v2-empty-copy">
+            {schedule.pendingExamCodes.length > 0
+              ? `Pending mapping: ${schedule.pendingExamCodes.join(', ')}. Approve the concept-to-syllabus mapping in Concepts before this revision can enter a queue or daily plan.`
+              : 'No active exam mapping. Map this concept to a syllabus topic in Concepts before this revision can enter a queue or daily plan.'}
+          </p>
         </div>
       </li>
     );
@@ -325,6 +413,11 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
                     examId,
                   });
                   setPlan(generated);
+                  return generated.items.length === 0
+                    ? 'Daily plan refreshed. No revisions are due today or overdue.'
+                    : `Daily plan updated with ${generated.items.length} due revision${
+                        generated.items.length === 1 ? '' : 's'
+                      }.`;
                 }, 'Daily revision plan generated.')
               }
               type="button"
@@ -341,6 +434,11 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
                     examId,
                   });
                   setPlan(next);
+                  return next.items.length === 0
+                    ? 'Daily plan rebalanced. No revisions are due today or overdue.'
+                    : `Daily plan rebalanced with ${next.items.length} due revision${
+                        next.items.length === 1 ? '' : 's'
+                      }.`;
                 }, 'Daily revision plan rebalanced.')
               }
               type="button"
@@ -350,13 +448,13 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
           </div>
           {!plan ? (
             <p className="v2-empty-panel-copy">
-              No active daily plan. Generate a plan to use due schedules that are mapped to the
-              selected exam scope.
+              No active daily plan. Generate a plan to include concepts that are due today or
+              overdue.
             </p>
           ) : plan.items.length === 0 ? (
             <p className="v2-empty-panel-copy">
-              The active plan contains no eligible mapped concepts. Approve concept-to-syllabus
-              mappings in Concepts before revision concepts can enter a plan.
+              The active plan contains no eligible due concepts. Upcoming revisions enter the plan
+              on their due date, and scheduled concepts need an approved syllabus mapping.
             </p>
           ) : (
             <ul className="v2-planner-list">
@@ -418,6 +516,28 @@ export function RevisionScreen({ exams, today }: RevisionScreenProps) {
           )}
         </section>
       </div>
+
+      <section className="v2-concept-card">
+        <p className="eyebrow">Upcoming</p>
+        <h2>Next scheduled revisions</h2>
+        {!dashboard || dashboard.upcoming.length === 0 ? (
+          <p className="v2-empty-panel-copy">
+            No upcoming revisions. Schedule a concept to see its next review date here.
+          </p>
+        ) : (
+          <ul className="v2-planner-list">{dashboard.upcoming.map(renderUpcoming)}</ul>
+        )}
+      </section>
+
+      {dashboard && dashboard.awaitingApproval.length > 0 && (
+        <section className="v2-concept-card">
+          <p className="eyebrow">Awaiting approval</p>
+          <h2>Scheduled concepts without an approved mapping</h2>
+          <ul className="v2-planner-list">
+            {dashboard.awaitingApproval.map(renderAwaitingApproval)}
+          </ul>
+        </section>
+      )}
 
       <section className="v2-concept-card">
         <p className="eyebrow">History</p>

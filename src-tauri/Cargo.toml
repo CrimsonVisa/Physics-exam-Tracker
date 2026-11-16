@@ -1,6 +1,6 @@
 [package]
 name = "csir-net-tracker"
-version = "2.0.0"
+version = "2.1.0"
 description = "Offline-first Windows study tracker for CSIR-UGC NET, GATE, TIFR and JEST Physics"
 authors = ["CrimsonVisa"]
 license = "MIT"

@@ -1,4 +1,5 @@
 import type { V2StickyNote } from '../api';
+import { MathText } from '../MathText';
 import { noteColorLabel } from './noteColors';
 
 type NoteCardProps = {
@@ -35,7 +36,11 @@ export function NoteCard({ note, onOpen, compact = false, selected = false }: No
             </span>
           ) : null}
         </span>
-        {title && note.body.trim() ? <span className="v2-note-card-body">{note.body}</span> : null}
+        {title && note.body.trim() ? (
+          <span className="v2-note-card-body">
+            <MathText text={note.body} />
+          </span>
+        ) : null}
       </button>
     );
   }
@@ -57,7 +62,9 @@ export function NoteCard({ note, onOpen, compact = false, selected = false }: No
         ) : null}
       </span>
       {note.title.trim() && note.body.trim() ? (
-        <span className="v2-note-card-body">{note.body}</span>
+        <span className="v2-note-card-body">
+          <MathText text={note.body} />
+        </span>
       ) : null}
       <span className="v2-note-card-meta">
         <span className="v2-reference-badge" data-tone="category">

@@ -193,6 +193,22 @@ fn optional_text(field: &'static str, value: &str, max: usize) -> Result<String,
     Ok(trimmed.to_owned())
 }
 
+/// Validate a required numeric text field without changing the characters the
+/// user entered. Surrounding whitespace is ignored for presence and length
+/// checks but retained for storage/display.
+fn verbatim_text(field: &'static str, value: &str, max: usize) -> Result<String, AppError> {
+    if value.trim().is_empty() {
+        return Err(AppError::validation(field, "This field is required."));
+    }
+    if value.chars().count() > max {
+        return Err(AppError::validation(
+            field,
+            format!("Keep this field to {max} characters or fewer."),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
 fn required_choice(field: &'static str, value: &str, allowed: &[&str]) -> Result<String, AppError> {
     if !allowed.contains(&value) {
         return Err(AppError::validation(
@@ -203,15 +219,140 @@ fn required_choice(field: &'static str, value: &str, allowed: &[&str]) -> Result
     Ok(value.to_owned())
 }
 
+fn superscript_character(character: char) -> Option<char> {
+    match character {
+        '⁰' => Some('0'),
+        '¹' => Some('1'),
+        '²' => Some('2'),
+        '³' => Some('3'),
+        '⁴' => Some('4'),
+        '⁵' => Some('5'),
+        '⁶' => Some('6'),
+        '⁷' => Some('7'),
+        '⁸' => Some('8'),
+        '⁹' => Some('9'),
+        '⁺' => Some('+'),
+        '⁻' => Some('-'),
+        _ => None,
+    }
+}
+
+fn valid_exponent(value: &str) -> Option<String> {
+    let (sign, digits) = match value.chars().next() {
+        Some('+') => ("+", &value[1..]),
+        Some('-') => ("-", &value[1..]),
+        _ => ("", value),
+    };
+    if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{sign}{digits}"))
+}
+
+fn is_superscript_digit(character: char) -> bool {
+    superscript_character(character).is_some_and(|mapped| mapped.is_ascii_digit())
+}
+
+fn normalize_exponent(value: &str, allow_unsigned_ascii: bool) -> Option<String> {
+    let characters: Vec<char> = value.chars().collect();
+    let first = characters.first().copied()?;
+    let rest = &characters[1..];
+    let all_superscript = characters
+        .iter()
+        .all(|character| superscript_character(*character).is_some());
+    let all_ascii_digits = characters
+        .iter()
+        .all(|character| character.is_ascii_digit());
+    let ascii_sign_then_superscript_digits = (first == '+' || first == '-')
+        && rest
+            .iter()
+            .all(|character| is_superscript_digit(*character));
+    let superscript_sign_then_ascii_digits =
+        matches!(first, '⁺' | '⁻') && rest.iter().all(|character| character.is_ascii_digit());
+    let ascii_sign_then_ascii_digits =
+        (first == '+' || first == '-') && rest.iter().all(|character| character.is_ascii_digit());
+    if !(all_superscript
+        || (allow_unsigned_ascii && all_ascii_digits)
+        || ascii_sign_then_superscript_digits
+        || superscript_sign_then_ascii_digits
+        || ascii_sign_then_ascii_digits)
+    {
+        return None;
+    }
+
+    let normalized: String = characters
+        .iter()
+        .filter_map(|character| {
+            superscript_character(*character).or_else(|| {
+                if character.is_ascii_digit() || *character == '+' || *character == '-' {
+                    Some(*character)
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+    valid_exponent(&normalized)
+}
+
+fn normalize_caret_exponent(value: &str) -> Option<String> {
+    normalize_exponent(value, true)
+}
+
+fn normalize_superscript_exponent(value: &str) -> Option<String> {
+    // Without a caret, plain ASCII digits are ambiguous multiplication (for
+    // example 5×100). Require a superscript exponent or an explicit sign.
+    normalize_exponent(value, false)
+}
+
+fn is_plain_decimal(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains('e')
+        && !value.contains('E')
+        && value.parse::<f64>().is_ok_and(f64::is_finite)
+}
+
 fn normalize_numeric_text(value: &str) -> String {
     let compact: String = value
         .chars()
         .filter(|character| !character.is_whitespace())
-        .collect::<String>()
-        .replace('−', "-");
-    for marker in ["×10^", "x10^", "X10^"] {
-        if let Some((base, exponent)) = compact.split_once(marker) {
-            return format!("{base}e{exponent}");
+        .map(|character| match character {
+            '−' | '–' => '-',
+            _ => character,
+        })
+        .collect();
+
+    // Accept scientific notation written with a multiplication sign and an
+    // explicit caret or Unicode superscript exponent. The base is validated as
+    // a plain decimal so arbitrary text and multiple operators are rejected.
+    for marker in ["×10", "x10", "X10", "·10", "⋅10", "∙10", "*10"] {
+        for (index, _) in compact.match_indices(marker) {
+            let base = &compact[..index];
+            if !is_plain_decimal(base) {
+                continue;
+            }
+            let rest = &compact[index + marker.len()..];
+            let exponent = if let Some(exponent) = rest.strip_prefix('^') {
+                normalize_caret_exponent(exponent)
+            } else {
+                normalize_superscript_exponent(rest)
+            };
+            if let Some(exponent) = exponent {
+                return format!("{base}e{exponent}");
+            }
+        }
+    }
+    // Also accept superscript exponents after ordinary e/E notation, such as
+    // 6.626e⁻³⁴. An explicit e/E exponent may use unsigned ASCII digits.
+    for marker in ["e", "E"] {
+        for (index, _) in compact.match_indices(marker) {
+            let base = &compact[..index];
+            if !is_plain_decimal(base) {
+                continue;
+            }
+            if let Some(exponent) = normalize_exponent(&compact[index + 1..], true) {
+                return format!("{base}e{exponent}");
+            }
         }
     }
     compact
@@ -961,7 +1102,7 @@ struct ValidatedConstant {
 fn validate_constant(input: &V2CustomConstantInput) -> Result<ValidatedConstant, AppError> {
     let name = required_text("name", &input.name, 300)?;
     let symbol = required_text("symbol", &input.symbol, 80)?;
-    let value_text = required_text("valueText", &input.value_text, 200)?;
+    let value_text = verbatim_text("valueText", &input.value_text, 200)?;
     finite_number("valueText", &value_text)?;
     let unit = optional_text("unit", &input.unit, 120)?;
     let category = required_text("category", &input.category, 120)?;
@@ -1490,6 +1631,117 @@ mod tests {
                 Ok::<(), AppError>(())
             })
             .expect("constant CRUD");
+    }
+
+    #[test]
+    fn numeric_text_accepts_scientific_notation_without_changing_storage() {
+        let valid: [(&str, f64); 23] = [
+            ("6.62607015×10⁻³⁴", 6.62607015e-34),
+            ("−6.62607015×10⁻³⁴", -6.62607015e-34),
+            (".5×10⁻³", 5e-4),
+            ("1.380649 × 10^-23", 1.380649e-23),
+            ("2.99792458·10⁸", 2.99792458e8),
+            ("2.99792458⋅10⁸", 2.99792458e8),
+            ("6.626*10^-34", 6.626e-34),
+            ("6.626x10^-34", 6.626e-34),
+            ("6.626X10^+34", 6.626e34),
+            ("6.626×10^-34", 6.626e-34),
+            ("6.626×10^34", 6.626e34),
+            ("6.626×10^⁻³⁴", 6.626e-34),
+            ("6.626×10-34", 6.626e-34),
+            ("6.626×10⁻34", 6.626e-34),
+            ("6.626×10-³⁴", 6.626e-34),
+            ("6.626×10⁺³⁴", 6.626e34),
+            ("6.62607015e-34", 6.62607015e-34),
+            ("6.626e⁻³⁴", 6.626e-34),
+            ("6.626E-³⁴", 6.626e-34),
+            ("-1.2E+3", -1.2e3),
+            ("0", 0.0),
+            ("1.", 1.0),
+            ("+.5", 0.5),
+        ];
+        for (value, expected) in valid {
+            let parsed = finite_number("valueText", value)
+                .unwrap_or_else(|error| panic!("{value} should be accepted: {error:?}"));
+            let tolerance = expected.abs() * 1e-12 + 1e-300;
+            assert!(
+                (parsed - expected).abs() <= tolerance,
+                "{value} parsed as {parsed}, expected {expected}"
+            );
+        }
+
+        for value in [
+            "",
+            "not a number",
+            "1.2.3",
+            "1e",
+            "1e+",
+            "1e2e3",
+            "6.626e2³",
+            "6.626E2.5",
+            "NaN",
+            "inf",
+            "5×100",
+            "6.626×10",
+            "6.626×10^",
+            "6.626×10^-",
+            "6.626×10--34",
+            "6.626×10^--34",
+            "6.626×10^abc",
+            "6.626×10^2.5",
+            "6.626×10^2e3",
+            "6.626×10^2³",
+            "6.626×10^2⁴",
+            "6.626×10³4",
+            "6.626×10⁻3⁴",
+            "6.626×10^2×10^3",
+            "6.626×10³⁴extra",
+            "abc×10^2",
+            "1×10^2+3",
+        ] {
+            assert!(
+                finite_number("valueText", value).is_err(),
+                "{value} should be rejected"
+            );
+        }
+
+        let (_root, state) = state();
+        state
+            .with_connection(|connection| {
+                for (name, symbol, value) in [
+                    ("Superscript constant", "sup", "6.62607015×10⁻³⁴"),
+                    ("Spaced constant", "sp", "1.380649 × 10^-23"),
+                    ("Dot constant", "dot", "2.99792458·10⁸"),
+                    ("Negative constant", "neg", "−6.62607015×10⁻³⁴"),
+                    ("Padded constant", "pad", " 6.62607015×10⁻³⁴ "),
+                ] {
+                    let saved = save_custom_constant(
+                        connection,
+                        V2CustomConstantInput {
+                            id: None,
+                            name: name.to_owned(),
+                            symbol: symbol.to_owned(),
+                            value_text: value.to_owned(),
+                            unit: String::new(),
+                            category: "Fundamental".to_owned(),
+                            uncertainty_text: String::new(),
+                            precision_text: String::new(),
+                            source: String::new(),
+                            description: "Scientific notation preservation.".to_owned(),
+                            notes: String::new(),
+                        },
+                        at(1),
+                    )?;
+                    assert_eq!(saved.value_text, value);
+                }
+
+                let mut superscript_factor = valid_unit("Superscript unit", "supu");
+                superscript_factor.conversion_factor = "3.048×10⁻¹".to_owned();
+                let saved = save_custom_unit(connection, superscript_factor, at(2))?;
+                assert_eq!(saved.conversion_factor, "3.048×10⁻¹");
+                Ok::<(), AppError>(())
+            })
+            .expect("numeric notation storage");
     }
 
     #[test]

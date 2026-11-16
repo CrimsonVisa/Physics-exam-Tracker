@@ -4,13 +4,16 @@
    ========================================================================== */
 
 .v2-dialog-backdrop {
+  --v2-dialog-gutter: clamp(12px, 2.5vh, 28px);
   position: fixed;
   inset: 0;
   z-index: 900;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 12vh 20px 24px;
+  padding: var(--v2-dialog-gutter) clamp(12px, 2vw, 24px);
+  overflow: hidden;
+  overscroll-behavior: contain;
   background: rgb(4 8 12 / 62%);
   backdrop-filter: blur(3px);
 }
@@ -34,6 +37,23 @@
 .v2-dialog:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* Shared header/body/footer layout for editable dialogs. The body is the only
+   scroll container; the header and footer stay visible around it. */
+
+.v2-dialog-header,
+.v2-dialog-footer {
+  flex: 0 0 auto;
+}
+
+.v2-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 /* ------------------------------------------------------------- search */
@@ -401,11 +421,13 @@ kbd {
 
 @media (max-width: 700px) {
   .v2-dialog-backdrop {
-    padding: 6vh 10px 16px;
+    --v2-dialog-gutter: 10px;
+    padding: var(--v2-dialog-gutter) 10px;
   }
 
   .v2-dialog {
-    max-height: 86vh;
+    max-height: calc(100vh - var(--v2-dialog-gutter) - var(--v2-dialog-gutter));
+    max-height: calc(100dvh - var(--v2-dialog-gutter) - var(--v2-dialog-gutter));
   }
 
   .v2-search-footer-note {

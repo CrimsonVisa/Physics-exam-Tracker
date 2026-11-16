@@ -70,6 +70,14 @@ describe('FormulaReferenceScreen', () => {
     ).toBeInTheDocument();
   });
 
+  it('does not expose a Constants section alongside formulas', () => {
+    renderScreen();
+
+    expect(screen.getByRole('tab', { name: /Built-in formulas/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'My formulas' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Constants' })).not.toBeInTheDocument();
+  });
+
   it('searches titles and Unicode symbols', async () => {
     const user = userEvent.setup();
     renderScreen();

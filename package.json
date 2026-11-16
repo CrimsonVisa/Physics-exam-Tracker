@@ -1,7 +1,7 @@
 {
   "name": "csir-net-tracker",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "description": "Offline-first Windows study tracker for CSIR-UGC NET, GATE, TIFR and JEST Physics.",
   "license": "MIT",
@@ -31,7 +31,7 @@
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run rust:fmt && npm run rust:clippy && npm run rust:test",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "tauri build"
   },
   "dependencies": {

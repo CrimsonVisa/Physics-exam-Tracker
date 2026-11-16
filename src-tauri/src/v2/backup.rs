@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
+    app_paths,
     error::AppError,
     v2::{SCHEMA_1_CHECKSUM, SCHEMA_2_CHECKSUM, SCHEMA_4_CHECKSUM, V2_SCHEMA_VERSION},
 };
@@ -167,8 +168,9 @@ fn path_is_within(child: &Path, parent: &Path) -> bool {
 }
 
 /// Reject backup destinations that resolve inside the V1 application-data
-/// directory. This guard is applied before settings are saved and before any
-/// backup file is created, listed, or pruned.
+/// directory or, for development builds, the production V2 data directory.
+/// This guard is applied before settings are saved and before any backup file
+/// is created, listed, or pruned.
 pub fn ensure_backup_destination_allowed(
     data_dir: &Path,
     destination: &Path,
@@ -195,6 +197,18 @@ pub fn ensure_backup_destination_allowed(
             "destination",
             "Backup destination cannot be inside the V1 application-data folder. Choose a V2 or non-V1 location.",
         ));
+    }
+    if app_paths::build_channel().is_development()
+        && let Some(parent) = data_dir.parent()
+    {
+        let production_directory =
+            resolve_for_containment(&app_paths::production_v2_data_dir(parent));
+        if path_is_within(&destination, &production_directory) {
+            return Err(AppError::validation(
+                "destination",
+                "Development backups cannot be written inside the production V2 application-data folder.",
+            ));
+        }
     }
     Ok(())
 }
@@ -1894,7 +1908,7 @@ mod tests {
     #[test]
     fn backup_destinations_inside_v1_are_rejected_before_any_write_or_retention() {
         let root = tempfile::tempdir().expect("temporary directory");
-        let data_dir = root.path().join(crate::app_paths::V2_APP_IDENTIFIER);
+        let data_dir = root.path().join(crate::app_paths::active_v2_identifier());
         let state = V2State::initialize(&data_dir);
         let v1_dir = root.path().join(crate::app_paths::V1_APP_IDENTIFIER);
         fs::create_dir_all(&v1_dir).expect("v1 dir");
@@ -2024,6 +2038,21 @@ mod tests {
         assert!(Path::new(&record.path).is_file());
         assert!(Path::new(&record.path).starts_with(&valid_destination));
         assert_eq!(fs::read(&sentinel).expect("sentinel"), b"v1 sentinel");
+    }
+
+    #[test]
+    fn development_backups_cannot_target_production_application_data() {
+        if !app_paths::build_channel().is_development() {
+            return;
+        }
+        let root = tempfile::tempdir().expect("temporary directory");
+        let data_dir = root.path().join(app_paths::DEVELOPMENT_V2_APP_IDENTIFIER);
+        fs::create_dir_all(&data_dir).expect("development data dir");
+        let production_backup_dir = app_paths::production_v2_data_dir(root.path()).join("backups");
+        let error = ensure_backup_destination_allowed(&data_dir, &production_backup_dir)
+            .expect_err("production V2 destination must be rejected for development");
+        assert_eq!(error.code, "validation_error");
+        assert_eq!(error.field, Some("destination"));
     }
 
     fn checkpoint(state: &V2State) {

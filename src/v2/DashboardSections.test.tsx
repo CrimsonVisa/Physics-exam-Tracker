@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -15,7 +15,9 @@ import type {
   V2StudyTotals,
   V2TimerSnapshot,
 } from './api';
-import { TIMER_UPDATED_EVENT } from '../lib/timerEvents';
+import { emitStudySessionsChanged } from '../lib/studyEvents';
+import { emitRevisionsChanged } from '../lib/revisionEvents';
+import { emitTimerUpdated, TIMER_UPDATED_EVENT } from '../lib/timerEvents';
 import {
   useDailyDashboardData,
   type DailyDashboardData,
@@ -218,6 +220,10 @@ function revisionSchedule(overrides: Partial<V2RevisionSchedule> = {}): V2Revisi
     overdueDays: 0,
     masteryScore: null,
     selectionReason: 'Due by interval',
+    eligible: true,
+    approvedExamCodes: ['csir-net-physics'],
+    pendingExamCodes: [],
+    alreadyScheduled: false,
     ...overrides,
   };
 }
@@ -259,6 +265,7 @@ function revisionDashboard(overrides: Partial<V2RevisionDashboard> = {}): V2Revi
     dueToday: [],
     overdue: [],
     upcoming: [],
+    awaitingApproval: [],
     recentHistory: [],
     stats: {
       dueToday: 0,
@@ -402,6 +409,7 @@ function timerSnapshot(
       notificationsEnabled: false,
     },
     allocations,
+    examIds: [],
     serverNowMs: 0,
   };
 }
@@ -418,6 +426,19 @@ function dailyData(overrides: Partial<DailyDashboardData> = {}): DailyDashboardD
     totals: null,
     ...overrides,
   };
+}
+
+function DashboardRefreshHarness({ today }: { today: string }) {
+  return (
+    <TimerProvider>
+      <DashboardRefreshProbe today={today} />
+    </TimerProvider>
+  );
+}
+
+function DashboardRefreshProbe({ today }: { today: string }) {
+  const data = useDailyDashboardData(today, true);
+  return <TodayOverviewSection data={data} onNavigate={vi.fn()} today={today} />;
 }
 
 function HookProbe({ today, enabled }: { today: string; enabled: boolean }) {
@@ -487,6 +508,29 @@ describe('today summary helpers', () => {
     });
     const summary = summarizeTodaySessions([session], TODAY);
     expect(summary.seconds).toBe(1_800);
+  });
+
+  it('counts a 25-minute GATE session once in today totals', () => {
+    const session = studySession({
+      id: 25,
+      sessionDate: TODAY,
+      durationSeconds: 25 * 60,
+      primaryExamId: 2,
+      allocations: [
+        {
+          examId: 2,
+          examCode: 'gate-physics',
+          examName: 'GATE Physics',
+          examIsActive: true,
+          allocatedSeconds: 25 * 60,
+        },
+      ],
+    });
+
+    expect(summarizeTodaySessions([session], TODAY)).toEqual({
+      seconds: 25 * 60,
+      sessionCount: 1,
+    });
   });
 
   it('counts planner tasks and blocks with cancelled items separated', () => {
@@ -701,6 +745,88 @@ describe('TodayOverviewSection', () => {
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
+  it('refreshes a completed 25-minute GATE session into the dashboard overview', async () => {
+    mockedSessions.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      studySession({
+        id: 25,
+        sessionDate: TODAY,
+        durationSeconds: 25 * 60,
+        primaryExamId: 2,
+        allocations: [
+          {
+            examId: 2,
+            examCode: 'gate-physics',
+            examName: 'GATE Physics',
+            examIsActive: true,
+            allocatedSeconds: 25 * 60,
+          },
+        ],
+      }),
+    ]);
+    mockedTimer
+      .mockResolvedValueOnce(
+        timerSnapshot({
+          status: 'running',
+          activeExamId: 2,
+          elapsedMs: 25 * 60_000,
+          remainingMs: 0,
+        }),
+      )
+      .mockResolvedValueOnce(
+        timerSnapshot({
+          status: 'idle',
+          activeExamId: 2,
+          lastEvent: 'completed',
+          lastEventDurationMs: 25 * 60_000,
+          lastCompletedSessionId: 25,
+        }),
+      );
+
+    render(<DashboardRefreshHarness today={TODAY} />);
+
+    expect(
+      await screen.findByText('No study session is recorded for today yet.'),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      emitTimerUpdated();
+    });
+
+    await waitFor(() => expect(screen.getByText('25m')).toBeInTheDocument());
+    expect(screen.getByText('1 session completed today.')).toBeInTheDocument();
+  });
+
+  it('shows a 25-minute GATE session in the dashboard overview', () => {
+    render(
+      <TodayOverviewSection
+        data={dailyData({
+          sessions: [
+            studySession({
+              id: 25,
+              sessionDate: TODAY,
+              durationSeconds: 25 * 60,
+              primaryExamId: 2,
+              allocations: [
+                {
+                  examId: 2,
+                  examCode: 'gate-physics',
+                  examName: 'GATE Physics',
+                  examIsActive: true,
+                  allocatedSeconds: 25 * 60,
+                },
+              ],
+            }),
+          ],
+        })}
+        onNavigate={vi.fn()}
+        today={TODAY}
+      />,
+    );
+
+    expect(screen.getByText('25m')).toBeInTheDocument();
+    expect(screen.getByText('1 session completed today.')).toBeInTheDocument();
+  });
+
   it('does not count allocations twice and links to settings when no target exists', async () => {
     const onNavigate = vi.fn();
     const user = userEvent.setup();
@@ -887,6 +1013,39 @@ describe('RevisionOverviewSection', () => {
 
     await user.click(screen.getByRole('button', { name: 'Open revision planning' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'revision' });
+  });
+
+  it('shows upcoming revisions and scheduled concepts awaiting mapping approval', () => {
+    render(
+      <RevisionOverviewSection
+        data={dailyData({
+          revision: revisionDashboard({
+            upcoming: [
+              revisionSchedule({
+                conceptId: 12,
+                conceptTitle: 'Wave optics',
+                nextRevisionDate: '2026-11-09',
+              }),
+            ],
+            awaitingApproval: [
+              revisionSchedule({
+                conceptId: 13,
+                conceptTitle: 'Statistical mechanics',
+                eligible: false,
+                approvedExamCodes: [],
+                pendingExamCodes: ['csir-net-physics'],
+              }),
+            ],
+          }),
+        })}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Wave optics')).toBeInTheDocument();
+    expect(screen.getByText('2026-11-09')).toBeInTheDocument();
+    expect(screen.getByText('Statistical mechanics')).toBeInTheDocument();
+    expect(screen.getByText(/pending mapping csir-net-physics/u)).toBeInTheDocument();
   });
 
   it('shows empty states for an idle schedule', () => {
@@ -1696,5 +1855,37 @@ describe('useDailyDashboardData', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'retry' }));
     await waitFor(() => expect(screen.getByTestId('sessions').textContent).toBe('1'));
     expect(screen.getByText('no-error')).toBeInTheDocument();
+  });
+
+  it('reloads after a study session changes', async () => {
+    mockedSessions.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      studySession({
+        id: 25,
+        sessionDate: TODAY,
+        durationSeconds: 25 * 60,
+      }),
+    ]);
+    render(<HookProbe today={TODAY} enabled={true} />);
+
+    await waitFor(() => expect(mockedSessions).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('sessions')).toHaveTextContent('0');
+
+    await act(async () => {
+      emitStudySessionsChanged();
+    });
+
+    await waitFor(() => expect(mockedSessions).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('sessions')).toHaveTextContent('1'));
+  });
+
+  it('reloads revision dashboard data after revision records change', async () => {
+    render(<HookProbe today={TODAY} enabled={true} />);
+    await waitFor(() => expect(mockedRevision).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      emitRevisionsChanged();
+    });
+
+    await waitFor(() => expect(mockedRevision).toHaveBeenCalledTimes(2));
   });
 });

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { V2CustomFormula } from '../api';
@@ -93,9 +93,10 @@ describe('CustomFormulaEditor', () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it('blocks a name that duplicates a built-in formula', async () => {
+  it('allows a custom name that also exists in the built-in library', async () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();
+    mockedSave.mockResolvedValue(savedFormula());
     render(<CustomFormulaEditor onClose={vi.fn()} onSaved={onSaved} />);
 
     await fillRequired();
@@ -104,13 +105,16 @@ describe('CustomFormulaEditor', () => {
       screen.getByLabelText(/Formula name/),
       'Maxwell-Faraday law (differential form)',
     );
-    await user.click(screen.getByRole('button', { name: 'Add formula' }));
 
     expect(
-      await screen.findByText(/The built-in formula "Maxwell-Faraday law/),
+      await screen.findByText(/A built-in formula already uses this name/),
     ).toBeInTheDocument();
-    expect(mockedSave).not.toHaveBeenCalled();
-    expect(onSaved).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Add formula' }));
+
+    expect(mockedSave).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Maxwell-Faraday law (differential form)' }),
+    );
+    expect(onSaved).toHaveBeenCalledWith(savedFormula());
   });
 
   it('adds and removes variable rows', async () => {
@@ -122,5 +126,58 @@ describe('CustomFormulaEditor', () => {
     await user.click(screen.getByRole('button', { name: 'Remove variable 1' }));
     expect(screen.queryByLabelText('Variable 1 symbol')).not.toBeInTheDocument();
     expect(screen.getByText('No variables recorded yet.')).toBeInTheDocument();
+  });
+
+  it('previews and preserves LaTeX formula and variable sources', async () => {
+    const user = userEvent.setup();
+    const latex = String.raw`\frac{E}{m c^2}`;
+    const variableSymbol = String.raw`\hbar`;
+    const variableUnit = String.raw`\mathrm{J\,s}`;
+    mockedSave.mockResolvedValue(savedFormula());
+    render(<CustomFormulaEditor onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await fillRequired();
+    fireEvent.change(screen.getByLabelText('LaTeX expression'), { target: { value: latex } });
+    await user.click(screen.getByRole('button', { name: 'Add variable' }));
+    fireEvent.change(screen.getByLabelText('Variable 1 symbol'), {
+      target: { value: variableSymbol },
+    });
+    fireEvent.change(screen.getByLabelText('Variable 1 meaning'), {
+      target: { value: 'reduced Planck constant' },
+    });
+    fireEvent.change(screen.getByLabelText('Variable 1 unit'), {
+      target: { value: variableUnit },
+    });
+
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[data-math-preview] [data-latex-source]')].map((element) =>
+          element.getAttribute('data-latex-source'),
+        ),
+      ).toEqual(expect.arrayContaining([latex, variableSymbol, variableUnit])),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Add formula' }));
+    expect(mockedSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        latex,
+        variables: [expect.objectContaining({ symbol: variableSymbol, unit: variableUnit })],
+      }),
+    );
+  });
+
+  it('reopens saved LaTeX sources in the editor with previews intact', async () => {
+    const formula = savedFormula();
+    render(<CustomFormulaEditor formula={formula} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    expect(screen.getByLabelText('LaTeX expression')).toHaveValue(formula.latex);
+    expect(screen.getByLabelText('Plain-text expression')).toHaveValue(formula.plainText);
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[data-latex-source]')].some(
+          (element) => element.getAttribute('data-latex-source') === formula.latex,
+        ),
+      ).toBe(true),
+    );
   });
 });

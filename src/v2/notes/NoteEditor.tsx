@@ -7,6 +7,7 @@ import {
   type V2StickyNoteInput,
   type V2SyllabusNode,
 } from '../api';
+import { MathPreview } from '../math/MathPreview';
 import { useNotes } from './notesContext';
 import { NOTE_COLORS, type NoteColor } from './noteColors';
 
@@ -247,6 +248,7 @@ export function NoteEditor({
       <label className="v2-field v2-note-body-field">
         <span>Note</span>
         <textarea
+          aria-label="Note"
           maxLength={20000}
           onBlur={flush}
           onChange={(event) => update('body', event.target.value)}
@@ -254,6 +256,11 @@ export function NoteEditor({
           rows={compact ? 8 : 9}
           value={draft.body}
         />
+        <span className="v2-field-hint">
+          Plain text is fine. Use $...$ or \(...\) for inline mathematics and $$...$$ or \[...\] for
+          display mathematics.
+        </span>
+        <MathPreview label="Mathematical preview" mode="text" source={draft.body} />
       </label>
 
       <div className="v2-note-editor-row">

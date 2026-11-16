@@ -34,6 +34,34 @@ npm.cmd run dev
 Tauri commands are unavailable in a plain browser. The desktop application is the supported
 development target.
 
+## Development data isolation
+
+`npm run tauri:dev` uses `src-tauri/tauri.dev.conf.json` and a dedicated development identity:
+
+```text
+com.crimsonvisa.physics-tracker.dev
+```
+
+Debug builds resolve all writable application storage beneath that identity. Release builds keep
+the existing production identity and locations unchanged.
+
+| Storage                          | Development (`tauri dev`)                                               | Production / release                                                |
+| -------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| SQLite database                  | `%APPDATA%\com.crimsonvisa.physics-tracker.dev\physics-tracker.sqlite3` | `%APPDATA%\com.crimsonvisa.physics-tracker\physics-tracker.sqlite3` |
+| SQLite WAL/SHM                   | Next to the development database                                        | Next to the production database                                     |
+| Backups and recovery files       | `%APPDATA%\com.crimsonvisa.physics-tracker.dev\backups`                 | `%APPDATA%\com.crimsonvisa.physics-tracker\backups`                 |
+| Managed resources and PDFs       | `%APPDATA%\com.crimsonvisa.physics-tracker.dev\resources`               | `%APPDATA%\com.crimsonvisa.physics-tracker\resources`               |
+| Settings                         | Development SQLite database                                             | Production SQLite database                                          |
+| WebView2 profile and web storage | `%LOCALAPPDATA%\com.crimsonvisa.physics-tracker.dev\EBWebView`          | `%LOCALAPPDATA%\com.crimsonvisa.physics-tracker\EBWebView`          |
+
+The debug/release separation is compile-time (`cfg(debug_assertions)`) and is verified before the
+database is opened. Starting a debug build with the production Tauri identifier fails safely instead
+of opening production storage. Do not run `tauri dev` without the development configuration file.
+
+Development backups may not be configured inside the production V2 application-data folder. Exported
+CSV/JSON files and manually selected backup destinations are explicit user actions, not application
+storage.
+
 ## Quality checks
 
 ```powershell

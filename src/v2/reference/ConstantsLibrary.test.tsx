@@ -15,6 +15,7 @@ import * as api from '../api';
 
 const mockedBuiltin = vi.mocked(api.getV2BuiltinConstants);
 const mockedList = vi.mocked(api.listV2CustomConstants);
+const mockedSave = vi.mocked(api.saveV2CustomConstant);
 const mockedDelete = vi.mocked(api.deleteV2CustomConstant);
 
 function catalog(): V2BuiltinConstantCatalog {
@@ -68,6 +69,57 @@ describe('ConstantsLibrary', () => {
     expect(screen.getByRole('button', { name: 'Add your first constant' })).toBeInTheDocument();
   });
 
+  it('creates a constant with its exact value text and confirms the save', async () => {
+    const user = userEvent.setup();
+    const valueText = '6.62607015×10⁻³⁴';
+    const saved = constant({
+      id: 8,
+      name: 'Local Planck',
+      symbol: 'h_local',
+      valueText,
+    });
+    mockedSave.mockResolvedValue(saved);
+    render(<ConstantsLibrary />);
+    await user.click(screen.getByRole('tab', { name: 'My Constants' }));
+    await user.click(await screen.findByRole('button', { name: 'Add your first constant' }));
+
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Full name'), 'Local Planck');
+    await user.type(within(dialog).getByLabelText('Symbol'), 'h_local');
+    await user.clear(within(dialog).getByLabelText('Category'));
+    await user.type(within(dialog).getByLabelText('Category'), 'Fundamental');
+    await user.type(within(dialog).getByLabelText(/Numerical value/), valueText);
+    await user.type(within(dialog).getByLabelText('Description'), 'A local Planck constant.');
+    await user.click(within(dialog).getByRole('button', { name: 'Add constant' }));
+
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: null,
+          name: 'Local Planck',
+          symbol: 'h_local',
+          valueText,
+          category: 'Fundamental',
+          description: 'A local Planck constant.',
+        }),
+      ),
+    );
+    expect(await screen.findByText('Constant "Local Planck" saved.')).toBeInTheDocument();
+    const detail = document.querySelector('.v2-reference-detail') as HTMLElement;
+    expect(within(detail).getAllByText(valueText).length).toBeGreaterThan(0);
+  });
+
+  it('reloads a persisted constant from storage on a fresh mount', async () => {
+    const user = userEvent.setup();
+    mockedList.mockResolvedValue([constant({ id: 12, name: 'Persisted constant' })]);
+    render(<ConstantsLibrary />);
+    await user.click(screen.getByRole('tab', { name: 'My Constants' }));
+
+    expect(
+      await screen.findByRole('button', { name: 'Open constant Persisted constant' }),
+    ).toBeInTheDocument();
+  });
+
   it('searches and filters constants by category', async () => {
     const user = userEvent.setup();
     mockedList.mockResolvedValue([
@@ -95,6 +147,62 @@ describe('ConstantsLibrary', () => {
     await user.selectOptions(screen.getByLabelText('Constant category filter'), 'Fundamental');
     expect(screen.getByText('Planck constant (local)')).toBeInTheDocument();
     expect(screen.queryByText('Elementary charge (local)')).not.toBeInTheDocument();
+  });
+
+  it('searches raw LaTeX source and renders mathematical card content', async () => {
+    const user = userEvent.setup();
+    mockedList.mockResolvedValue([
+      constant({
+        name: 'Reduced Planck',
+        symbol: String.raw`\hbar`,
+        description: String.raw`Energy relations $E=mc^2$ and $E=\hbar\omega$.`,
+      }),
+    ]);
+    render(<ConstantsLibrary />);
+    await user.click(screen.getByRole('tab', { name: 'My Constants' }));
+
+    expect(
+      await screen.findByRole('button', { name: 'Open constant Reduced Planck' }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.v2-reference-card .katex')).not.toBeNull());
+
+    await user.type(screen.getByLabelText('Search constants'), 'hbar');
+    expect(
+      screen.getByRole('button', { name: 'Open constant Reduced Planck' }),
+    ).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText('Search constants'));
+    await user.type(screen.getByLabelText('Search constants'), 'E=mc');
+    expect(
+      screen.getByRole('button', { name: 'Open constant Reduced Planck' }),
+    ).toBeInTheDocument();
+  });
+
+  it('edits the selected custom constant and preserves its exact value', async () => {
+    const user = userEvent.setup();
+    const valueText = '6.62607015×10⁻³⁴';
+    mockedList.mockResolvedValue([constant({ valueText })]);
+    mockedSave.mockResolvedValue(constant({ name: 'Edited Planck', valueText }));
+    render(<ConstantsLibrary />);
+    await user.click(screen.getByRole('tab', { name: 'My Constants' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Open constant Planck constant (local)' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Edit constant' }));
+
+    const dialog = screen.getByRole('dialog');
+    await user.clear(within(dialog).getByLabelText('Full name'));
+    await user.type(within(dialog).getByLabelText('Full name'), 'Edited Planck');
+    await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'Edited Planck', valueText }),
+      ),
+    );
+    expect(await screen.findByText('Constant "Edited Planck" saved.')).toBeInTheDocument();
+    const detail = document.querySelector('.v2-reference-detail') as HTMLElement;
+    expect(within(detail).getAllByText(valueText).length).toBeGreaterThan(0);
   });
 
   it('opens a detail view that preserves the entered value and precision', async () => {

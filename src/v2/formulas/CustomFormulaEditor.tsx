@@ -7,6 +7,7 @@ import {
   type V2CustomFormulaVariableInput,
 } from '../api';
 import { DialogShell } from '../DialogShell';
+import { MathPreview } from '../math/MathPreview';
 import { FORMULA_LIBRARY } from './data';
 import { FORMULA_SUBJECTS } from './taxonomy';
 
@@ -58,6 +59,11 @@ export function CustomFormulaEditor({ formula, onClose, onSaved }: CustomFormula
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const builtInName = form.name.trim()
+    ? (FORMULA_LIBRARY.entries.find(
+        (entry) => entry.title.trim().toLowerCase() === form.name.trim().toLowerCase(),
+      ) ?? null)
+    : null;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -93,16 +99,6 @@ export function CustomFormulaEditor({ formula, onClose, onSaved }: CustomFormula
     if (busy) {
       return;
     }
-    const builtInName = FORMULA_LIBRARY.entries.find(
-      (entry) => entry.title.trim().toLowerCase() === form.name.trim().toLowerCase(),
-    );
-    if (builtInName) {
-      setFieldErrors({
-        name: `The built-in formula "${builtInName.title}" already uses this name. Choose a different name for your custom formula.`,
-      });
-      setFormError(null);
-      return;
-    }
     setBusy(true);
     setFieldErrors({});
     setFormError(null);
@@ -133,7 +129,7 @@ export function CustomFormulaEditor({ formula, onClose, onSaved }: CustomFormula
       onClose={onClose}
     >
       <form className="v2-reference-editor" onSubmit={submit}>
-        <header className="v2-reference-editor-header">
+        <header className="v2-reference-editor-header v2-dialog-header">
           <div>
             <p className="eyebrow">Custom reference</p>
             <h2>{formula ? 'Edit formula' : 'Add formula'}</h2>
@@ -148,184 +144,218 @@ export function CustomFormulaEditor({ formula, onClose, onSaved }: CustomFormula
           </button>
         </header>
 
-        {formError ? (
-          <p className="v2-inline-error" role="alert">
-            {formError}
-          </p>
-        ) : null}
+        <div className="v2-reference-editor-body v2-dialog-body">
+          {formError ? (
+            <p className="v2-inline-error" role="alert">
+              {formError}
+            </p>
+          ) : null}
 
-        <div className="v2-reference-editor-grid">
-          <label className="v2-field v2-reference-field-wide">
-            <span>Formula name</span>
-            <input
-              {...fieldProps('name')}
-              autoFocus
-              maxLength={200}
-              onChange={(event) => update('name', event.target.value)}
-              required
-              value={form.name}
-            />
-            {fieldError('name')}
-          </label>
-          <label className="v2-field">
-            <span>Category</span>
-            <input
-              {...fieldProps('category')}
-              list="formula-category-options"
-              maxLength={120}
-              onChange={(event) => update('category', event.target.value)}
-              placeholder="e.g. Quantum mechanics"
-              required
-              value={form.category}
-            />
-            <datalist id="formula-category-options">
-              {FORMULA_SUBJECTS.map((subject) => (
-                <option key={subject.id} value={subject.label} />
-              ))}
-            </datalist>
-            {fieldError('category')}
-          </label>
-          <span className="v2-reference-field-wide v2-field-hint">
-            Expressions are stored as reference text. Physics Tracker never evaluates or parses them
-            automatically.
-          </span>
-          <label className="v2-field">
-            <span>LaTeX expression</span>
-            <textarea
-              {...fieldProps('latex')}
-              className="v2-reference-expression-input"
-              maxLength={20000}
-              onChange={(event) => update('latex', event.target.value)}
-              placeholder={String.raw`e.g. E = mc^2`}
-              required
-              rows={3}
-              value={form.latex}
-            />
-            {fieldError('latex')}
-          </label>
-          <label className="v2-field">
-            <span>Plain-text expression</span>
-            <textarea
-              {...fieldProps('plainText')}
-              className="v2-reference-expression-input"
-              maxLength={20000}
-              onChange={(event) => update('plainText', event.target.value)}
-              placeholder="e.g. E = m c^2"
-              required
-              rows={3}
-              value={form.plainText}
-            />
-            {fieldError('plainText')}
-          </label>
-          <label className="v2-field v2-reference-field-wide">
-            <span>Description</span>
-            <textarea
-              {...fieldProps('description')}
-              maxLength={6000}
-              onChange={(event) => update('description', event.target.value)}
-              required
-              rows={3}
-              value={form.description}
-            />
-            {fieldError('description')}
-          </label>
-        </div>
-
-        <section aria-label="Formula variables" className="v2-reference-variable-editor">
-          <div className="v2-reference-variable-editor-header">
-            <div>
-              <h3>Variables and meanings</h3>
-              <p>Define each symbol so the formula remains understandable without evaluation.</p>
-            </div>
-            <button
-              className="secondary-button"
-              onClick={() =>
-                setVariables((current) => [...current, { symbol: '', meaning: '', unit: '' }])
-              }
-              type="button"
-            >
-              Add variable
-            </button>
+          <div className="v2-reference-editor-grid">
+            <label className="v2-field v2-reference-field-wide">
+              <span>Formula name</span>
+              <input
+                {...fieldProps('name')}
+                autoFocus
+                maxLength={200}
+                onChange={(event) => update('name', event.target.value)}
+                required
+                value={form.name}
+              />
+              {builtInName && !fieldErrors.name ? (
+                <span className="v2-field-hint" role="status">
+                  A built-in formula already uses this name. Your custom entry will be stored
+                  separately and labelled User-defined.
+                </span>
+              ) : null}
+              {fieldError('name')}
+            </label>
+            <label className="v2-field">
+              <span>Category</span>
+              <input
+                {...fieldProps('category')}
+                list="formula-category-options"
+                maxLength={120}
+                onChange={(event) => update('category', event.target.value)}
+                placeholder="e.g. Quantum mechanics"
+                required
+                value={form.category}
+              />
+              <datalist id="formula-category-options">
+                {FORMULA_SUBJECTS.map((subject) => (
+                  <option key={subject.id} value={subject.label} />
+                ))}
+              </datalist>
+              {fieldError('category')}
+            </label>
+            <span className="v2-reference-field-wide v2-field-hint">
+              Expressions are stored as reference text. Physics Tracker never evaluates or parses
+              them automatically.
+            </span>
+            <label className="v2-field">
+              <span>LaTeX expression</span>
+              <textarea
+                {...fieldProps('latex')}
+                aria-label="LaTeX expression"
+                className="v2-reference-expression-input"
+                maxLength={20000}
+                onChange={(event) => update('latex', event.target.value)}
+                placeholder={String.raw`e.g. E = mc^2`}
+                required
+                rows={3}
+                value={form.latex}
+              />
+              <span className="v2-field-hint">
+                LaTeX is rendered live. Use commands such as \frac, \int, \sum, \partial, \matrix
+                and Greek letters such as \alpha or \hbar.
+              </span>
+              <MathPreview
+                display
+                emptyLabel="Enter a LaTeX expression to preview the equation."
+                label="Rendered equation"
+                source={form.latex}
+              />
+              {fieldError('latex')}
+            </label>
+            <label className="v2-field">
+              <span>Plain-text expression</span>
+              <textarea
+                {...fieldProps('plainText')}
+                className="v2-reference-expression-input"
+                maxLength={20000}
+                onChange={(event) => update('plainText', event.target.value)}
+                placeholder="e.g. E = m c^2"
+                required
+                rows={3}
+                value={form.plainText}
+              />
+              {fieldError('plainText')}
+            </label>
+            <label className="v2-field v2-reference-field-wide">
+              <span>Description</span>
+              <textarea
+                {...fieldProps('description')}
+                aria-label="Description"
+                maxLength={6000}
+                onChange={(event) => update('description', event.target.value)}
+                required
+                rows={3}
+                value={form.description}
+              />
+              <span className="v2-field-hint">
+                Plain text is fine. Wrap inline mathematics in $...$ or \(...\), and display
+                mathematics in $$...$$ or \[...\].
+              </span>
+              <MathPreview label="Mathematical preview" mode="text" source={form.description} />
+              {fieldError('description')}
+            </label>
           </div>
-          {variables.length === 0 ? (
-            <p className="v2-empty-copy">No variables recorded yet.</p>
-          ) : (
-            <ol className="v2-reference-variable-list">
-              {variables.map((variable, index) => (
-                <li className="v2-reference-variable-row" key={index}>
-                  <label className="v2-field">
-                    <span>Symbol</span>
-                    <input
-                      aria-label={`Variable ${index + 1} symbol`}
-                      maxLength={80}
-                      onChange={(event) => updateVariable(index, 'symbol', event.target.value)}
-                      required
-                      value={variable.symbol}
-                    />
-                  </label>
-                  <label className="v2-field">
-                    <span>Meaning</span>
-                    <input
-                      aria-label={`Variable ${index + 1} meaning`}
-                      maxLength={500}
-                      onChange={(event) => updateVariable(index, 'meaning', event.target.value)}
-                      required
-                      value={variable.meaning}
-                    />
-                  </label>
-                  <label className="v2-field">
-                    <span>Unit</span>
-                    <input
-                      aria-label={`Variable ${index + 1} unit`}
-                      maxLength={120}
-                      onChange={(event) => updateVariable(index, 'unit', event.target.value)}
-                      placeholder="Optional"
-                      value={variable.unit}
-                    />
-                  </label>
-                  <button
-                    aria-label={`Remove variable ${index + 1}`}
-                    className="secondary-button v2-reference-remove-variable"
-                    onClick={() =>
-                      setVariables((current) => current.filter((_, position) => position !== index))
-                    }
-                    type="button"
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
 
-        <div className="v2-reference-editor-grid">
-          <label className="v2-field v2-reference-field-wide">
-            <span>Source or reference</span>
-            <input
-              {...fieldProps('source')}
-              maxLength={1000}
-              onChange={(event) => update('source', event.target.value)}
-              placeholder="Optional textbook, paper or note"
-              value={form.source}
-            />
-            {fieldError('source')}
-          </label>
-          <label className="v2-field v2-reference-field-wide">
-            <span>Notes</span>
-            <textarea
-              {...fieldProps('notes')}
-              maxLength={6000}
-              onChange={(event) => update('notes', event.target.value)}
-              placeholder="Optional assumptions, conventions or caveats"
-              rows={2}
-              value={form.notes}
-            />
-            {fieldError('notes')}
-          </label>
+          <section aria-label="Formula variables" className="v2-reference-variable-editor">
+            <div className="v2-reference-variable-editor-header">
+              <div>
+                <h3>Variables and meanings</h3>
+                <p>
+                  Define each symbol so the formula remains understandable without evaluation.
+                  Symbols and units accept LaTeX and are previewed below.
+                </p>
+              </div>
+              <button
+                className="secondary-button"
+                onClick={() =>
+                  setVariables((current) => [...current, { symbol: '', meaning: '', unit: '' }])
+                }
+                type="button"
+              >
+                Add variable
+              </button>
+            </div>
+            {variables.length === 0 ? (
+              <p className="v2-empty-copy">No variables recorded yet.</p>
+            ) : (
+              <ol className="v2-reference-variable-list">
+                {variables.map((variable, index) => (
+                  <li className="v2-reference-variable-row" key={index}>
+                    <label className="v2-field">
+                      <span>Symbol</span>
+                      <input
+                        aria-label={`Variable ${index + 1} symbol`}
+                        maxLength={80}
+                        onChange={(event) => updateVariable(index, 'symbol', event.target.value)}
+                        required
+                        value={variable.symbol}
+                      />
+                      <MathPreview compact label="Symbol preview" source={variable.symbol} />
+                    </label>
+                    <label className="v2-field">
+                      <span>Meaning</span>
+                      <input
+                        aria-label={`Variable ${index + 1} meaning`}
+                        maxLength={500}
+                        onChange={(event) => updateVariable(index, 'meaning', event.target.value)}
+                        required
+                        value={variable.meaning}
+                      />
+                    </label>
+                    <label className="v2-field">
+                      <span>Unit</span>
+                      <input
+                        aria-label={`Variable ${index + 1} unit`}
+                        maxLength={120}
+                        onChange={(event) => updateVariable(index, 'unit', event.target.value)}
+                        placeholder="Optional"
+                        value={variable.unit}
+                      />
+                      <MathPreview compact label="Unit preview" source={variable.unit} />
+                    </label>
+                    <button
+                      aria-label={`Remove variable ${index + 1}`}
+                      className="secondary-button v2-reference-remove-variable"
+                      onClick={() =>
+                        setVariables((current) =>
+                          current.filter((_, position) => position !== index),
+                        )
+                      }
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+
+          <div className="v2-reference-editor-grid">
+            <label className="v2-field v2-reference-field-wide">
+              <span>Source or reference</span>
+              <input
+                {...fieldProps('source')}
+                maxLength={1000}
+                onChange={(event) => update('source', event.target.value)}
+                placeholder="Optional textbook, paper or note"
+                value={form.source}
+              />
+              {fieldError('source')}
+            </label>
+            <label className="v2-field v2-reference-field-wide">
+              <span>Notes</span>
+              <textarea
+                {...fieldProps('notes')}
+                aria-label="Notes"
+                maxLength={6000}
+                onChange={(event) => update('notes', event.target.value)}
+                placeholder="Optional assumptions, conventions or caveats"
+                rows={2}
+                value={form.notes}
+              />
+              <MathPreview label="Mathematical preview" mode="text" source={form.notes} />
+              {fieldError('notes')}
+            </label>
+          </div>
         </div>
 
-        <footer className="v2-reference-editor-actions">
+        <footer className="v2-reference-editor-actions v2-dialog-footer">
           <button className="secondary-button" disabled={busy} onClick={onClose} type="button">
             Cancel
           </button>

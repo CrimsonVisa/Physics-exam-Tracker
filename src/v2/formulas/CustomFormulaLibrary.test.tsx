@@ -13,6 +13,7 @@ vi.mock('../api', () => ({
 import * as api from '../api';
 
 const mockedList = vi.mocked(api.listV2CustomFormulas);
+const mockedSave = vi.mocked(api.saveV2CustomFormula);
 const mockedDelete = vi.mocked(api.deleteV2CustomFormula);
 
 function formula(overrides: Partial<V2CustomFormula> = {}): V2CustomFormula {
@@ -51,6 +52,47 @@ describe('CustomFormulaLibrary', () => {
     expect(mockedList).toHaveBeenCalledTimes(1);
   });
 
+  it('creates a formula, confirms the save, and reloads it from storage', async () => {
+    const user = userEvent.setup();
+    const saved = formula({ id: 7, name: 'Local relation' });
+    mockedSave.mockResolvedValue(saved);
+    const { unmount } = render(<CustomFormulaLibrary />);
+
+    await user.click(await screen.findByRole('button', { name: 'Add your first formula' }));
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/Formula name/), 'Local relation');
+    await user.type(within(dialog).getByLabelText('Category'), 'Special relativity');
+    await user.type(within(dialog).getByLabelText('LaTeX expression'), 'E = mc^2');
+    await user.type(within(dialog).getByLabelText('Plain-text expression'), 'E = m c^2');
+    await user.type(
+      within(dialog).getByLabelText('Description'),
+      'Rest energy of a body with mass m.',
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Add formula' }));
+
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: null,
+          name: 'Local relation',
+          latex: 'E = mc^2',
+          plainText: 'E = m c^2',
+          category: 'Special relativity',
+          variables: [],
+        }),
+      ),
+    );
+    expect(await screen.findByText('Formula "Local relation" saved.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Local relation' })).toBeInTheDocument();
+
+    unmount();
+    mockedList.mockResolvedValue([saved]);
+    render(<CustomFormulaLibrary />);
+    expect(
+      await screen.findByRole('button', { name: 'Open custom formula Local relation' }),
+    ).toBeInTheDocument();
+  });
+
   it('searches and filters custom formulas by category', async () => {
     const user = userEvent.setup();
     mockedList.mockResolvedValue([
@@ -83,6 +125,54 @@ describe('CustomFormulaLibrary', () => {
     expect(screen.queryByText('Photon energy')).not.toBeInTheDocument();
   });
 
+  it('shows a custom formula whose name matches a built-in formula', async () => {
+    const user = userEvent.setup();
+    mockedList.mockResolvedValue([
+      formula({ id: 15, name: 'Maxwell-Faraday law (differential form)' }),
+    ]);
+    render(<CustomFormulaLibrary />);
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Open custom formula Maxwell-Faraday law (differential form)',
+      }),
+    );
+
+    const detail = document.querySelector('.v2-reference-detail') as HTMLElement;
+    expect(
+      within(detail).getByRole('heading', {
+        level: 2,
+        name: 'Maxwell-Faraday law (differential form)',
+      }),
+    ).toBeInTheDocument();
+    expect(within(detail).getByText('User-defined')).toBeInTheDocument();
+  });
+
+  it('edits the selected custom formula without changing its record id', async () => {
+    const user = userEvent.setup();
+    mockedList.mockResolvedValue([formula()]);
+    const updated = formula({ name: 'Edited relation', latex: 'E = M c^2' });
+    mockedSave.mockResolvedValue(updated);
+    render(<CustomFormulaLibrary />);
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Open custom formula Mass-energy relation' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Edit formula' }));
+    const dialog = screen.getByRole('dialog');
+    await user.clear(within(dialog).getByLabelText(/Formula name/));
+    await user.type(within(dialog).getByLabelText(/Formula name/), 'Edited relation');
+    await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'Edited relation' }),
+      ),
+    );
+    expect(await screen.findByText('Formula "Edited relation" saved.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Edited relation' })).toBeInTheDocument();
+  });
+
   it('opens a custom formula detail with variables and does not expose edit controls for built-ins', async () => {
     const user = userEvent.setup();
     mockedList.mockResolvedValue([formula()]);
@@ -101,7 +191,7 @@ describe('CustomFormulaLibrary', () => {
       }),
     ).toBeInTheDocument();
     expect(within(detail as HTMLElement).getByText('rest energy')).toBeInTheDocument();
-    expect(within(detail as HTMLElement).getByText('kg')).toBeInTheDocument();
+    expect(within(detail as HTMLElement).getAllByText('kg').length).toBeGreaterThan(0);
     expect(within(detail as HTMLElement).getByText('User-defined')).toBeInTheDocument();
   });
 
