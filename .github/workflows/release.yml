@@ -186,7 +186,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish draft GitHub release
+    name: Validate or prepare GitHub release
     needs: build
     if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: windows-latest
@@ -203,6 +203,7 @@ jobs:
           digest-mismatch: error
 
       - name: Verify downloaded installer and checksum
+        id: verified_asset
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -233,6 +234,9 @@ jobs:
           if ($actual -ne $expected) {
             throw "Checksum mismatch: expected $expected, got $actual."
           }
+
+          "installer_name=$($installer.Name)" >> $env:GITHUB_OUTPUT
+          "installer_sha256=$actual" >> $env:GITHUB_OUTPUT
 
       - name: Revalidate remote release tag
         shell: pwsh
@@ -448,28 +452,48 @@ jobs:
             throw "Tag commit is not an ancestor of current main (status=$compareStatus, ahead=$aheadBy, behind=$behindBy)."
           }
 
-      # This guard is intentionally best-effort and not atomic: another actor can
-      # create a release after this check. draft: true and overwrite_files: false
-      # remain the publication safeguards.
-      - name: Refuse to overwrite an existing release
+      # A manually published release or a previous draft is a normal, idempotent
+      # outcome. Validate the existing release and never overwrite or recreate it.
+      - name: Inspect existing GitHub release
+        id: existing_release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          EXPECTED_TAG_SHA: ${{ needs.build.outputs.tag_sha }}
+          EXPECTED_ASSET_NAME: ${{ steps.verified_asset.outputs.installer_name }}
+          EXPECTED_ASSET_SHA: ${{ steps.verified_asset.outputs.installer_sha256 }}
           GITHUB_API_URL: ${{ github.api_url }}
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = $env:RELEASE_TAG
+          $expectedSha = $env:EXPECTED_TAG_SHA
+          $expectedAssetName = $env:EXPECTED_ASSET_NAME
+          $expectedAssetSha = $env:EXPECTED_ASSET_SHA
+
           if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
             throw "Invalid release tag '$tag'."
           }
-
+          if ($expectedSha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw "Invalid expected tag SHA '$expectedSha'."
+          }
+          if ([string]::IsNullOrWhiteSpace($expectedAssetName)) {
+            throw 'Expected installer asset name is empty.'
+          }
+          if ($expectedAssetSha -cnotmatch '^[0-9a-fA-F]{64}\z') {
+            throw "Invalid expected installer SHA-256 '$expectedAssetSha'."
+          }
           if ([string]::IsNullOrWhiteSpace($env:GITHUB_API_URL)) {
             throw 'GITHUB_API_URL is not set.'
           }
           if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
             throw 'GITHUB_REPOSITORY is not set.'
           }
+
+          $expectedSha = $expectedSha.ToLowerInvariant()
+          $expectedAssetSha = $expectedAssetSha.ToLowerInvariant()
+          $version = $tag.Substring(1)
+          $expectedTitle = "Physics Tracker $version"
           $apiBase = $env:GITHUB_API_URL.TrimEnd('/')
 
           $headers = @{
@@ -477,11 +501,11 @@ jobs:
             Accept = 'application/vnd.github+json'
             'User-Agent' = 'physics-tracker-release'
           }
-          $uri = "$apiBase/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          $releaseUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/releases/tags/$([uri]::EscapeDataString($tag))"
 
           $existing = $null
           try {
-            $existing = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+            $existing = Invoke-RestMethod -Uri $releaseUri -Headers $headers -Method Get
           } catch {
             $status = $_.Exception.Response.StatusCode.value__
             if ($status -ne 404) {
@@ -489,20 +513,143 @@ jobs:
             }
           }
 
-          if ($null -ne $existing) {
-            throw "A release for tag '$tag' already exists; refusing to overwrite it."
+          if ($null -eq $existing) {
+            'state=absent' >> $env:GITHUB_OUTPUT
+            Write-Output "No GitHub release exists for '$tag'; a new draft will be created."
+            exit 0
           }
 
-      - name: Publish draft GitHub release
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          tag_name: ${{ needs.build.outputs.tag }}
-          target_commitish: ${{ needs.build.outputs.tag_sha }}
-          generate_release_notes: true
-          draft: true
-          prerelease: false
-          overwrite_files: false
-          fail_on_unmatched_files: true
-          files: |
-            release-assets/*-setup.exe
-            release-assets/*.sha256
+          if ($existing.tag_name -isnot [string] -or $existing.tag_name -cne $tag) {
+            throw "Existing release tag '$($existing.tag_name)' does not match expected tag '$tag'."
+          }
+          if ($existing.name -isnot [string] -or $existing.name -cne $expectedTitle) {
+            throw "Existing release title '$($existing.name)' does not match expected title '$expectedTitle'."
+          }
+          if ($existing.draft -isnot [bool]) {
+            throw 'Existing release did not return a boolean draft state.'
+          }
+          if ($existing.prerelease -isnot [bool]) {
+            throw 'Existing release did not return a boolean prerelease state.'
+          }
+          if ($existing.prerelease) {
+            throw "Existing release '$tag' is marked as a prerelease; refusing to treat it as the stable release."
+          }
+
+          $target = $existing.target_commitish
+          if ($target -isnot [string] -or [string]::IsNullOrWhiteSpace($target)) {
+            throw 'Existing release did not return a valid target commitish.'
+          }
+          $normalizedTarget = $target.ToLowerInvariant()
+          if ($normalizedTarget -cmatch '^[0-9a-f]{40}$') {
+            if ($normalizedTarget -cne $expectedSha) {
+              throw "Existing release target commit $normalizedTarget does not match expected commit $expectedSha."
+            }
+          } elseif ($target -cne 'main') {
+            throw "Existing release target '$target' is neither 'main' nor the expected release commit $expectedSha."
+          }
+
+          # The preceding remote-tag validation already proved that the tag commit is
+          # reachable from main, so a release whose target is main also targets the
+          # validated release line.
+          $assets = @($existing.assets)
+          $normalizedAssetName = $expectedAssetName -replace ' ', '.'
+          $matchingAssets = @(
+            $assets | Where-Object {
+              $_ -is [System.Management.Automation.PSCustomObject] -and
+              ($_.name -ceq $expectedAssetName -or $_.name -ceq $normalizedAssetName)
+            }
+          )
+          if ($matchingAssets.Count -ne 1) {
+            $names = @($assets | Where-Object { $_ -is [System.Management.Automation.PSCustomObject] } | ForEach-Object { $_.name }) -join ', '
+            throw "Existing release '$tag' must contain exactly one installer asset named '$expectedAssetName' (GitHub-normalized: '$normalizedAssetName'); found $($matchingAssets.Count). Assets: $names"
+          }
+
+          $asset = $matchingAssets[0]
+          if ($asset.state -isnot [string] -or $asset.state -cne 'uploaded') {
+            throw "Existing installer asset '$($asset.name)' is not in the uploaded state."
+          }
+
+          $expectedDigest = "sha256:$expectedAssetSha"
+          $assetDigest = $asset.digest
+          if ($assetDigest -is [string] -and -not [string]::IsNullOrWhiteSpace($assetDigest)) {
+            if ($assetDigest.ToLowerInvariant() -cne $expectedDigest) {
+              throw "Existing installer asset digest '$assetDigest' does not match expected digest '$expectedDigest'."
+            }
+          } else {
+            if ($null -eq $asset.id) {
+              throw "Existing installer asset '$($asset.name)' has no digest and no asset id for verification."
+            }
+            $downloadPath = Join-Path $env:RUNNER_TEMP "existing-release-$tag.exe"
+            $assetUri = "$apiBase/repos/$env:GITHUB_REPOSITORY/releases/assets/$($asset.id)"
+            $downloadHeaders = @{
+              Authorization = "Bearer $env:GH_TOKEN"
+              Accept = 'application/octet-stream'
+              'User-Agent' = 'physics-tracker-release'
+            }
+            try {
+              Invoke-WebRequest -Uri $assetUri -Headers $downloadHeaders -OutFile $downloadPath -UseBasicParsing
+            } catch {
+              $status = $_.Exception.Response.StatusCode.value__
+              throw "Unable to download existing installer asset '$($asset.name)' for checksum verification (HTTP $status)."
+            }
+            $actualDigest = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+            if ($actualDigest -cne $expectedAssetSha) {
+              throw "Existing installer asset checksum $actualDigest does not match expected checksum $expectedAssetSha."
+            }
+          }
+
+          if ($existing.draft) {
+            'state=draft' >> $env:GITHUB_OUTPUT
+            Write-Output "Draft release '$tag' is valid and will be left unchanged for manual publication."
+          } else {
+            'state=published' >> $env:GITHUB_OUTPUT
+            Write-Output "Published release '$tag' already matches the expected tag, target, title, installer asset, and SHA-256. Nothing to publish."
+          }
+
+      # gh release create fails if a release appears after the inspection above,
+      # so a concurrent publisher can never be overwritten by this job.
+      - name: Create draft GitHub release if absent
+        if: steps.existing_release.outputs.state == 'absent'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_SHA: ${{ needs.build.outputs.tag_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          $sha = $env:RELEASE_SHA
+
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+            throw "Invalid release tag '$tag'."
+          }
+          if ($sha -cnotmatch '^[0-9a-fA-F]{40}\z') {
+            throw "Invalid release commit '$sha'."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
+            throw 'GITHUB_REPOSITORY is not set.'
+          }
+
+          $installers = @(Get-ChildItem -LiteralPath 'release-assets' -Recurse -File -Filter '*-setup.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one installer for release creation, found $($installers.Count)."
+          }
+          $checksums = @(Get-ChildItem -LiteralPath 'release-assets' -Recurse -File -Filter '*.sha256')
+          if ($checksums.Count -ne 1) {
+            throw "Expected exactly one checksum for release creation, found $($checksums.Count)."
+          }
+
+          $title = "Physics Tracker $($tag.Substring(1))"
+          $assets = @($installers[0].FullName, $checksums[0].FullName)
+
+          & gh release create $tag @assets `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $sha `
+            --title $title `
+            --generate-notes `
+            --draft `
+            --verify-tag
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to create a draft GitHub release for '$tag'. A concurrent release may have appeared; refusing to overwrite it."
+          }
